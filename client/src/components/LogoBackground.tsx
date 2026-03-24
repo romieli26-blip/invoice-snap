@@ -10,7 +10,7 @@ export function LogoBackground({ children }: { children: React.ReactNode }) {
         <img
           src={logoPath}
           alt=""
-          className="w-64 opacity-[0.04]"
+          className="w-80 opacity-[0.12]"
         />
       </div>
       <div className="relative z-10">
