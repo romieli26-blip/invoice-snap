@@ -63,6 +63,7 @@ export interface IStorage {
   getInvoicesByUser(userId: number): Promise<Invoice[]>;
   getAllInvoices(): Promise<Invoice[]>;
   getInvoice(id: number): Promise<Invoice | undefined>;
+  deleteInvoice(id: number): Promise<void>;
   updateInvoiceSyncStatus(id: number, target: "drive" | "sheets", synced: boolean): Promise<void>;
   // Session methods
   createSession(token: string, userId: number, role: string): Promise<void>;
@@ -119,6 +120,10 @@ export class DatabaseStorage implements IStorage {
 
   async getInvoice(id: number): Promise<Invoice | undefined> {
     return db.select().from(invoices).where(eq(invoices.id, id)).get();
+  }
+
+  async deleteInvoice(id: number): Promise<void> {
+    db.delete(invoices).where(eq(invoices.id, id)).run();
   }
 
   async updateInvoiceSyncStatus(id: number, target: "drive" | "sheets", synced: boolean): Promise<void> {

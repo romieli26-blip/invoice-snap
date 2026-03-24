@@ -19,6 +19,7 @@ interface UserItem {
   username: string;
   displayName: string;
   role: string;
+  assignedProperties: string[];
 }
 
 interface PropertyItem {
@@ -39,6 +40,8 @@ export default function AdminPage() {
   const [newDisplayName, setNewDisplayName] = useState("");
   const [newRole, setNewRole] = useState("manager");
 
+  const [newUserPropertyIds, setNewUserPropertyIds] = useState<number[]>([]);
+
   // Edit properties assignment state
   const [editPropsUserId, setEditPropsUserId] = useState<number | null>(null);
   const [editPropsSelected, setEditPropsSelected] = useState<number[]>([]);
@@ -54,12 +57,16 @@ export default function AdminPage() {
 
   const createUserMutation = useMutation({
     mutationFn: async () => {
-      return apiRequest("POST", "/api/users", {
+      const res = await apiRequest("POST", "/api/users", {
         username: newUsername,
         password: newPassword,
         displayName: newDisplayName,
         role: newRole,
       });
+      const newUser = await res.json();
+      if (newRole === "manager" && newUserPropertyIds.length > 0) {
+        await apiRequest("PUT", `/api/users/${newUser.id}/properties`, { propertyIds: newUserPropertyIds });
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
@@ -67,6 +74,7 @@ export default function AdminPage() {
       setNewPassword("");
       setNewDisplayName("");
       setNewRole("manager");
+      setNewUserPropertyIds([]);
       setUserDialogOpen(false);
       toast({ title: "User created" });
     },
@@ -96,6 +104,7 @@ export default function AdminPage() {
     },
     onSuccess: () => {
       setEditPropsUserId(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
       toast({ title: "Properties updated" });
     },
     onError: (err: any) => {
@@ -331,6 +340,31 @@ export default function AdminPage() {
                       </SelectContent>
                     </Select>
                   </div>
+                  {newRole === "manager" && propertiesList && propertiesList.length > 0 && (
+                    <div className="space-y-2">
+                      <Label>Assign Properties</Label>
+                      <div className="space-y-2 max-h-40 overflow-y-auto border rounded-md p-2">
+                        {propertiesList.map(prop => (
+                          <div key={prop.id} className="flex items-center space-x-2">
+                            <Checkbox
+                              id={`new-user-prop-${prop.id}`}
+                              checked={newUserPropertyIds.includes(prop.id)}
+                              onCheckedChange={(checked) => {
+                                if (checked) {
+                                  setNewUserPropertyIds(prev => [...prev, prop.id]);
+                                } else {
+                                  setNewUserPropertyIds(prev => prev.filter(id => id !== prop.id));
+                                }
+                              }}
+                            />
+                            <Label htmlFor={`new-user-prop-${prop.id}`} className="text-sm font-normal cursor-pointer">
+                              {prop.name}
+                            </Label>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <Button type="submit" className="w-full" disabled={createUserMutation.isPending} data-testid="button-create-user">
                     {createUserMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
                     Create User
@@ -363,6 +397,11 @@ export default function AdminPage() {
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium">{u.displayName}</p>
                       <p className="text-xs text-muted-foreground">@{u.username} · {u.role === "admin" ? "Admin" : "Manager"}</p>
+                      {u.role === "manager" && u.assignedProperties && u.assignedProperties.length > 0 && (
+                        <p className="text-xs text-primary/70 truncate">
+                          {u.assignedProperties.join(", ")}
+                        </p>
+                      )}
                     </div>
                     {u.id !== user?.id && (
                       <div className="flex items-center gap-1 flex-shrink-0">

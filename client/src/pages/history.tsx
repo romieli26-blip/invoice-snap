@@ -1,12 +1,13 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
-import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2 } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
+import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2 } from "lucide-react";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Invoice } from "@shared/schema";
 import { LogoBackground } from "@/components/LogoBackground";
 
@@ -14,9 +15,12 @@ interface EnrichedInvoice extends Invoice {
   submittedBy: string;
 }
 
+const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
+
 export default function HistoryPage() {
   const { user, logout } = useAuth();
   const [, setLocation] = useLocation();
+  const [viewingPhoto, setViewingPhoto] = useState<string | null>(null);
 
   const { data: invoices, isLoading } = useQuery<EnrichedInvoice[]>({
     queryKey: ["/api/invoices"],
@@ -36,6 +40,15 @@ export default function HistoryPage() {
       console.error(err);
     }
   }
+
+  const deleteInvoiceMutation = useMutation({
+    mutationFn: async (id: number) => {
+      return apiRequest("DELETE", `/api/invoices/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+    },
+  });
 
   return (
     <LogoBackground>
@@ -84,7 +97,7 @@ export default function HistoryPage() {
         {/* Section header */}
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium text-muted-foreground">Recent Invoices</h2>
-          {invoices && invoices.length > 0 && (
+          {user?.role === "admin" && invoices && invoices.length > 0 && (
             <Button variant="ghost" size="sm" onClick={handleExport} className="text-xs gap-1" data-testid="button-export">
               <Download className="w-3.5 h-3.5" />
               Export CSV
@@ -112,13 +125,28 @@ export default function HistoryPage() {
             {invoices.map(inv => (
               <Card key={inv.id} data-testid={`card-invoice-${inv.id}`}>
                 <CardContent className="py-3 flex gap-3">
-                  <div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
-                    <FileText className="w-5 h-5 text-muted-foreground" />
+                  <div
+                    className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center flex-shrink-0 overflow-hidden cursor-pointer"
+                    onClick={() => setViewingPhoto(inv.photoPath)}
+                  >
+                    <img src={`${API_BASE}${inv.photoPath}`} alt="Invoice" className="w-full h-full object-cover" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-sm font-medium truncate">{inv.description}</p>
-                      <span className="text-sm font-semibold whitespace-nowrap">${inv.amount}</span>
+                      <div className="flex items-center gap-1">
+                        <span className="text-sm font-semibold whitespace-nowrap">${inv.amount}</span>
+                        <button
+                          className="text-muted-foreground hover:text-destructive p-0.5"
+                          onClick={() => {
+                            if (window.confirm("Delete this invoice?")) {
+                              deleteInvoiceMutation.mutate(inv.id);
+                            }
+                          }}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                     <p className="text-xs text-muted-foreground truncate">{inv.purpose}</p>
                     <div className="flex items-center gap-2 mt-1">
@@ -178,6 +206,23 @@ export default function HistoryPage() {
           Created with Perplexity Computer
         </a>
       </div>
+
+      {viewingPhoto && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+          onClick={() => setViewingPhoto(null)}
+        >
+          <div className="relative max-w-lg w-full">
+            <img src={`${API_BASE}${viewingPhoto}`} alt="Invoice" className="w-full rounded-lg" />
+            <button
+              className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center"
+              onClick={() => setViewingPhoto(null)}
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      )}
       </div>
     </LogoBackground>
   );

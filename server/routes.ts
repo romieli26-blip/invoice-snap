@@ -319,7 +319,20 @@ export async function registerRoutes(
     const session = await requireAdmin(req, res);
     if (!session) return;
     const allUsers = await storage.getAllUsers();
-    res.json(allUsers.map(u => ({ id: u.id, username: u.username, displayName: u.displayName, role: u.role })));
+    const allProps = await storage.getAllProperties();
+    const propMap = new Map(allProps.map(p => [p.id, p.name]));
+
+    const enriched = await Promise.all(allUsers.map(async u => {
+      const propIds = await storage.getUserPropertyIds(u.id);
+      return {
+        id: u.id,
+        username: u.username,
+        displayName: u.displayName,
+        role: u.role,
+        assignedProperties: propIds.map(pid => propMap.get(pid)).filter(Boolean) as string[],
+      };
+    }));
+    res.json(enriched);
   });
 
   app.post("/api/users", async (req, res) => {
@@ -499,6 +512,24 @@ export async function registerRoutes(
     }));
 
     res.json(enriched);
+  });
+
+  app.delete("/api/invoices/:id", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+
+    // Managers can only delete their own invoices
+    if (session.role !== "admin") {
+      const invoice = await storage.getInvoice(id);
+      if (!invoice || invoice.userId !== session.userId) {
+        return res.status(403).json({ error: "Not authorized to delete this invoice" });
+      }
+    }
+
+    await storage.deleteInvoice(id);
+    res.json({ ok: true });
   });
 
   app.get("/api/invoices/export", async (req, res) => {
