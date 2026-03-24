@@ -1,0 +1,75 @@
+import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod";
+
+// ---- Default properties (used to seed DB on first run) ----
+export const DEFAULT_PROPERTIES = [
+  "Bonifay",
+  "Trails End",
+  "Sunchase",
+  "MSE",
+  "Gardenia Hill",
+  "Cedar Ridge",
+  "Pop's Grill",
+  "Magnolia Farms",
+  "Testing Property",
+] as const;
+
+// ---- Tables ----
+export const properties = sqliteTable("properties", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull().unique(),
+  sheetsTabId: integer("sheets_tab_id"), // Google Sheets worksheet ID for this property
+});
+
+export const users = sqliteTable("users", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  username: text("username").notNull().unique(),
+  password: text("password").notNull(),
+  displayName: text("display_name").notNull(),
+  role: text("role").notNull().default("manager"), // "admin" or "manager"
+});
+
+export const invoices = sqliteTable("invoices", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  photoPath: text("photo_path").notNull(),
+  property: text("property").notNull(),
+  purchaseDate: text("purchase_date").notNull(),
+  description: text("description").notNull(),
+  purpose: text("purpose").notNull(),
+  amount: text("amount").notNull(),
+  boughtBy: text("bought_by").notNull(),
+  paymentMethod: text("payment_method").notNull(), // "cash" or "cc"
+  lastFourDigits: text("last_four_digits"),
+  syncedToDrive: integer("synced_to_drive").notNull().default(0),
+  syncedToSheets: integer("synced_to_sheets").notNull().default(0),
+  createdAt: text("created_at").notNull(),
+});
+
+export const insertUserSchema = createInsertSchema(users).omit({ id: true });
+export const insertInvoiceSchema = createInsertSchema(invoices).omit({ id: true });
+export const insertPropertySchema = createInsertSchema(properties).omit({ id: true });
+
+export const loginSchema = z.object({
+  username: z.string().min(1, "Username is required"),
+  password: z.string().min(1, "Password is required"),
+});
+
+export const invoiceFormSchema = z.object({
+  property: z.string().min(1, "Property is required"),
+  purchaseDate: z.string().min(1, "Date is required"),
+  description: z.string().min(1, "Description is required"),
+  purpose: z.string().min(1, "Purpose / use is required"),
+  amount: z.string().min(1, "Amount is required"),
+  boughtBy: z.string().min(1, "Bought by is required"),
+  paymentMethod: z.enum(["cash", "cc"]),
+  lastFourDigits: z.string().optional(),
+});
+
+export type InsertUser = z.infer<typeof insertUserSchema>;
+export type User = typeof users.$inferSelect;
+export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
+export type Invoice = typeof invoices.$inferSelect;
+export type Property = typeof properties.$inferSelect;
+export type InsertProperty = z.infer<typeof insertPropertySchema>;
