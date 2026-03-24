@@ -103,6 +103,91 @@ export async function appendSheetRow(
   }
 }
 
+/**
+ * Delete a row from a sheet by searching for a matching value in the first column (date)
+ * combined with other identifying fields.
+ */
+export async function deleteSheetRow(
+  spreadsheetId: string,
+  tabName: string,
+  purchaseDate: string,
+  description: string,
+  amount: string
+): Promise<boolean> {
+  if (!sheetsApi) return false;
+  try {
+    const range = `'${tabName}'!A:I`;
+    const res = await sheetsApi.spreadsheets.values.get({ spreadsheetId, range });
+    const rows = res.data.values;
+    if (!rows) return false;
+
+    // Find the row index (1-based in Sheets) matching date + description + amount
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      if (row[0] === purchaseDate && row[1] === description && row[3] === amount) {
+        // Delete this row using batchUpdate
+        // First we need the sheet ID
+        const sheetMeta = await sheetsApi.spreadsheets.get({
+          spreadsheetId,
+          fields: "sheets.properties",
+        });
+        const sheet = sheetMeta.data.sheets?.find(s => s.properties?.title === tabName);
+        if (!sheet?.properties?.sheetId) return false;
+
+        await sheetsApi.spreadsheets.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            requests: [{
+              deleteDimension: {
+                range: {
+                  sheetId: sheet.properties.sheetId,
+                  dimension: "ROWS",
+                  startIndex: i,
+                  endIndex: i + 1,
+                },
+              },
+            }],
+          },
+        });
+        console.log(`[google-api] Deleted row ${i + 1} from "${tabName}"`);
+        return true;
+      }
+    }
+    console.log(`[google-api] No matching row found in "${tabName}" to delete`);
+    return false;
+  } catch (err: any) {
+    console.error(`[google-api] Failed to delete sheet row:`, err.message?.slice(0, 200));
+    return false;
+  }
+}
+
+/**
+ * Delete a file from Drive by searching for it by name.
+ */
+export async function deleteFromDrive(fileName: string): Promise<boolean> {
+  if (!driveApi) return false;
+  try {
+    const safeName = fileName.replace(/'/g, "\\'");
+    const search = await driveApi.files.list({
+      q: `name='${safeName}' and trashed=false`,
+      fields: "files(id, name)",
+      spaces: "drive",
+    });
+
+    if (!search.data.files || search.data.files.length === 0) {
+      console.log(`[google-api] File not found on Drive: ${fileName}`);
+      return false;
+    }
+
+    await driveApi.files.delete({ fileId: search.data.files[0].id! });
+    console.log(`[google-api] Deleted from Drive: ${fileName}`);
+    return true;
+  } catch (err: any) {
+    console.error(`[google-api] Drive delete failed:`, err.message?.slice(0, 200));
+    return false;
+  }
+}
+
 // ---- DRIVE ----
 
 export async function uploadToDrive(

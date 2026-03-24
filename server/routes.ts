@@ -7,7 +7,7 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
-import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder } from "./google-api";
+import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, deleteSheetRow, deleteFromDrive } from "./google-api";
 
 // Ensure uploads directory exists
 const uploadsDir = path.resolve(process.cwd(), "uploads");
@@ -525,16 +525,53 @@ export async function registerRoutes(
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
 
+    // Get the invoice first (needed for cleanup + auth check)
+    const invoice = await storage.getInvoice(id);
+    if (!invoice) return res.status(404).json({ error: "Invoice not found" });
+
     // Managers can only delete their own invoices
-    if (session.role !== "admin") {
-      const invoice = await storage.getInvoice(id);
-      if (!invoice || invoice.userId !== session.userId) {
-        return res.status(403).json({ error: "Not authorized to delete this invoice" });
-      }
+    if (session.role !== "admin" && invoice.userId !== session.userId) {
+      return res.status(403).json({ error: "Not authorized to delete this invoice" });
     }
 
+    // Delete from database first
     await storage.deleteInvoice(id);
     res.json({ ok: true });
+
+    // Background cleanup: remove from Google Sheets and Drive (non-blocking)
+    if (isGoogleEnabled() && sheetsConfig) {
+      setImmediate(async () => {
+        try {
+          // Delete row from Google Sheets
+          if (invoice.property && sheetsConfig!.tabs[invoice.property]) {
+            await deleteSheetRow(
+              sheetsConfig!.spreadsheetId,
+              invoice.property,
+              invoice.purchaseDate,
+              invoice.description,
+              invoice.amount
+            );
+          }
+        } catch (e) { console.error("[delete] Sheets cleanup failed:", e); }
+
+        try {
+          // Delete photo from Google Drive
+          const ext = path.extname(invoice.photoPath).slice(1) || "jpg";
+          const safeDesc = (invoice.description || "invoice").replace(/[^a-zA-Z0-9 _-]/g, "").slice(0, 40);
+          const driveFileName = `${invoice.property} - ${invoice.purchaseDate} ${safeDesc}.${ext}`;
+          await deleteFromDrive(driveFileName);
+        } catch (e) { console.error("[delete] Drive cleanup failed:", e); }
+
+        // Delete local upload file
+        try {
+          const localPath = path.resolve(process.cwd(), invoice.photoPath.replace(/^\/api\/uploads\//, "uploads/"));
+          if (fs.existsSync(localPath)) {
+            fs.unlinkSync(localPath);
+            console.log(`[delete] Removed local file: ${localPath}`);
+          }
+        } catch (e) { /* ignore */ }
+      });
+    }
   });
 
   app.get("/api/invoices/export", async (req, res) => {
