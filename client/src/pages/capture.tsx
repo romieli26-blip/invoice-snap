@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Camera, Upload, X, Loader2 } from "lucide-react";
 import { apiUpload } from "@/lib/queryClient";
 import { useLocation } from "wouter";
+import { LogoBackground } from "@/components/LogoBackground";
 
 export default function CapturePage() {
   const [, setLocation] = useLocation();
@@ -57,7 +58,8 @@ export default function CapturePage() {
   }
 
   return (
-    <div className="min-h-screen bg-background p-4 pt-6">
+    <LogoBackground>
+      <div className="bg-background p-4 pt-6">
       <div className="max-w-lg mx-auto space-y-4">
         <h1 className="text-xl font-semibold" data-testid="text-capture-title">Snap Invoice</h1>
         <p className="text-sm text-muted-foreground">Take a photo or upload an image of the invoice.</p>
@@ -160,6 +162,7 @@ export default function CapturePage() {
           </div>
         )}
       </div>
-    </div>
+      </div>
+    </LogoBackground>
   );
 }

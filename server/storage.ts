@@ -1,7 +1,7 @@
-import { type User, type InsertUser, type Invoice, type InsertInvoice, type Property, type InsertProperty, users, invoices, properties, sessions } from "@shared/schema";
+import { type User, type InsertUser, type Invoice, type InsertInvoice, type Property, type InsertProperty, users, invoices, properties, sessions, userProperties } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, inArray } from "drizzle-orm";
 
 const sqlite = new Database("data.db");
 sqlite.pragma("journal_mode = WAL");
@@ -25,6 +25,12 @@ sqlite.exec(`
     user_id INTEGER NOT NULL,
     role TEXT NOT NULL,
     created_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS user_properties (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    property_id INTEGER NOT NULL,
+    UNIQUE(user_id, property_id)
   );
   CREATE TABLE IF NOT EXISTS invoices (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,6 +74,10 @@ export interface IStorage {
   createProperty(property: InsertProperty): Promise<Property>;
   deleteProperty(id: number): Promise<void>;
   updatePropertySheetsTabId(id: number, tabId: number): Promise<void>;
+  // User-property assignment methods
+  getPropertiesForUser(userId: number): Promise<Property[]>;
+  setUserProperties(userId: number, propertyIds: number[]): Promise<void>;
+  getUserPropertyIds(userId: number): Promise<number[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -154,6 +164,26 @@ export class DatabaseStorage implements IStorage {
 
   async updatePropertySheetsTabId(id: number, tabId: number): Promise<void> {
     db.update(properties).set({ sheetsTabId: tabId }).where(eq(properties.id, id)).run();
+  }
+
+  // ---- User-Property assignments ----
+  async getPropertiesForUser(userId: number): Promise<Property[]> {
+    const rows = db.select().from(userProperties).where(eq(userProperties.userId, userId)).all();
+    const propertyIds = rows.map(r => r.propertyId);
+    if (propertyIds.length === 0) return [];
+    return db.select().from(properties).where(inArray(properties.id, propertyIds)).all();
+  }
+
+  async setUserProperties(userId: number, propertyIds: number[]): Promise<void> {
+    db.delete(userProperties).where(eq(userProperties.userId, userId)).run();
+    for (const propertyId of propertyIds) {
+      db.insert(userProperties).values({ userId, propertyId }).run();
+    }
+  }
+
+  async getUserPropertyIds(userId: number): Promise<number[]> {
+    const rows = db.select().from(userProperties).where(eq(userProperties.userId, userId)).all();
+    return rows.map(r => r.propertyId);
   }
 }
 

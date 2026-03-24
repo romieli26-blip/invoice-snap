@@ -10,7 +10,9 @@ import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, Plus, Trash2, UserCircle, Shield, Loader2, Building2 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ArrowLeft, Plus, Trash2, UserCircle, Shield, Loader2, Building2, Settings } from "lucide-react";
+import { LogoBackground } from "@/components/LogoBackground";
 
 interface UserItem {
   id: number;
@@ -36,6 +38,10 @@ export default function AdminPage() {
   const [newPassword, setNewPassword] = useState("");
   const [newDisplayName, setNewDisplayName] = useState("");
   const [newRole, setNewRole] = useState("manager");
+
+  // Edit properties assignment state
+  const [editPropsUserId, setEditPropsUserId] = useState<number | null>(null);
+  const [editPropsSelected, setEditPropsSelected] = useState<number[]>([]);
 
   // Property form state
   const [propDialogOpen, setPropDialogOpen] = useState(false);
@@ -82,6 +88,32 @@ export default function AdminPage() {
     },
   });
 
+  const saveUserPropsMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest("PUT", `/api/users/${editPropsUserId}/properties`, {
+        propertyIds: editPropsSelected,
+      });
+    },
+    onSuccess: () => {
+      setEditPropsUserId(null);
+      toast({ title: "Properties updated" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  async function openEditProps(userId: number) {
+    setEditPropsUserId(userId);
+    try {
+      const res = await apiRequest("GET", `/api/users/${userId}/properties`);
+      const ids: number[] = await res.json();
+      setEditPropsSelected(ids);
+    } catch {
+      setEditPropsSelected([]);
+    }
+  }
+
   // ---- Properties queries/mutations ----
   const { data: propertiesList, isLoading: propsLoading } = useQuery<PropertyItem[]>({
     queryKey: ["/api/properties"],
@@ -124,7 +156,8 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background p-4 pt-6">
+    <LogoBackground>
+      <div className="bg-background p-4 pt-6">
       <div className="max-w-lg mx-auto space-y-6">
         <button
           onClick={() => setLocation("/")}
@@ -332,16 +365,29 @@ export default function AdminPage() {
                       <p className="text-xs text-muted-foreground">@{u.username} · {u.role === "admin" ? "Admin" : "Manager"}</p>
                     </div>
                     {u.id !== user?.id && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="text-muted-foreground hover:text-destructive flex-shrink-0"
-                        onClick={() => deleteUserMutation.mutate(u.id)}
-                        disabled={deleteUserMutation.isPending}
-                        data-testid={`button-delete-user-${u.id}`}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {u.role !== "admin" && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-muted-foreground hover:text-primary"
+                            onClick={() => openEditProps(u.id)}
+                            data-testid={`button-edit-props-${u.id}`}
+                          >
+                            <Settings className="w-4 h-4" />
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-muted-foreground hover:text-destructive"
+                          onClick={() => deleteUserMutation.mutate(u.id)}
+                          disabled={deleteUserMutation.isPending}
+                          data-testid={`button-delete-user-${u.id}`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
                     )}
                   </CardContent>
                 </Card>
@@ -349,7 +395,45 @@ export default function AdminPage() {
             </div>
           )}
         </section>
+
+        {/* ---- EDIT PROPERTIES DIALOG ---- */}
+        <Dialog open={editPropsUserId !== null} onOpenChange={(open) => { if (!open) setEditPropsUserId(null); }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Assign Properties</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3 max-h-[60vh] overflow-y-auto">
+              {propertiesList?.map(prop => (
+                <div key={prop.id} className="flex items-center space-x-2">
+                  <Checkbox
+                    id={`prop-${prop.id}`}
+                    checked={editPropsSelected.includes(prop.id)}
+                    onCheckedChange={(checked) => {
+                      if (checked) {
+                        setEditPropsSelected(prev => [...prev, prop.id]);
+                      } else {
+                        setEditPropsSelected(prev => prev.filter(id => id !== prop.id));
+                      }
+                    }}
+                  />
+                  <Label htmlFor={`prop-${prop.id}`} className="text-sm font-normal cursor-pointer">
+                    {prop.name}
+                  </Label>
+                </div>
+              ))}
+            </div>
+            <Button
+              className="w-full"
+              onClick={() => saveUserPropsMutation.mutate()}
+              disabled={saveUserPropsMutation.isPending}
+            >
+              {saveUserPropsMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+              Save
+            </Button>
+          </DialogContent>
+        </Dialog>
       </div>
-    </div>
+      </div>
+    </LogoBackground>
   );
 }

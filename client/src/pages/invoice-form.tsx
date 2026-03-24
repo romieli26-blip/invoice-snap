@@ -10,6 +10,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { ArrowLeft, Loader2, CheckCircle2, User, PenLine, Building2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { LogoBackground } from "@/components/LogoBackground";
 
 interface PropertyItem { id: number; name: string; sheetsTabId: number | null; }
 
@@ -31,7 +32,7 @@ export default function InvoiceFormPage() {
   const [amount, setAmount] = useState("");
   const [boughtByMode, setBoughtByMode] = useState<"me" | "other">("me");
   const [boughtByCustom, setBoughtByCustom] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<"cash" | "cc">("cash");
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "cc">("cc");
   const [lastFourDigits, setLastFourDigits] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -78,18 +79,21 @@ export default function InvoiceFormPage() {
 
   if (submitted) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4 bg-background">
-        <div className="text-center space-y-3">
-          <CheckCircle2 className="w-16 h-16 text-primary mx-auto" />
-          <h2 className="text-lg font-semibold" data-testid="text-success">Invoice Submitted</h2>
-          <p className="text-sm text-muted-foreground">Redirecting to home...</p>
+      <LogoBackground>
+        <div className="flex items-center justify-center p-4 bg-background" style={{ minHeight: "100vh" }}>
+          <div className="text-center space-y-3">
+            <CheckCircle2 className="w-16 h-16 text-primary mx-auto" />
+            <h2 className="text-lg font-semibold" data-testid="text-success">Invoice Submitted</h2>
+            <p className="text-sm text-muted-foreground">Redirecting to home...</p>
+          </div>
         </div>
-      </div>
+      </LogoBackground>
     );
   }
 
   return (
-    <div className="min-h-screen bg-background p-4 pt-6">
+    <LogoBackground>
+      <div className="bg-background p-4 pt-6">
       <div className="max-w-lg mx-auto space-y-4">
         <button
           onClick={() => setLocation("/")}
@@ -234,8 +238,8 @@ export default function InvoiceFormPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="cash">Cash</SelectItem>
                     <SelectItem value="cc">Credit Card</SelectItem>
+                    <SelectItem value="cash">Cash</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -272,6 +276,7 @@ export default function InvoiceFormPage() {
           </CardContent>
         </Card>
       </div>
-    </div>
+      </div>
+    </LogoBackground>
   );
 }

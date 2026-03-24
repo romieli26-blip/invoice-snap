@@ -8,6 +8,7 @@ import { useLocation } from "wouter";
 import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import type { Invoice } from "@shared/schema";
+import { LogoBackground } from "@/components/LogoBackground";
 
 interface EnrichedInvoice extends Invoice {
   submittedBy: string;
@@ -37,7 +38,8 @@ export default function HistoryPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <LogoBackground>
+      <div className="bg-background">
       {/* Header */}
       <div className="border-b bg-card px-4 py-3">
         <div className="max-w-lg mx-auto flex items-center justify-between">
@@ -176,6 +178,7 @@ export default function HistoryPage() {
           Created with Perplexity Computer
         </a>
       </div>
-    </div>
+      </div>
+    </LogoBackground>
   );
 }

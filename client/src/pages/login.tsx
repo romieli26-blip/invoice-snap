@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useAuth } from "@/hooks/use-auth";
 import { Camera, Loader2 } from "lucide-react";
+import { LogoBackground } from "@/components/LogoBackground";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -29,7 +30,8 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-background">
+    <LogoBackground>
+      <div className="flex items-center justify-center p-4 bg-background" style={{ minHeight: "100vh" }}>
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center pb-2">
           <div className="mx-auto w-14 h-14 rounded-xl bg-primary/10 flex items-center justify-center mb-3">
@@ -88,6 +90,7 @@ export default function LoginPage() {
           </form>
         </CardContent>
       </Card>
-    </div>
+      </div>
+    </LogoBackground>
   );
 }

@@ -355,12 +355,37 @@ export async function registerRoutes(
     res.json({ ok: true });
   });
 
+  app.get("/api/users/:id/properties", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+    const propertyIds = await storage.getUserPropertyIds(id);
+    res.json(propertyIds);
+  });
+
+  app.put("/api/users/:id/properties", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+    const { propertyIds } = req.body;
+    if (!Array.isArray(propertyIds)) return res.status(400).json({ error: "propertyIds must be an array" });
+    await storage.setUserProperties(id, propertyIds);
+    res.json({ ok: true });
+  });
+
   // ---- PROPERTIES ----
   app.get("/api/properties", async (req, res) => {
     const session = await requireAuth(req, res);
     if (!session) return;
-    const props = await storage.getAllProperties();
-    res.json(props);
+    if (session.role === "admin") {
+      const props = await storage.getAllProperties();
+      res.json(props);
+    } else {
+      const props = await storage.getPropertiesForUser(session.userId);
+      res.json(props);
+    }
   });
 
   app.post("/api/properties", async (req, res) => {
