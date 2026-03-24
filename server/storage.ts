@@ -6,6 +6,38 @@ import { eq, desc } from "drizzle-orm";
 const sqlite = new Database("data.db");
 sqlite.pragma("journal_mode = WAL");
 
+// Auto-create tables if they don't exist (needed for fresh deployments like Railway)
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS properties (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    sheets_tab_id INTEGER
+  );
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'manager'
+  );
+  CREATE TABLE IF NOT EXISTS invoices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    photo_path TEXT NOT NULL,
+    property TEXT NOT NULL,
+    purchase_date TEXT NOT NULL,
+    description TEXT NOT NULL,
+    purpose TEXT NOT NULL,
+    amount TEXT NOT NULL,
+    bought_by TEXT NOT NULL,
+    payment_method TEXT NOT NULL,
+    last_four_digits TEXT,
+    synced_to_drive INTEGER NOT NULL DEFAULT 0,
+    synced_to_sheets INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+`);
+
 export const db = drizzle(sqlite);
 
 export interface IStorage {
