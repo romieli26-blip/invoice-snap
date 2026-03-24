@@ -7,15 +7,20 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
 import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2 } from "lucide-react";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthToken } from "@/lib/queryClient";
 import type { Invoice } from "@shared/schema";
-import { LogoBackground } from "@/components/LogoBackground";
+import { LogoBackground, LogoHeader } from "@/components/LogoBackground";
 
 interface EnrichedInvoice extends Invoice {
   submittedBy: string;
 }
 
 const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
+
+function authImgUrl(photoPath: string) {
+  const token = getAuthToken();
+  return `${API_BASE}${photoPath}${token ? `?token=${token}` : ""}`;
+}
 
 export default function HistoryPage() {
   const { user, logout } = useAuth();
@@ -60,7 +65,8 @@ export default function HistoryPage() {
             <h1 className="text-lg font-semibold" data-testid="text-history-title">Invoice Snap</h1>
             <p className="text-xs text-muted-foreground">{user?.displayName}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            <LogoHeader />
             {user?.role === "admin" && (
               <Button
                 variant="ghost"
@@ -129,7 +135,7 @@ export default function HistoryPage() {
                     className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center flex-shrink-0 overflow-hidden cursor-pointer"
                     onClick={() => setViewingPhoto(inv.photoPath)}
                   >
-                    <img src={`${API_BASE}${inv.photoPath}`} alt="Invoice" className="w-full h-full object-cover" />
+                    <img src={authImgUrl(inv.photoPath)} alt="Invoice" className="w-full h-full object-cover" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
@@ -213,7 +219,7 @@ export default function HistoryPage() {
           onClick={() => setViewingPhoto(null)}
         >
           <div className="relative max-w-lg w-full">
-            <img src={`${API_BASE}${viewingPhoto}`} alt="Invoice" className="w-full rounded-lg" />
+            <img src={authImgUrl(viewingPhoto)} alt="Invoice" className="w-full rounded-lg" />
             <button
               className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center"
               onClick={() => setViewingPhoto(null)}

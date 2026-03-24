@@ -231,9 +231,14 @@ export async function registerRoutes(
   // Initialize Google APIs (service account for Railway, or fallback to external-tool)
   initGoogleApis();
 
-  // Serve uploaded files
+  // Serve uploaded files (supports both Bearer token and ?token= query param for <img> tags)
   app.use("/api/uploads", async (req, res, next) => {
-    const session = await getSession(req);
+    // Check Bearer header first
+    let session = await getSession(req);
+    // Fallback to query param token (needed for <img src="..."> which can't send headers)
+    if (!session && req.query.token) {
+      session = await storage.getSession(req.query.token as string) || null;
+    }
     if (!session) return res.status(401).json({ error: "Unauthorized" });
     next();
   });
