@@ -1,31 +1,32 @@
 /**
- * Google Sheets & Drive API integration using Service Account credentials.
+ * Google Sheets & Drive API integration using OAuth2 credentials.
  * 
- * Requires GOOGLE_SERVICE_ACCOUNT_KEY env var containing the JSON key file content.
- * Falls back to callExternalTool (Perplexity sandbox) if no service account is configured.
+ * Requires these env vars on Railway:
+ *   GOOGLE_CLIENT_ID
+ *   GOOGLE_CLIENT_SECRET
+ *   GOOGLE_REFRESH_TOKEN
+ * 
+ * Falls back to callExternalTool (Perplexity sandbox) if not configured.
  */
 import { google } from "googleapis";
 import fs from "fs";
-import path from "path";
 
 let sheetsApi: ReturnType<typeof google.sheets> | null = null;
 let driveApi: ReturnType<typeof google.drive> | null = null;
 
 function getAuth() {
-  const keyEnv = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
-  if (!keyEnv) return null;
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+
+  if (!clientId || !clientSecret || !refreshToken) return null;
 
   try {
-    const credentials = JSON.parse(keyEnv);
-    return new google.auth.GoogleAuth({
-      credentials,
-      scopes: [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive",
-      ],
-    });
+    const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
+    oauth2Client.setCredentials({ refresh_token: refreshToken });
+    return oauth2Client;
   } catch (err: any) {
-    console.error("[google-api] Failed to parse service account key:", err.message);
+    console.error("[google-api] Failed to create OAuth2 client:", err.message);
     return null;
   }
 }
@@ -33,13 +34,13 @@ function getAuth() {
 export function initGoogleApis(): boolean {
   const auth = getAuth();
   if (!auth) {
-    console.log("[google-api] No service account configured, Google sync disabled");
+    console.log("[google-api] No OAuth2 credentials configured, Google sync disabled");
     return false;
   }
 
   sheetsApi = google.sheets({ version: "v4", auth });
   driveApi = google.drive({ version: "v3", auth });
-  console.log("[google-api] Service account initialized — Sheets & Drive enabled");
+  console.log("[google-api] OAuth2 initialized — Sheets & Drive enabled");
   return true;
 }
 
