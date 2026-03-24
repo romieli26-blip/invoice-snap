@@ -124,22 +124,20 @@ const upload = multer({
   },
 });
 
-// Simple session tracking via a token approach (no cookies needed)
-const sessions = new Map<string, { userId: number; role: string }>();
-
+// Session tracking via SQLite-backed storage (survives server restarts)
 function generateToken(): string {
   return crypto.randomBytes(32).toString("hex");
 }
 
-function getSession(req: Request) {
+async function getSession(req: Request) {
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith("Bearer ")) return null;
   const token = auth.slice(7);
-  return sessions.get(token) || null;
+  return (await storage.getSession(token)) || null;
 }
 
-function requireAuth(req: Request, res: Response): { userId: number; role: string } | null {
-  const session = getSession(req);
+async function requireAuth(req: Request, res: Response): Promise<{ userId: number; role: string } | null> {
+  const session = await getSession(req);
   if (!session) {
     res.status(401).json({ error: "Unauthorized" });
     return null;
@@ -147,8 +145,8 @@ function requireAuth(req: Request, res: Response): { userId: number; role: strin
   return session;
 }
 
-function requireAdmin(req: Request, res: Response): { userId: number; role: string } | null {
-  const session = requireAuth(req, res);
+async function requireAdmin(req: Request, res: Response): Promise<{ userId: number; role: string } | null> {
+  const session = await requireAuth(req, res);
   if (!session) return null;
   if (session.role !== "admin") {
     res.status(403).json({ error: "Admin access required" });
@@ -187,8 +185,8 @@ export async function registerRoutes(
 ): Promise<Server> {
 
   // Serve uploaded files
-  app.use("/api/uploads", (req, res, next) => {
-    const session = getSession(req);
+  app.use("/api/uploads", async (req, res, next) => {
+    const session = await getSession(req);
     if (!session) return res.status(401).json({ error: "Unauthorized" });
     next();
   });
@@ -248,21 +246,21 @@ export async function registerRoutes(
     }
 
     const token = generateToken();
-    sessions.set(token, { userId: user.id, role: user.role });
+    await storage.createSession(token, user.id, user.role);
 
     res.json({ token, user: { id: user.id, username: user.username, displayName: user.displayName, role: user.role } });
   });
 
-  app.post("/api/logout", (req, res) => {
+  app.post("/api/logout", async (req, res) => {
     const auth = req.headers.authorization;
     if (auth?.startsWith("Bearer ")) {
-      sessions.delete(auth.slice(7));
+      await storage.deleteSession(auth.slice(7));
     }
     res.json({ ok: true });
   });
 
   app.get("/api/me", async (req, res) => {
-    const session = getSession(req);
+    const session = await getSession(req);
     if (!session) return res.status(401).json({ error: "Unauthorized" });
     const user = await storage.getUser(session.userId);
     if (!user) return res.status(401).json({ error: "User not found" });
@@ -351,8 +349,8 @@ export async function registerRoutes(
   });
 
   // ---- PHOTO UPLOAD ----
-  app.post("/api/upload", (req, res, next) => {
-    const session = getSession(req);
+  app.post("/api/upload", async (req, res, next) => {
+    const session = await getSession(req);
     if (!session) return res.status(401).json({ error: "Unauthorized" });
     next();
   }, upload.single("photo"), (req: any, res) => {

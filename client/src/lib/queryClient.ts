@@ -2,16 +2,30 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
 const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
 
-// Token stored in memory
+// Token stored in memory (and optionally persisted to localStorage)
 let authToken: string | null = null;
 
-export function setAuthToken(token: string | null) {
+const TOKEN_KEY = "invoice_snap_token";
+
+export function setAuthToken(token: string | null, persist = false) {
   authToken = token;
+  if (persist && token) {
+    try { localStorage.setItem(TOKEN_KEY, token); } catch {}
+  }
+  if (!token) {
+    try { localStorage.removeItem(TOKEN_KEY); } catch {}
+  }
 }
 
 export function getAuthToken() {
   return authToken;
 }
+
+// Restore token from localStorage on startup
+try {
+  const saved = localStorage.getItem(TOKEN_KEY);
+  if (saved) authToken = saved;
+} catch {}
 
 function getAuthHeaders(): Record<string, string> {
   if (authToken) return { Authorization: `Bearer ${authToken}` };

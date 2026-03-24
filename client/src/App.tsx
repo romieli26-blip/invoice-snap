@@ -11,9 +11,18 @@ import CapturePage from "@/pages/capture";
 import InvoiceFormPage from "@/pages/invoice-form";
 import AdminPage from "@/pages/admin";
 import NotFound from "@/pages/not-found";
+import { Loader2 } from "lucide-react";
 
 function AuthenticatedRouter() {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   if (!user) {
     return <LoginPage />;

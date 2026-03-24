@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useAuth } from "@/hooks/use-auth";
 import { Camera, Loader2 } from "lucide-react";
 
@@ -10,6 +11,7 @@ export default function LoginPage() {
   const { login } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -18,7 +20,7 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      await login(username, password);
+      await login(username, password, rememberMe);
     } catch (err: any) {
       setError("Invalid username or password");
     } finally {
@@ -61,6 +63,20 @@ export default function LoginPage() {
                 placeholder="Enter your password"
                 autoComplete="current-password"
               />
+            </div>
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="remember-me"
+                data-testid="checkbox-remember-me"
+                checked={rememberMe}
+                onCheckedChange={(checked) => setRememberMe(checked === true)}
+              />
+              <Label
+                htmlFor="remember-me"
+                className="text-sm font-normal cursor-pointer select-none"
+              >
+                Remember me
+              </Label>
             </div>
             {error && (
               <p className="text-sm text-destructive" data-testid="text-login-error">{error}</p>

@@ -1,5 +1,7 @@
-import { createContext, useContext, useState, useCallback } from "react";
-import { setAuthToken } from "@/lib/queryClient";
+import { createContext, useContext, useState, useCallback, useEffect } from "react";
+import { setAuthToken, getAuthToken } from "@/lib/queryClient";
+
+const USER_KEY = "invoice_snap_user";
 
 interface AuthUser {
   id: number;
@@ -10,7 +12,8 @@ interface AuthUser {
 
 interface AuthContextType {
   user: AuthUser | null;
-  login: (username: string, password: string) => Promise<void>;
+  loading: boolean;
+  login: (username: string, password: string, rememberMe?: boolean) => Promise<void>;
   logout: () => void;
 }
 
@@ -20,8 +23,38 @@ const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const login = useCallback(async (username: string, password: string) => {
+  // On mount, check if we have a saved token and validate it
+  useEffect(() => {
+    const token = getAuthToken();
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+
+    // Validate the saved token with the server
+    fetch(`${API_BASE}/api/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error("Invalid token");
+        return res.json();
+      })
+      .then((data: AuthUser) => {
+        setUser(data);
+      })
+      .catch(() => {
+        // Token is invalid or server session expired — clear it
+        setAuthToken(null);
+        try { localStorage.removeItem(USER_KEY); } catch {}
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, []);
+
+  const login = useCallback(async (username: string, password: string, rememberMe = false) => {
     const res = await fetch(`${API_BASE}/api/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -34,17 +67,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const data = await res.json();
-    setAuthToken(data.token);
+    setAuthToken(data.token, rememberMe);
     setUser(data.user);
+
+    if (rememberMe) {
+      try { localStorage.setItem(USER_KEY, JSON.stringify(data.user)); } catch {}
+    }
   }, []);
 
   const logout = useCallback(() => {
     setAuthToken(null);
     setUser(null);
+    try { localStorage.removeItem(USER_KEY); } catch {}
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

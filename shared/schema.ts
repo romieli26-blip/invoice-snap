@@ -30,6 +30,13 @@ export const users = sqliteTable("users", {
   role: text("role").notNull().default("manager"), // "admin" or "manager"
 });
 
+export const sessions = sqliteTable("sessions", {
+  token: text("token").primaryKey(),
+  userId: integer("user_id").notNull(),
+  role: text("role").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
 export const invoices = sqliteTable("invoices", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: integer("user_id").notNull(),

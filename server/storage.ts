@@ -1,4 +1,4 @@
-import { type User, type InsertUser, type Invoice, type InsertInvoice, type Property, type InsertProperty, users, invoices, properties } from "@shared/schema";
+import { type User, type InsertUser, type Invoice, type InsertInvoice, type Property, type InsertProperty, users, invoices, properties, sessions } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, desc } from "drizzle-orm";
@@ -19,6 +19,12 @@ sqlite.exec(`
     password TEXT NOT NULL,
     display_name TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'manager'
+  );
+  CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    created_at TEXT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS invoices (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,6 +58,10 @@ export interface IStorage {
   getAllInvoices(): Promise<Invoice[]>;
   getInvoice(id: number): Promise<Invoice | undefined>;
   updateInvoiceSyncStatus(id: number, target: "drive" | "sheets", synced: boolean): Promise<void>;
+  // Session methods
+  createSession(token: string, userId: number, role: string): Promise<void>;
+  getSession(token: string): Promise<{ userId: number; role: string } | undefined>;
+  deleteSession(token: string): Promise<void>;
   // Property methods
   getAllProperties(): Promise<Property[]>;
   getPropertyByName(name: string): Promise<Property | undefined>;
@@ -108,6 +118,21 @@ export class DatabaseStorage implements IStorage {
     } else {
       db.update(invoices).set({ syncedToSheets: val }).where(eq(invoices.id, id)).run();
     }
+  }
+
+  // ---- Sessions ----
+  async createSession(token: string, userId: number, role: string): Promise<void> {
+    db.insert(sessions).values({ token, userId, role, createdAt: new Date().toISOString() }).run();
+  }
+
+  async getSession(token: string): Promise<{ userId: number; role: string } | undefined> {
+    const row = db.select().from(sessions).where(eq(sessions.token, token)).get();
+    if (!row) return undefined;
+    return { userId: row.userId, role: row.role };
+  }
+
+  async deleteSession(token: string): Promise<void> {
+    db.delete(sessions).where(eq(sessions.token, token)).run();
   }
 
   // ---- Properties ----
