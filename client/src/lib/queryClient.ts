@@ -33,6 +33,14 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 async function throwIfResNotOk(res: Response) {
+  if (res.status === 401 && authToken) {
+    // Session expired or invalid — clear everything and reload to show login
+    authToken = null;
+    try { localStorage.removeItem(TOKEN_KEY); } catch {}
+    try { localStorage.removeItem("invoice_snap_user"); } catch {}
+    window.location.reload();
+    throw new Error("Session expired");
+  }
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
     throw new Error(`${res.status}: ${text}`);
