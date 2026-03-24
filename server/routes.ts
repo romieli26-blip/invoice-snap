@@ -269,14 +269,14 @@ export async function registerRoutes(
 
   // ---- USERS (admin only) ----
   app.get("/api/users", async (req, res) => {
-    const session = requireAdmin(req, res);
+    const session = await requireAdmin(req, res);
     if (!session) return;
     const allUsers = await storage.getAllUsers();
     res.json(allUsers.map(u => ({ id: u.id, username: u.username, displayName: u.displayName, role: u.role })));
   });
 
   app.post("/api/users", async (req, res) => {
-    const session = requireAdmin(req, res);
+    const session = await requireAdmin(req, res);
     if (!session) return;
 
     const { username, password, displayName, role } = req.body;
@@ -298,7 +298,7 @@ export async function registerRoutes(
   });
 
   app.delete("/api/users/:id", async (req, res) => {
-    const session = requireAdmin(req, res);
+    const session = await requireAdmin(req, res);
     if (!session) return;
 
     const id = parseInt(req.params.id);
@@ -310,14 +310,14 @@ export async function registerRoutes(
 
   // ---- PROPERTIES ----
   app.get("/api/properties", async (req, res) => {
-    const session = requireAuth(req, res);
+    const session = await requireAuth(req, res);
     if (!session) return;
     const props = await storage.getAllProperties();
     res.json(props);
   });
 
   app.post("/api/properties", async (req, res) => {
-    const session = requireAdmin(req, res);
+    const session = await requireAdmin(req, res);
     if (!session) return;
 
     const { name } = req.body;
@@ -338,7 +338,7 @@ export async function registerRoutes(
   });
 
   app.delete("/api/properties/:id", async (req, res) => {
-    const session = requireAdmin(req, res);
+    const session = await requireAdmin(req, res);
     if (!session) return;
 
     const id = parseInt(req.params.id);
@@ -360,7 +360,7 @@ export async function registerRoutes(
 
   // ---- INVOICES ----
   app.post("/api/invoices", async (req, res) => {
-    const session = requireAuth(req, res);
+    const session = await requireAuth(req, res);
     if (!session) return;
 
     const parsed = invoiceFormSchema.safeParse(req.body);
@@ -407,7 +407,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/invoices", async (req, res) => {
-    const session = requireAuth(req, res);
+    const session = await requireAuth(req, res);
     if (!session) return;
 
     let invoicesList;
@@ -430,7 +430,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/invoices/export", async (req, res) => {
-    const session = requireAuth(req, res);
+    const session = await requireAuth(req, res);
     if (!session) return;
 
     let invoicesList;
