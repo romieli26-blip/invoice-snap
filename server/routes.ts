@@ -7,6 +7,7 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
+import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder } from "./google-api";
 
 // Ensure uploads directory exists
 const uploadsDir = path.resolve(process.cwd(), "uploads");
@@ -46,10 +47,22 @@ function callExternalTool(sourceId: string, toolName: string, args: Record<strin
   }
 }
 
-function createSheetsTab(propertyName: string): number | null {
+async function createSheetsTab(propertyName: string): Promise<number | null> {
   if (!sheetsConfig) return null;
+
+  // Try Google API first (works on Railway)
+  if (isGoogleEnabled()) {
+    const tabId = await createSheetTab(sheetsConfig.spreadsheetId, propertyName);
+    if (tabId != null) {
+      sheetsConfig.tabs[propertyName] = tabId;
+      saveSheetsConfig();
+      return tabId;
+    }
+    return null;
+  }
+
+  // Fallback to external-tool CLI (Perplexity sandbox)
   try {
-    // Create the worksheet
     const createResult = callExternalTool("google_sheets__pipedream", "google_sheets-create-worksheet", {
       sheetId: sheetsConfig.spreadsheetId,
       title: propertyName,
@@ -60,14 +73,12 @@ function createSheetsTab(propertyName: string): number | null {
       return null;
     }
 
-    // Add header row
     callExternalTool("google_sheets__pipedream", "google_sheets-add-multiple-rows", {
       sheetId: sheetsConfig.spreadsheetId,
       worksheetId: tabId,
       rows: JSON.stringify([["Date", "Description", "What For / Use", "Amount ($)", "Bought By", "Payment Method", "Last 4 Digits", "Submitted By", "Submitted At"]]),
     });
 
-    // Update in-memory config and save
     sheetsConfig.tabs[propertyName] = tabId;
     saveSheetsConfig();
     console.log(`[sheets] Created tab "${propertyName}" (id: ${tabId})`);
@@ -78,26 +89,34 @@ function createSheetsTab(propertyName: string): number | null {
   }
 }
 
-function syncToSheets(invoice: any, submittedByName: string) {
+async function syncToSheets(invoice: any, submittedByName: string): Promise<boolean> {
   if (!sheetsConfig) return false;
-  const tabId = sheetsConfig.tabs[invoice.property];
-  if (!tabId) {
-    console.error(`[sheets] No tab for property: ${invoice.property}`);
+  const tabName = invoice.property;
+  if (!sheetsConfig.tabs[tabName]) {
+    console.error(`[sheets] No tab for property: ${tabName}`);
     return false;
   }
+
+  const row = [
+    invoice.purchaseDate, invoice.description, invoice.purpose, invoice.amount,
+    invoice.boughtBy, invoice.paymentMethod === "cc" ? "Credit Card" : "Cash",
+    invoice.lastFourDigits || "", submittedByName, invoice.createdAt,
+  ];
+
+  // Try Google API first (works on Railway)
+  if (isGoogleEnabled()) {
+    return await appendSheetRow(sheetsConfig.spreadsheetId, tabName, row);
+  }
+
+  // Fallback to external-tool CLI (Perplexity sandbox)
   try {
-    const row = JSON.stringify([
-      invoice.purchaseDate, invoice.description, invoice.purpose, invoice.amount,
-      invoice.boughtBy, invoice.paymentMethod === "cc" ? "Credit Card" : "Cash",
-      invoice.lastFourDigits || "", submittedByName, invoice.createdAt,
-    ]);
     const result = callExternalTool("google_sheets__pipedream", "google_sheets-add-multiple-rows", {
       sheetId: sheetsConfig!.spreadsheetId,
-      worksheetId: tabId,
-      rows: `[${row}]`,
+      worksheetId: sheetsConfig.tabs[tabName],
+      rows: `[${JSON.stringify(row)}]`,
     });
-    if (result.updatedRows) {
-      console.log(`[sheets] Row added to ${invoice.property}`);
+    if (result?.updatedRows) {
+      console.log(`[sheets] Row added to ${tabName}`);
       return true;
     }
     return false;
@@ -155,18 +174,43 @@ async function requireAdmin(req: Request, res: Response): Promise<{ userId: numb
   return session;
 }
 
-function syncToDrive(invoice: any): boolean {
-  try {
-    const filePath = path.resolve(process.cwd(), invoice.photoPath.replace(/^\/api\/uploads\//, "uploads/"));
-    if (!fs.existsSync(filePath)) {
-      console.error("[drive] File not found:", filePath);
+// Main folder ID cache (set after first lookup/creation)
+let mainFolderId: string | null = null;
+const propertyFolderCache = new Map<string, string>();
+
+async function syncToDrive(invoice: any): Promise<boolean> {
+  const filePath = path.resolve(process.cwd(), invoice.photoPath.replace(/^\/api\/uploads\//, "uploads/"));
+  if (!fs.existsSync(filePath)) {
+    console.error("[drive] File not found:", filePath);
+    return false;
+  }
+  const ext = path.extname(filePath).slice(1) || "jpg";
+  const safeDesc = (invoice.description || "invoice").replace(/[^a-zA-Z0-9 _-]/g, "").slice(0, 40);
+  const fileName = `${invoice.property} - ${invoice.purchaseDate} ${safeDesc}.${ext}`;
+
+  // Try Google API first (works on Railway)
+  if (isGoogleEnabled()) {
+    try {
+      // Ensure "Main App Invoices" folder exists
+      if (!mainFolderId) {
+        mainFolderId = await ensureDriveFolder("Main App Invoices");
+      }
+      // Ensure property subfolder exists
+      let propertyFolderId = propertyFolderCache.get(invoice.property) || null;
+      if (!propertyFolderId && mainFolderId) {
+        propertyFolderId = await ensureDriveFolder(invoice.property, mainFolderId);
+        if (propertyFolderId) propertyFolderCache.set(invoice.property, propertyFolderId);
+      }
+      return await uploadToDrive(filePath, fileName, propertyFolderId || mainFolderId || undefined);
+    } catch (err: any) {
+      console.error("[drive] Google API upload failed:", err.message?.slice(0, 200));
       return false;
     }
-    const base64 = fs.readFileSync(filePath).toString("base64");
-    const ext = path.extname(filePath).slice(1) || "jpg";
-    const safeDesc = (invoice.description || "invoice").replace(/[^a-zA-Z0-9 _-]/g, "").slice(0, 40);
-    const fileName = `${invoice.property} - ${invoice.purchaseDate} ${safeDesc}.${ext}`;
+  }
 
+  // Fallback to external-tool CLI (Perplexity sandbox)
+  try {
+    const base64 = fs.readFileSync(filePath).toString("base64");
     callExternalTool("google_drive", "export_files", {
       file_urls: [`data:image/${ext};base64,${base64}`],
       file_names: [fileName],
@@ -183,6 +227,9 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  // Initialize Google APIs (service account for Railway, or fallback to external-tool)
+  initGoogleApis();
 
   // Serve uploaded files
   app.use("/api/uploads", async (req, res, next) => {
@@ -330,7 +377,7 @@ export async function registerRoutes(
     if (existing) return res.status(409).json({ error: "Property already exists" });
 
     // Create Google Sheets tab first
-    const tabId = createSheetsTab(trimmed);
+    const tabId = await createSheetsTab(trimmed);
 
     const prop = await storage.createProperty({ name: trimmed, sheetsTabId: tabId ?? undefined });
     console.log(`[property] Added "${trimmed}" (sheetsTab: ${tabId})`);
