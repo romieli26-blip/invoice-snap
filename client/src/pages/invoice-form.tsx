@@ -3,16 +3,23 @@ import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
-import { ArrowLeft, Loader2, CheckCircle2, User, PenLine, Building2, Plus } from "lucide-react";
+import { ArrowLeft, Loader2, CheckCircle2, User, PenLine, Plus, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { LogoBackground } from "@/components/LogoBackground";
 
 interface PropertyItem { id: number; name: string; sheetsTabId: number | null; }
+
+interface SplitItem {
+  description: string;
+  purpose: string;
+  amount: string;
+}
 
 export default function InvoiceFormPage() {
   const [, setLocation] = useLocation();
@@ -27,9 +34,19 @@ export default function InvoiceFormPage() {
 
   const [property, setProperty] = useState("");
   const [purchaseDate, setPurchaseDate] = useState(new Date().toISOString().split("T")[0]);
+
+  // Single-item fields (used when samePurpose = true)
   const [description, setDescription] = useState("");
   const [purpose, setPurpose] = useState("");
   const [amount, setAmount] = useState("");
+
+  // Split mode
+  const [samePurpose, setSamePurpose] = useState(true);
+  const [receiptTotal, setReceiptTotal] = useState("");
+  const [splitItems, setSplitItems] = useState<SplitItem[]>([
+    { description: "", purpose: "", amount: "" },
+  ]);
+
   const [boughtByMode, setBoughtByMode] = useState<"me" | "other">("me");
   const [boughtByCustom, setBoughtByCustom] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "cc">("cc");
@@ -39,98 +56,119 @@ export default function InvoiceFormPage() {
 
   const resolvedBoughtBy = boughtByMode === "me" ? (user?.displayName || "") : boughtByCustom;
 
+  // Split items helpers
+  function updateSplitItem(index: number, field: keyof SplitItem, value: string) {
+    setSplitItems(items => items.map((item, i) => i === index ? { ...item, [field]: value } : item));
+  }
+  function addSplitItem() {
+    setSplitItems(items => [...items, { description: "", purpose: "", amount: "" }]);
+  }
+  function removeSplitItem(index: number) {
+    if (splitItems.length <= 1) return;
+    setSplitItems(items => items.filter((_, i) => i !== index));
+  }
+
+  const splitTotal = splitItems.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+  const receiptTotalNum = parseFloat(receiptTotal) || 0;
+  const splitDifference = receiptTotalNum > 0 ? Math.abs(receiptTotalNum - splitTotal) : 0;
+  const splitDiffPercent = receiptTotalNum > 0 ? (splitDifference / receiptTotalNum) * 100 : 0;
+  const splitDiffOk = receiptTotalNum === 0 || splitDiffPercent <= 10;
+
+  function validateAmount(amt: number, label?: string): boolean {
+    if (isNaN(amt) || amt <= 0) {
+      toast({ title: "Invalid amount", description: `${label ? label + ": " : ""}Amount must be greater than $0.`, variant: "destructive" });
+      return false;
+    }
+    if (amt > 10000) {
+      toast({ title: "Amount exceeds limit", description: "For receipts over $10,000, please contact your asset manager.", variant: "destructive" });
+      return false;
+    }
+    return true;
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!photoPath) return;
 
-    const amountNum = parseFloat(amount);
-    if (isNaN(amountNum) || amountNum <= 0) {
-      toast({
-        title: "Invalid amount",
-        description: "Amount must be greater than $0.",
-        variant: "destructive",
-      });
-      return;
+    const boughtBy = resolvedBoughtBy || user?.displayName || "Unknown";
+
+    if (samePurpose) {
+      // Single item submission
+      const amountNum = parseFloat(amount);
+      if (!validateAmount(amountNum)) return;
+
+      setSubmitting(true);
+      try {
+        await apiRequest("POST", "/api/invoices", {
+          photoPath, property, purchaseDate, description, purpose, amount,
+          boughtBy, paymentMethod,
+          lastFourDigits: paymentMethod === "cc" ? lastFourDigits : undefined,
+        });
+        setSubmitted(true);
+        queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+        toast({ title: "Receipt submitted", description: "Your receipt has been recorded." });
+        setTimeout(() => setLocation("/"), 1500);
+      } catch (err: any) {
+        toast({ title: "Failed to submit", description: err.message || "Please try again.", variant: "destructive" });
+      } finally {
+        setSubmitting(false);
+      }
+    } else {
+      // Split items submission
+      // Validate each item
+      for (let i = 0; i < splitItems.length; i++) {
+        const item = splitItems[i];
+        if (!item.description.trim() || !item.purpose.trim() || !item.amount.trim()) {
+          toast({ title: "Missing fields", description: `Item ${i + 1} is incomplete. Fill in all fields.`, variant: "destructive" });
+          return;
+        }
+        const amt = parseFloat(item.amount);
+        if (!validateAmount(amt, `Item ${i + 1}`)) return;
+      }
+
+      // Check total difference
+      if (receiptTotalNum > 0 && !splitDiffOk) {
+        toast({
+          title: "Totals don't match",
+          description: `The difference between the receipt total ($${receiptTotalNum.toFixed(2)}) and items total ($${splitTotal.toFixed(2)}) is ${splitDiffPercent.toFixed(1)}%. Maximum allowed is 10%.`,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setSubmitting(true);
+      try {
+        // Submit each line item as a separate receipt, all sharing the same photo
+        for (const item of splitItems) {
+          await apiRequest("POST", "/api/invoices", {
+            photoPath, property, purchaseDate,
+            description: item.description,
+            purpose: item.purpose,
+            amount: item.amount,
+            boughtBy, paymentMethod,
+            lastFourDigits: paymentMethod === "cc" ? lastFourDigits : undefined,
+          });
+        }
+        setSubmitted(true);
+        queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+        toast({ title: "Receipt submitted", description: `${splitItems.length} entries recorded from split receipt.` });
+        setTimeout(() => setLocation("/"), 1500);
+      } catch (err: any) {
+        toast({ title: "Failed to submit", description: err.message || "Please try again.", variant: "destructive" });
+      } finally {
+        setSubmitting(false);
+      }
     }
-    if (amountNum > 10000) {
-      toast({
-        title: "Amount exceeds limit",
-        description: "For receipts over $10,000, please contact your asset manager.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      await apiRequest("POST", "/api/invoices", {
-        photoPath,
-        property,
-        purchaseDate,
-        description,
-        purpose,
-        amount,
-        boughtBy: resolvedBoughtBy || user?.displayName || "Unknown",
-        paymentMethod,
-        lastFourDigits: paymentMethod === "cc" ? lastFourDigits : undefined,
-      });
-
-      setSubmitted(true);
-      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
-
-      toast({
-        title: "Receipt submitted",
-        description: "Your receipt has been recorded.",
-      });
-    } catch (err: any) {
-      toast({
-        title: "Failed to submit",
-        description: err.message || "Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  function resetFormForAnother() {
-    setProperty("");
-    setPurchaseDate(new Date().toISOString().split("T")[0]);
-    setDescription("");
-    setPurpose("");
-    setAmount("");
-    setBoughtByMode("me");
-    setBoughtByCustom("");
-    setPaymentMethod("cc");
-    setLastFourDigits("");
-    setSubmitted(false);
   }
 
   if (submitted) {
     return (
       <LogoBackground>
         <div className="flex items-center justify-center p-4 bg-background" style={{ minHeight: "100vh" }}>
-          <div className="text-center space-y-4">
+          <div className="text-center space-y-3">
             <CheckCircle2 className="w-16 h-16 text-primary mx-auto" />
             <h2 className="text-lg font-semibold" data-testid="text-success">Receipt Submitted</h2>
-            <p className="text-sm text-muted-foreground">What would you like to do next?</p>
-            <div className="flex gap-2 justify-center">
-              <Button
-                variant="secondary"
-                onClick={() => setLocation("/")}
-                data-testid="button-done"
-              >
-                Done
-              </Button>
-              <Button
-                onClick={resetFormForAnother}
-                className="gap-1"
-                data-testid="button-add-another"
-              >
-                <Plus className="w-4 h-4" />
-                Add Another Entry
-              </Button>
-            </div>
+            <p className="text-sm text-muted-foreground">Redirecting...</p>
           </div>
         </div>
       </LogoBackground>
@@ -139,7 +177,7 @@ export default function InvoiceFormPage() {
 
   return (
     <LogoBackground>
-      <div className="bg-background p-4 pt-6">
+      <div className="bg-background p-4 pt-6 pb-12">
       <div className="max-w-lg mx-auto space-y-4">
         <button
           onClick={() => setLocation("/")}
@@ -157,10 +195,7 @@ export default function InvoiceFormPage() {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
                 <Label>Property</Label>
-                <Select
-                  value={property}
-                  onValueChange={setProperty}
-                >
+                <Select value={property} onValueChange={setProperty}>
                   <SelectTrigger data-testid="select-property">
                     <SelectValue placeholder="Select property" />
                   </SelectTrigger>
@@ -189,45 +224,161 @@ export default function InvoiceFormPage() {
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="description">What Was Bought</Label>
-                <Input
-                  id="description"
-                  value={description}
-                  onChange={e => setDescription(e.target.value)}
-                  placeholder="e.g. Plumbing supplies, cleaning materials"
-                  required
-                  data-testid="input-description"
+              {/* Split receipt toggle */}
+              <div className="flex items-center space-x-2 py-1">
+                <Checkbox
+                  id="same-purpose"
+                  checked={samePurpose}
+                  onCheckedChange={(checked) => setSamePurpose(checked === true)}
+                  data-testid="checkbox-same-purpose"
                 />
+                <Label htmlFor="same-purpose" className="text-sm font-normal cursor-pointer select-none">
+                  All items on this receipt are for the same purpose
+                </Label>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="purpose">What For / Use</Label>
-                <Input
-                  id="purpose"
-                  value={purpose}
-                  onChange={e => setPurpose(e.target.value)}
-                  placeholder="e.g. Unit 4B bathroom repair, Park entrance"
-                  required
-                  data-testid="input-purpose"
-                />
-              </div>
+              {samePurpose ? (
+                /* ---- SINGLE ITEM MODE ---- */
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="description">What Was Bought</Label>
+                    <Input
+                      id="description"
+                      value={description}
+                      onChange={e => setDescription(e.target.value)}
+                      placeholder="e.g. Plumbing supplies, cleaning materials"
+                      required
+                      data-testid="input-description"
+                    />
+                  </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="amount">Amount ($)</Label>
-                <Input
-                  id="amount"
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  max="10000"
-                  value={amount}
-                  onChange={e => setAmount(e.target.value)}
-                  placeholder="0.00"
-                  required
-                  data-testid="input-amount"
-                />
-              </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="purpose">What For / Use</Label>
+                    <Input
+                      id="purpose"
+                      value={purpose}
+                      onChange={e => setPurpose(e.target.value)}
+                      placeholder="e.g. Unit 4B bathroom repair, Park entrance"
+                      required
+                      data-testid="input-purpose"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="amount">Amount ($)</Label>
+                    <Input
+                      id="amount"
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      max="10000"
+                      value={amount}
+                      onChange={e => setAmount(e.target.value)}
+                      placeholder="0.00"
+                      required
+                      data-testid="input-amount"
+                    />
+                  </div>
+                </>
+              ) : (
+                /* ---- SPLIT ITEMS MODE ---- */
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="receiptTotal">Receipt Total ($)</Label>
+                    <Input
+                      id="receiptTotal"
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      value={receiptTotal}
+                      onChange={e => setReceiptTotal(e.target.value)}
+                      placeholder="Total on the receipt"
+                      data-testid="input-receipt-total"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Enter the receipt total to verify your split amounts (up to 10% difference allowed for taxes).
+                    </p>
+                  </div>
+
+                  <div className="space-y-3">
+                    {splitItems.map((item, idx) => (
+                      <div key={idx} className="border rounded-lg p-3 space-y-2 bg-muted/30 relative">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-medium text-muted-foreground">Item {idx + 1}</span>
+                          {splitItems.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removeSplitItem(idx)}
+                              className="text-muted-foreground hover:text-destructive p-0.5"
+                              data-testid={`button-remove-item-${idx}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                        <Input
+                          value={item.description}
+                          onChange={e => updateSplitItem(idx, "description", e.target.value)}
+                          placeholder="What Was Bought"
+                          data-testid={`input-split-description-${idx}`}
+                        />
+                        <Input
+                          value={item.purpose}
+                          onChange={e => updateSplitItem(idx, "purpose", e.target.value)}
+                          placeholder="What For / Use"
+                          data-testid={`input-split-purpose-${idx}`}
+                        />
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0.01"
+                          max="10000"
+                          value={item.amount}
+                          onChange={e => updateSplitItem(idx, "amount", e.target.value)}
+                          placeholder="Amount ($)"
+                          data-testid={`input-split-amount-${idx}`}
+                        />
+                      </div>
+                    ))}
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full gap-1"
+                    onClick={addSplitItem}
+                    data-testid="button-add-split-item"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add Another Item
+                  </Button>
+
+                  {/* Totals summary */}
+                  {splitItems.length > 0 && (
+                    <div className="border rounded-lg p-3 space-y-1 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Items total:</span>
+                        <span className="font-medium">${splitTotal.toFixed(2)}</span>
+                      </div>
+                      {receiptTotalNum > 0 && (
+                        <>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Receipt total:</span>
+                            <span className="font-medium">${receiptTotalNum.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Difference:</span>
+                            <span className={`font-medium ${splitDiffOk ? "text-primary" : "text-destructive"}`}>
+                              ${splitDifference.toFixed(2)} ({splitDiffPercent.toFixed(1)}%)
+                              {splitDiffOk ? " ✓" : " ✗ Over 10%"}
+                            </span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
 
               <div className="space-y-2">
                 <Label>Bought By</Label>
@@ -314,11 +465,11 @@ export default function InvoiceFormPage() {
               <Button
                 type="submit"
                 className="w-full"
-                disabled={submitting}
+                disabled={submitting || (!samePurpose && !splitDiffOk)}
                 data-testid="button-submit"
               >
                 {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                Submit Receipt
+                {samePurpose ? "Submit Receipt" : `Submit ${splitItems.length} Entries`}
               </Button>
             </form>
           </CardContent>
