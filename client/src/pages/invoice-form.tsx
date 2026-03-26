@@ -74,71 +74,58 @@ export default function InvoiceFormPage() {
   const splitDiffPercent = receiptTotalNum > 0 ? (splitDifference / receiptTotalNum) * 100 : 0;
   const splitDiffOk = receiptTotalNum === 0 || splitDiffPercent <= 10;
 
-  function validateAmount(amt: number, label?: string): boolean {
-    if (isNaN(amt) || amt <= 0) {
-      toast({ title: "Invalid amount", description: `${label ? label + ": " : ""}Amount must be greater than $0.`, variant: "destructive" });
-      return false;
+  function validateForm(): string | null {
+    if (!photoPath) return "No photo attached. Please go back and take a photo first.";
+    if (!property) return "Please select a property.";
+    if (!purchaseDate) return "Please select the date of purchase.";
+
+    if (samePurpose) {
+      if (!description.trim()) return "Please enter what was bought.";
+      if (!purpose.trim()) return "Please enter what the purchase was for.";
+      if (!amount.trim()) return "Please enter the amount.";
+      const amountNum = parseFloat(amount);
+      if (isNaN(amountNum) || amountNum <= 0) return "Amount must be greater than $0.";
+      if (amountNum > 10000) return "For receipts over $10,000, please contact your asset manager.";
+    } else {
+      for (let i = 0; i < splitItems.length; i++) {
+        const item = splitItems[i];
+        if (!item.description.trim()) return `Item ${i + 1}: Please enter what was bought.`;
+        if (!item.purpose.trim()) return `Item ${i + 1}: Please enter what it was for.`;
+        if (!item.amount.trim()) return `Item ${i + 1}: Please enter the amount.`;
+        const amt = parseFloat(item.amount);
+        if (isNaN(amt) || amt <= 0) return `Item ${i + 1}: Amount must be greater than $0.`;
+        if (amt > 10000) return `Item ${i + 1}: For receipts over $10,000, please contact your asset manager.`;
+      }
+      if (receiptTotalNum > 0 && !splitDiffOk) {
+        return `The difference between the receipt total ($${receiptTotalNum.toFixed(2)}) and items total ($${splitTotal.toFixed(2)}) is ${splitDiffPercent.toFixed(1)}%. Maximum allowed is 10%.`;
+      }
     }
-    if (amt > 10000) {
-      toast({ title: "Amount exceeds limit", description: "For receipts over $10,000, please contact your asset manager.", variant: "destructive" });
-      return false;
-    }
-    return true;
+
+    if (boughtByMode === "other" && !boughtByCustom.trim()) return "Please enter who made the purchase.";
+
+    return null;
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!photoPath) return;
+
+    const error = validateForm();
+    if (error) {
+      toast({ title: "Please fix the following", description: error, variant: "destructive" });
+      return;
+    }
 
     const boughtBy = resolvedBoughtBy || user?.displayName || "Unknown";
 
-    if (samePurpose) {
-      // Single item submission
-      const amountNum = parseFloat(amount);
-      if (!validateAmount(amountNum)) return;
-
-      setSubmitting(true);
-      try {
+    setSubmitting(true);
+    try {
+      if (samePurpose) {
         await apiRequest("POST", "/api/invoices", {
           photoPath, property, purchaseDate, description, purpose, amount,
           boughtBy, paymentMethod,
           lastFourDigits: paymentMethod === "cc" ? lastFourDigits : undefined,
         });
-        setSubmitted(true);
-        queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
-        toast({ title: "Receipt submitted", description: "Your receipt has been recorded." });
-        setTimeout(() => setLocation("/"), 1500);
-      } catch (err: any) {
-        toast({ title: "Failed to submit", description: err.message || "Please try again.", variant: "destructive" });
-      } finally {
-        setSubmitting(false);
-      }
-    } else {
-      // Split items submission
-      // Validate each item
-      for (let i = 0; i < splitItems.length; i++) {
-        const item = splitItems[i];
-        if (!item.description.trim() || !item.purpose.trim() || !item.amount.trim()) {
-          toast({ title: "Missing fields", description: `Item ${i + 1} is incomplete. Fill in all fields.`, variant: "destructive" });
-          return;
-        }
-        const amt = parseFloat(item.amount);
-        if (!validateAmount(amt, `Item ${i + 1}`)) return;
-      }
-
-      // Check total difference
-      if (receiptTotalNum > 0 && !splitDiffOk) {
-        toast({
-          title: "Totals don't match",
-          description: `The difference between the receipt total ($${receiptTotalNum.toFixed(2)}) and items total ($${splitTotal.toFixed(2)}) is ${splitDiffPercent.toFixed(1)}%. Maximum allowed is 10%.`,
-          variant: "destructive",
-        });
-        return;
-      }
-
-      setSubmitting(true);
-      try {
-        // Submit each line item as a separate receipt, all sharing the same photo
+      } else {
         for (const item of splitItems) {
           await apiRequest("POST", "/api/invoices", {
             photoPath, property, purchaseDate,
@@ -149,15 +136,16 @@ export default function InvoiceFormPage() {
             lastFourDigits: paymentMethod === "cc" ? lastFourDigits : undefined,
           });
         }
-        setSubmitted(true);
-        queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
-        toast({ title: "Receipt submitted", description: `${splitItems.length} entries recorded from split receipt.` });
-        setTimeout(() => setLocation("/"), 1500);
-      } catch (err: any) {
-        toast({ title: "Failed to submit", description: err.message || "Please try again.", variant: "destructive" });
-      } finally {
-        setSubmitting(false);
       }
+      setSubmitted(true);
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      const msg = samePurpose ? "Your receipt has been recorded." : `${splitItems.length} entries recorded from split receipt.`;
+      toast({ title: "Receipt submitted", description: msg });
+      setTimeout(() => setLocation("/"), 1500);
+    } catch (err: any) {
+      toast({ title: "Something went wrong", description: "Check your internet connection and try again.", variant: "destructive" });
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -247,7 +235,6 @@ export default function InvoiceFormPage() {
                       value={description}
                       onChange={e => setDescription(e.target.value)}
                       placeholder="e.g. Plumbing supplies, cleaning materials"
-                      required
                       data-testid="input-description"
                     />
                   </div>
@@ -259,7 +246,6 @@ export default function InvoiceFormPage() {
                       value={purpose}
                       onChange={e => setPurpose(e.target.value)}
                       placeholder="e.g. Unit 4B bathroom repair, Park entrance"
-                      required
                       data-testid="input-purpose"
                     />
                   </div>
@@ -275,7 +261,6 @@ export default function InvoiceFormPage() {
                       value={amount}
                       onChange={e => setAmount(e.target.value)}
                       placeholder="0.00"
-                      required
                       data-testid="input-amount"
                     />
                   </div>
@@ -419,7 +404,6 @@ export default function InvoiceFormPage() {
                     value={boughtByCustom}
                     onChange={e => setBoughtByCustom(e.target.value)}
                     placeholder="e.g. Roland Maintenance, ABC Plumbing"
-                    required
                     className="mt-1"
                     autoFocus
                     data-testid="input-bought-by-custom"
