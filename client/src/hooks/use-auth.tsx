@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect } from "react";
-import { setAuthToken, getAuthToken } from "@/lib/queryClient";
+import { setAuthToken, getAuthToken, queryClient } from "@/lib/queryClient";
 
 const USER_KEY = "invoice_snap_user";
 
@@ -79,6 +79,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setAuthToken(null);
     setUser(null);
     try { localStorage.removeItem(USER_KEY); } catch {}
+    // Clear all cached data so the next user doesn't see stale data
+    queryClient.clear();
   }, []);
 
   return (
