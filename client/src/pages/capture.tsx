@@ -11,6 +11,7 @@ export default function CapturePage() {
   const [preview, setPreview] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
+  const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
@@ -22,8 +23,13 @@ export default function CapturePage() {
 
   function processFile(file: File) {
     setError("");
-    if (file.size > 10 * 1024 * 1024) {
-      setError("File too large. Max 10MB.");
+    const allowedTypes = ["image/jpeg", "image/png", "application/pdf"];
+    if (!allowedTypes.includes(file.type)) {
+      setError("Invalid file type. Only PNG, JPG, and PDF are allowed.");
+      return;
+    }
+    if (file.size > 4 * 1024 * 1024) {
+      setError("File too large. Max 4MB.");
       return;
     }
     const reader = new FileReader();
@@ -61,11 +67,26 @@ export default function CapturePage() {
     <LogoBackground>
       <div className="bg-background p-4 pt-6">
       <div className="max-w-lg mx-auto space-y-4">
-        <h1 className="text-xl font-semibold" data-testid="text-capture-title">Snap Invoice</h1>
-        <p className="text-sm text-muted-foreground">Take a photo or upload an image of the invoice.</p>
+        <h1 className="text-xl font-semibold" data-testid="text-capture-title">Snap Receipt</h1>
+        <p className="text-sm text-muted-foreground">Take a photo or upload an image of the receipt.</p>
 
         {!preview ? (
-          <div className="space-y-3">
+          <div
+            className={`space-y-3 ${dragging ? "ring-2 ring-primary ring-offset-2 rounded-lg" : ""}`}
+            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragging(false);
+              const file = e.dataTransfer.files?.[0];
+              if (file) processFile(file);
+            }}
+          >
+            {dragging && (
+              <div className="flex items-center justify-center py-8 text-primary font-medium text-sm">
+                Drop your file here
+              </div>
+            )}
             <Card
               className="border-2 border-dashed border-primary/30 cursor-pointer hover:border-primary/50 transition-colors"
               onClick={() => cameraInputRef.current?.click()}
@@ -91,7 +112,7 @@ export default function CapturePage() {
                 </div>
                 <div>
                   <span className="text-sm font-medium block">Upload from Gallery</span>
-                  <span className="text-xs text-muted-foreground">JPEG, PNG, WebP — max 10MB</span>
+                  <span className="text-xs text-muted-foreground">PNG, JPG, PDF — max 4MB</span>
                 </div>
               </CardContent>
             </Card>
@@ -99,7 +120,7 @@ export default function CapturePage() {
             <input
               ref={cameraInputRef}
               type="file"
-              accept="image/*"
+              accept="image/jpeg,image/png,application/pdf"
               capture="environment"
               className="hidden"
               onChange={handleFileChange}
@@ -107,7 +128,7 @@ export default function CapturePage() {
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
+              accept="image/jpeg,image/png,application/pdf"
               className="hidden"
               onChange={handleFileChange}
             />
@@ -117,7 +138,7 @@ export default function CapturePage() {
             <div className="relative rounded-lg overflow-hidden bg-black/5">
               <img
                 src={preview}
-                alt="Invoice preview"
+                alt="Receipt preview"
                 className="w-full max-h-[50vh] object-contain"
                 data-testid="img-preview"
               />

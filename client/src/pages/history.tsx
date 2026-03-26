@@ -38,7 +38,7 @@ export default function HistoryPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "invoices.csv";
+      a.download = "receipts.csv";
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -62,7 +62,7 @@ export default function HistoryPage() {
       <div className="border-b bg-card px-4 py-3">
         <div className="max-w-lg mx-auto flex items-center justify-between">
           <div>
-            <h1 className="text-lg font-semibold" data-testid="text-history-title">Invoice Snap</h1>
+            <h1 className="text-lg font-semibold" data-testid="text-history-title">Receipt App</h1>
             <p className="text-xs text-muted-foreground">{user?.displayName}</p>
           </div>
           <div className="flex items-center gap-3">
@@ -90,19 +90,19 @@ export default function HistoryPage() {
       </div>
 
       <div className="max-w-lg mx-auto p-4 space-y-4">
-        {/* New Invoice Button */}
+        {/* New Receipt Button */}
         <Button
           className="w-full h-14 text-base gap-2"
           onClick={() => setLocation("/capture")}
           data-testid="button-new-invoice"
         >
           <Camera className="w-5 h-5" />
-          New Invoice
+          New Receipt
         </Button>
 
         {/* Section header */}
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-medium text-muted-foreground">Recent Invoices</h2>
+          <h2 className="text-sm font-medium text-muted-foreground">Recent Receipts</h2>
           {user?.role === "admin" && invoices && invoices.length > 0 && (
             <Button variant="ghost" size="sm" onClick={handleExport} className="text-xs gap-1" data-testid="button-export">
               <Download className="w-3.5 h-3.5" />
@@ -135,7 +135,7 @@ export default function HistoryPage() {
                     className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center flex-shrink-0 overflow-hidden cursor-pointer"
                     onClick={() => setViewingPhoto(inv.photoPath)}
                   >
-                    <img src={authImgUrl(inv.photoPath)} alt="Invoice" className="w-full h-full object-cover" />
+                    <img src={authImgUrl(inv.photoPath)} alt="Receipt" className="w-full h-full object-cover" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
@@ -145,7 +145,7 @@ export default function HistoryPage() {
                         <button
                           className="text-muted-foreground hover:text-destructive p-0.5"
                           onClick={() => {
-                            if (window.confirm("Delete this invoice?")) {
+                            if (window.confirm("Delete this receipt?")) {
                               deleteInvoiceMutation.mutate(inv.id);
                             }
                           }}
@@ -195,8 +195,8 @@ export default function HistoryPage() {
             <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center mx-auto mb-3">
               <FileText className="w-7 h-7 text-muted-foreground" />
             </div>
-            <p className="text-sm font-medium">No invoices yet</p>
-            <p className="text-xs text-muted-foreground mt-1">Tap "New Invoice" to submit your first one.</p>
+            <p className="text-sm font-medium">No receipts yet</p>
+            <p className="text-xs text-muted-foreground mt-1">Tap "New Receipt" to submit your first one.</p>
           </div>
         )}
       </div>
@@ -219,7 +219,7 @@ export default function HistoryPage() {
           onClick={() => setViewingPhoto(null)}
         >
           <div className="relative max-w-lg w-full">
-            <img src={authImgUrl(viewingPhoto)} alt="Invoice" className="w-full rounded-lg" />
+            <img src={authImgUrl(viewingPhoto)} alt="Receipt" className="w-full rounded-lg" />
             <button
               className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center"
               onClick={() => setViewingPhoto(null)}

@@ -37,8 +37,8 @@ export default function LoginPage() {
           <div className="mx-auto w-14 h-14 rounded-xl bg-primary/10 flex items-center justify-center mb-3">
             <Camera className="w-7 h-7 text-primary" />
           </div>
-          <h1 className="text-xl font-semibold tracking-tight" data-testid="text-app-title">Invoice Snap</h1>
-          <p className="text-sm text-muted-foreground mt-1">Sign in to submit invoices</p>
+          <h1 className="text-xl font-semibold tracking-tight" data-testid="text-app-title">Receipt App</h1>
+          <p className="text-sm text-muted-foreground mt-1">Sign in to submit receipts</p>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">

@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
-import { ArrowLeft, Loader2, CheckCircle2, User, PenLine, Building2 } from "lucide-react";
+import { ArrowLeft, Loader2, CheckCircle2, User, PenLine, Building2, Plus } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { LogoBackground } from "@/components/LogoBackground";
 
@@ -43,6 +43,24 @@ export default function InvoiceFormPage() {
     e.preventDefault();
     if (!photoPath) return;
 
+    const amountNum = parseFloat(amount);
+    if (isNaN(amountNum) || amountNum <= 0) {
+      toast({
+        title: "Invalid amount",
+        description: "Amount must be greater than $0.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (amountNum > 10000) {
+      toast({
+        title: "Amount exceeds limit",
+        description: "For receipts over $10,000, please contact your asset manager.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setSubmitting(true);
     try {
       await apiRequest("POST", "/api/invoices", {
@@ -61,11 +79,9 @@ export default function InvoiceFormPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
 
       toast({
-        title: "Invoice submitted",
-        description: "Your invoice has been recorded.",
+        title: "Receipt submitted",
+        description: "Your receipt has been recorded.",
       });
-
-      setTimeout(() => setLocation("/"), 1500);
     } catch (err: any) {
       toast({
         title: "Failed to submit",
@@ -77,14 +93,44 @@ export default function InvoiceFormPage() {
     }
   }
 
+  function resetFormForAnother() {
+    setProperty("");
+    setPurchaseDate(new Date().toISOString().split("T")[0]);
+    setDescription("");
+    setPurpose("");
+    setAmount("");
+    setBoughtByMode("me");
+    setBoughtByCustom("");
+    setPaymentMethod("cc");
+    setLastFourDigits("");
+    setSubmitted(false);
+  }
+
   if (submitted) {
     return (
       <LogoBackground>
         <div className="flex items-center justify-center p-4 bg-background" style={{ minHeight: "100vh" }}>
-          <div className="text-center space-y-3">
+          <div className="text-center space-y-4">
             <CheckCircle2 className="w-16 h-16 text-primary mx-auto" />
-            <h2 className="text-lg font-semibold" data-testid="text-success">Invoice Submitted</h2>
-            <p className="text-sm text-muted-foreground">Redirecting to home...</p>
+            <h2 className="text-lg font-semibold" data-testid="text-success">Receipt Submitted</h2>
+            <p className="text-sm text-muted-foreground">What would you like to do next?</p>
+            <div className="flex gap-2 justify-center">
+              <Button
+                variant="secondary"
+                onClick={() => setLocation("/")}
+                data-testid="button-done"
+              >
+                Done
+              </Button>
+              <Button
+                onClick={resetFormForAnother}
+                className="gap-1"
+                data-testid="button-add-another"
+              >
+                <Plus className="w-4 h-4" />
+                Add Another Entry
+              </Button>
+            </div>
           </div>
         </div>
       </LogoBackground>
@@ -104,7 +150,7 @@ export default function InvoiceFormPage() {
           Back
         </button>
 
-        <h1 className="text-xl font-semibold" data-testid="text-form-title">Invoice Details</h1>
+        <h1 className="text-xl font-semibold" data-testid="text-form-title">Receipt Details</h1>
 
         <Card>
           <CardContent className="pt-6">
@@ -137,6 +183,7 @@ export default function InvoiceFormPage() {
                   type="date"
                   value={purchaseDate}
                   onChange={e => setPurchaseDate(e.target.value)}
+                  max={new Date().toISOString().split("T")[0]}
                   required
                   data-testid="input-date"
                 />
@@ -172,7 +219,8 @@ export default function InvoiceFormPage() {
                   id="amount"
                   type="number"
                   step="0.01"
-                  min="0"
+                  min="0.01"
+                  max="10000"
                   value={amount}
                   onChange={e => setAmount(e.target.value)}
                   placeholder="0.00"
@@ -270,7 +318,7 @@ export default function InvoiceFormPage() {
                 data-testid="button-submit"
               >
                 {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                Submit Invoice
+                Submit Receipt
               </Button>
             </form>
           </CardContent>
