@@ -68,7 +68,7 @@ export async function createSheetTab(spreadsheetId: string, title: string): Prom
       range: `'${title}'!A1`,
       valueInputOption: "RAW",
       requestBody: {
-        values: [["Date", "Description", "What For / Use", "Amount ($)", "Bought By", "Payment Method", "Last 4 Digits", "Submitted By", "Submitted At"]],
+        values: [["Date", "Description", "What For / Use", "Amount ($)", "Bought By", "Payment Method", "Last 4 Digits", "Submitted By", "Submitted At", "Receipt Identification", "RM Service Issue #"]],
       },
     });
 

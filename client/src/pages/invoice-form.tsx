@@ -526,28 +526,28 @@ export default function InvoiceFormPage() {
                 )}
               </div>
             )}
-            <div className="flex justify-between"><span className="text-muted-foreground">Property:</span><span className="font-medium">{property}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Date:</span><span className="font-medium">{purchaseDate}</span></div>
+            <div><span className="text-muted-foreground text-xs">Property</span><p className="font-medium">{property}</p></div>
+            <div><span className="text-muted-foreground text-xs">Date</span><p className="font-medium">{purchaseDate}</p></div>
             {samePurpose ? (
               <>
-                <div className="flex justify-between"><span className="text-muted-foreground">What Was Bought:</span><span className="font-medium truncate ml-2">{description}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">What For / Use:</span><span className="font-medium truncate ml-2">{purpose}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Amount:</span><span className="font-medium">${amount}</span></div>
+                <div><span className="text-muted-foreground text-xs">What Was Bought</span><p className="font-medium break-words">{description}</p></div>
+                <div><span className="text-muted-foreground text-xs">What For / Use</span><p className="font-medium break-words">{purpose}</p></div>
+                <div><span className="text-muted-foreground text-xs">Amount</span><p className="font-medium">${amount}</p></div>
               </>
             ) : (
               splitItems.map((item, i) => (
                 <div key={i} className="border-t pt-2 mt-2">
                   <p className="text-xs font-medium text-muted-foreground mb-1">Task/Project {i + 1}</p>
-                  <div className="flex justify-between"><span className="text-muted-foreground">What:</span><span className="font-medium truncate ml-2">{item.description}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">For:</span><span className="font-medium truncate ml-2">{item.purpose}</span></div>
-                  <div className="flex justify-between"><span className="text-muted-foreground">Amount:</span><span className="font-medium">${item.amount}</span></div>
+                  <div><span className="text-muted-foreground text-xs">What</span><p className="font-medium break-words">{item.description}</p></div>
+                  <div><span className="text-muted-foreground text-xs">For</span><p className="font-medium break-words">{item.purpose}</p></div>
+                  <div><span className="text-muted-foreground text-xs">Amount</span><p className="font-medium">${item.amount}</p></div>
                 </div>
               ))
             )}
-            <div className="flex justify-between"><span className="text-muted-foreground">Bought By:</span><span className="font-medium">{resolvedBoughtBy}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Payment:</span><span className="font-medium">{paymentMethod === "cc" ? `Credit Card ••${lastFourDigits}` : "Cash"}</span></div>
+            <div><span className="text-muted-foreground text-xs">Bought By</span><p className="font-medium">{resolvedBoughtBy}</p></div>
+            <div><span className="text-muted-foreground text-xs">Payment</span><p className="font-medium">{paymentMethod === "cc" ? `Credit Card ••${lastFourDigits}` : "Cash"}</p></div>
             {hasRmIssue && rentManagerIssue && (
-              <div className="flex justify-between"><span className="text-muted-foreground">RM Issue:</span><span className="font-medium">{rentManagerIssue}</span></div>
+              <div><span className="text-muted-foreground text-xs">RM Issue</span><p className="font-medium">{rentManagerIssue}</p></div>
             )}
           </div>
           <div className="flex gap-2 mt-4">
@@ -563,7 +563,7 @@ export default function InvoiceFormPage() {
       {/* Fullscreen photo zoom */}
       {zoomPhoto && photoPath && (
         <div
-          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4"
+          className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-4"
           onClick={() => setZoomPhoto(false)}
         >
           <div className="relative max-w-lg w-full">
