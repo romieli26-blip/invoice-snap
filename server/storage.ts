@@ -50,6 +50,10 @@ sqlite.exec(`
   );
 `);
 
+// Migration: add new columns
+try { sqlite.exec("ALTER TABLE invoices ADD COLUMN record_number INTEGER"); } catch {}
+try { sqlite.exec("ALTER TABLE invoices ADD COLUMN rent_manager_issue TEXT"); } catch {}
+
 export const db = drizzle(sqlite);
 
 export interface IStorage {
@@ -64,6 +68,8 @@ export interface IStorage {
   getAllInvoices(): Promise<Invoice[]>;
   getInvoice(id: number): Promise<Invoice | undefined>;
   deleteInvoice(id: number): Promise<void>;
+  updateInvoice(id: number, data: any): Promise<Invoice | undefined>;
+  getNextRecordNumber(property: string): Promise<number>;
   updateInvoiceSyncStatus(id: number, target: "drive" | "sheets", synced: boolean): Promise<void>;
   // Session methods
   createSession(token: string, userId: number, role: string): Promise<void>;
@@ -124,6 +130,15 @@ export class DatabaseStorage implements IStorage {
 
   async deleteInvoice(id: number): Promise<void> {
     db.delete(invoices).where(eq(invoices.id, id)).run();
+  }
+
+  async updateInvoice(id: number, data: any): Promise<Invoice | undefined> {
+    return db.update(invoices).set(data).where(eq(invoices.id, id)).returning().get();
+  }
+
+  async getNextRecordNumber(property: string): Promise<number> {
+    const result = sqlite.prepare("SELECT MAX(record_number) as maxNum FROM invoices WHERE property = ?").get(property) as any;
+    return (result?.maxNum || 0) + 1;
   }
 
   async updateInvoiceSyncStatus(id: number, target: "drive" | "sheets", synced: boolean): Promise<void> {

@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Camera, Upload, X, Loader2 } from "lucide-react";
+import { Camera, Upload, X, Loader2, FileText } from "lucide-react";
 import { apiUpload } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import { LogoBackground } from "@/components/LogoBackground";
@@ -12,8 +12,12 @@ export default function CapturePage() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
+  const [isDesktop] = useState(() => !('ontouchstart' in window));
+  const [showWebcam, setShowWebcam] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -35,6 +39,34 @@ export default function CapturePage() {
     const reader = new FileReader();
     reader.onload = () => setPreview(reader.result as string);
     reader.readAsDataURL(file);
+  }
+
+  async function startWebcam() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      streamRef.current = stream;
+      if (videoRef.current) videoRef.current.srcObject = stream;
+      setShowWebcam(true);
+    } catch {
+      setError("Camera not available. Please upload a file instead.");
+    }
+  }
+
+  function captureFromWebcam() {
+    if (!videoRef.current) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = videoRef.current.videoWidth;
+    canvas.height = videoRef.current.videoHeight;
+    canvas.getContext("2d")?.drawImage(videoRef.current, 0, 0);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    stopWebcam();
+    setPreview(dataUrl);
+  }
+
+  function stopWebcam() {
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+    setShowWebcam(false);
   }
 
   async function handleUpload() {
@@ -70,7 +102,20 @@ export default function CapturePage() {
         <h1 className="text-xl font-semibold" data-testid="text-capture-title">Snap Receipt</h1>
         <p className="text-sm text-muted-foreground">Take a photo or upload an image of the receipt.</p>
 
-        {!preview ? (
+        {showWebcam ? (
+          <div className="space-y-3">
+            <div className="relative rounded-lg overflow-hidden bg-black">
+              <video ref={videoRef} autoPlay playsInline className="w-full" />
+            </div>
+            <div className="flex gap-2">
+              <Button variant="secondary" className="flex-1" onClick={stopWebcam}>Cancel</Button>
+              <Button className="flex-1" onClick={captureFromWebcam}>
+                <Camera className="w-4 h-4 mr-1" />
+                Snap Photo
+              </Button>
+            </div>
+          </div>
+        ) : !preview ? (
           <div
             className={`space-y-3 ${dragging ? "ring-2 ring-primary ring-offset-2 rounded-lg" : ""}`}
             onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
@@ -89,7 +134,7 @@ export default function CapturePage() {
             )}
             <Card
               className="border-2 border-dashed border-primary/30 cursor-pointer hover:border-primary/50 transition-colors"
-              onClick={() => cameraInputRef.current?.click()}
+              onClick={() => isDesktop ? startWebcam() : cameraInputRef.current?.click()}
               data-testid="button-camera"
             >
               <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
@@ -136,12 +181,20 @@ export default function CapturePage() {
         ) : (
           <div className="space-y-3">
             <div className="relative rounded-lg overflow-hidden bg-black/5">
-              <img
-                src={preview}
-                alt="Receipt preview"
-                className="w-full max-h-[50vh] object-contain"
-                data-testid="img-preview"
-              />
+              {preview?.startsWith("data:application/pdf") ? (
+                <div className="flex flex-col items-center justify-center py-8 gap-3 bg-muted/30 rounded-lg">
+                  <FileText className="w-16 h-16 text-primary/60" />
+                  <p className="text-sm font-medium">PDF Document</p>
+                  <p className="text-xs text-muted-foreground">Ready to upload</p>
+                </div>
+              ) : (
+                <img
+                  src={preview}
+                  alt="Receipt preview"
+                  className="w-full max-h-[50vh] object-contain"
+                  data-testid="img-preview"
+                />
+              )}
               <Button
                 variant="secondary"
                 size="icon"

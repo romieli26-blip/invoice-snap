@@ -55,6 +55,8 @@ export const invoices = sqliteTable("invoices", {
   boughtBy: text("bought_by").notNull(),
   paymentMethod: text("payment_method").notNull(), // "cash" or "cc"
   lastFourDigits: text("last_four_digits"),
+  recordNumber: integer("record_number"),
+  rentManagerIssue: text("rent_manager_issue"),
   syncedToDrive: integer("synced_to_drive").notNull().default(0),
   syncedToSheets: integer("synced_to_sheets").notNull().default(0),
   createdAt: text("created_at").notNull(),
@@ -78,6 +80,7 @@ export const invoiceFormSchema = z.object({
   boughtBy: z.string().min(1, "Bought by is required"),
   paymentMethod: z.enum(["cash", "cc"]),
   lastFourDigits: z.string().optional(),
+  rentManagerIssue: z.string().optional(),
 });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;

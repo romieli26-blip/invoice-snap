@@ -6,8 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
-import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2 } from "lucide-react";
+import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2 } from "lucide-react";
 import { apiRequest, queryClient, getAuthToken } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { Invoice } from "@shared/schema";
 import { LogoBackground, LogoHeader } from "@/components/LogoBackground";
 
@@ -25,7 +29,17 @@ function authImgUrl(photoPath: string) {
 export default function HistoryPage() {
   const { user, logout } = useAuth();
   const [, setLocation] = useLocation();
+  const { toast } = useToast();
   const [viewingPhoto, setViewingPhoto] = useState<string | null>(null);
+  const [editingInvoice, setEditingInvoice] = useState<EnrichedInvoice | null>(null);
+  const [editDescription, setEditDescription] = useState("");
+  const [editPurpose, setEditPurpose] = useState("");
+  const [editAmount, setEditAmount] = useState("");
+  const [editBoughtBy, setEditBoughtBy] = useState("");
+  const [editPaymentMethod, setEditPaymentMethod] = useState<"cash" | "cc">("cc");
+  const [editLastFour, setEditLastFour] = useState("");
+  const [editRmIssue, setEditRmIssue] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
 
   const { data: invoices, isLoading } = useQuery<EnrichedInvoice[]>({
     queryKey: ["/api/invoices"],
@@ -143,6 +157,23 @@ export default function HistoryPage() {
                       <div className="flex items-center gap-1">
                         <span className="text-sm font-semibold whitespace-nowrap">${inv.amount}</span>
                         <button
+                          className="text-muted-foreground hover:text-primary p-0.5"
+                          onClick={() => {
+                            if (window.confirm("You are about to edit this item. Are you sure?")) {
+                              setEditDescription(inv.description);
+                              setEditPurpose(inv.purpose);
+                              setEditAmount(inv.amount);
+                              setEditBoughtBy(inv.boughtBy);
+                              setEditPaymentMethod(inv.paymentMethod as "cash" | "cc");
+                              setEditLastFour(inv.lastFourDigits || "");
+                              setEditRmIssue((inv as any).rentManagerIssue || "");
+                              setEditingInvoice(inv);
+                            }
+                          }}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
                           className="text-muted-foreground hover:text-destructive p-0.5"
                           onClick={() => {
                             if (window.confirm("Delete this receipt?")) {
@@ -155,7 +186,12 @@ export default function HistoryPage() {
                       </div>
                     </div>
                     <p className="text-xs text-muted-foreground truncate">{inv.purpose}</p>
-                    <div className="flex items-center gap-2 mt-1">
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      {inv.recordNumber && (
+                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 font-mono">
+                          #{inv.recordNumber}
+                        </Badge>
+                      )}
                       {inv.property && (
                         <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 gap-0.5">
                           <Building2 className="w-2.5 h-2.5" />
@@ -176,6 +212,9 @@ export default function HistoryPage() {
                           </>
                         )}
                       </Badge>
+                      {inv.rentManagerIssue && (
+                        <span className="text-xs text-muted-foreground">RM #{inv.rentManagerIssue}</span>
+                      )}
                       {inv.boughtBy !== inv.submittedBy && (
                         <span className="text-xs text-muted-foreground">buyer: {inv.boughtBy}</span>
                       )}
@@ -212,6 +251,61 @@ export default function HistoryPage() {
           Created with Perplexity Computer
         </a>
       </div>
+
+      <Dialog open={editingInvoice !== null} onOpenChange={(open) => { if (!open) setEditingInvoice(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Receipt</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label className="text-xs">What Was Bought</Label>
+              <Input value={editDescription} onChange={e => setEditDescription(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">What For / Use</Label>
+              <Input value={editPurpose} onChange={e => setEditPurpose(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Amount ($)</Label>
+              <Input type="number" step="0.01" value={editAmount} onChange={e => setEditAmount(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Bought By</Label>
+              <Input value={editBoughtBy} onChange={e => setEditBoughtBy(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Rent Manager Issue #</Label>
+              <Input value={editRmIssue} onChange={e => setEditRmIssue(e.target.value)} placeholder="Optional" />
+            </div>
+          </div>
+          <div className="flex gap-2 mt-4">
+            <Button variant="outline" className="flex-1" onClick={() => setEditingInvoice(null)}>Cancel</Button>
+            <Button className="flex-1" disabled={editSaving} onClick={async () => {
+              setEditSaving(true);
+              try {
+                await apiRequest("PUT", `/api/invoices/${editingInvoice!.id}`, {
+                  description: editDescription,
+                  purpose: editPurpose,
+                  amount: editAmount,
+                  boughtBy: editBoughtBy,
+                  rentManagerIssue: editRmIssue || undefined,
+                });
+                queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+                setEditingInvoice(null);
+                toast({ title: "Receipt updated" });
+              } catch (err: any) {
+                toast({ title: "Failed to update", description: "Please try again.", variant: "destructive" });
+              } finally {
+                setEditSaving(false);
+              }
+            }}>
+              {editSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+              Save Changes
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {viewingPhoto && (
         <div

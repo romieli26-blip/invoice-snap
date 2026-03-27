@@ -11,6 +11,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { ArrowLeft, Loader2, CheckCircle2, User, PenLine, Plus, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { LogoBackground } from "@/components/LogoBackground";
 
 interface PropertyItem { id: number; name: string; sheetsTabId: number | null; }
@@ -51,8 +52,11 @@ export default function InvoiceFormPage() {
   const [boughtByCustom, setBoughtByCustom] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<"cash" | "cc">("cc");
   const [lastFourDigits, setLastFourDigits] = useState("");
+  const [hasRmIssue, setHasRmIssue] = useState(false);
+  const [rentManagerIssue, setRentManagerIssue] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const resolvedBoughtBy = boughtByMode === "me" ? (user?.displayName || "") : boughtByCustom;
 
@@ -106,7 +110,7 @@ export default function InvoiceFormPage() {
     return null;
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handlePreSubmit(e: React.FormEvent) {
     e.preventDefault();
 
     const error = validateForm();
@@ -115,7 +119,12 @@ export default function InvoiceFormPage() {
       return;
     }
 
+    setShowConfirm(true);
+  }
+
+  async function handleConfirmSubmit() {
     const boughtBy = resolvedBoughtBy || user?.displayName || "Unknown";
+    const rmIssue = hasRmIssue ? rentManagerIssue : undefined;
 
     setSubmitting(true);
     try {
@@ -124,6 +133,7 @@ export default function InvoiceFormPage() {
           photoPath, property, purchaseDate, description, purpose, amount,
           boughtBy, paymentMethod,
           lastFourDigits: paymentMethod === "cc" ? lastFourDigits : undefined,
+          rentManagerIssue: rmIssue,
         });
       } else {
         for (const item of splitItems) {
@@ -134,9 +144,11 @@ export default function InvoiceFormPage() {
             amount: item.amount,
             boughtBy, paymentMethod,
             lastFourDigits: paymentMethod === "cc" ? lastFourDigits : undefined,
+            rentManagerIssue: rmIssue,
           });
         }
       }
+      setShowConfirm(false);
       setSubmitted(true);
       queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
       const msg = samePurpose ? "Your receipt has been recorded." : `${splitItems.length} entries recorded from split receipt.`;
@@ -180,7 +192,7 @@ export default function InvoiceFormPage() {
 
         <Card>
           <CardContent className="pt-6">
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handlePreSubmit} className="space-y-4">
               <div className="space-y-2">
                 <Label>Property</Label>
                 <Select value={property} onValueChange={setProperty}>
@@ -221,7 +233,7 @@ export default function InvoiceFormPage() {
                   data-testid="checkbox-same-purpose"
                 />
                 <Label htmlFor="same-purpose" className="text-sm font-normal cursor-pointer select-none">
-                  All items on this receipt are for the same purpose
+                  All items on this receipt are for the same Task/Project
                 </Label>
               </div>
 
@@ -229,7 +241,7 @@ export default function InvoiceFormPage() {
                 /* ---- SINGLE ITEM MODE ---- */
                 <>
                   <div className="space-y-2">
-                    <Label htmlFor="description">What Was Bought</Label>
+                    <Label htmlFor="description">What Was Bought — List each item separated by a comma</Label>
                     <Input
                       id="description"
                       value={description}
@@ -240,7 +252,7 @@ export default function InvoiceFormPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="purpose">What For / Use</Label>
+                    <Label htmlFor="purpose">What For / Use — Description; Unit, service ticket, or project/task</Label>
                     <Input
                       id="purpose"
                       value={purpose}
@@ -249,6 +261,30 @@ export default function InvoiceFormPage() {
                       data-testid="input-purpose"
                     />
                   </div>
+
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="rm-issue"
+                      checked={hasRmIssue}
+                      onCheckedChange={(checked) => setHasRmIssue(checked === true)}
+                      data-testid="checkbox-rm-issue"
+                    />
+                    <Label htmlFor="rm-issue" className="text-sm font-normal cursor-pointer select-none">
+                      Open service issue on Rent Manager for this item
+                    </Label>
+                  </div>
+                  {hasRmIssue && (
+                    <div className="space-y-2">
+                      <Label htmlFor="rmIssueNumber">Service Issue Number in Rent Manager</Label>
+                      <Input
+                        id="rmIssueNumber"
+                        value={rentManagerIssue}
+                        onChange={e => setRentManagerIssue(e.target.value)}
+                        placeholder="e.g. RM-12345"
+                        data-testid="input-rm-issue"
+                      />
+                    </div>
+                  )}
 
                   <div className="space-y-2">
                     <Label htmlFor="amount">Amount ($)</Label>
@@ -289,7 +325,7 @@ export default function InvoiceFormPage() {
                     {splitItems.map((item, idx) => (
                       <div key={idx} className="border rounded-lg p-3 space-y-2 bg-muted/30 relative">
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-medium text-muted-foreground">Item {idx + 1}</span>
+                          <span className="text-xs font-medium text-muted-foreground">Task/Project {idx + 1}</span>
                           {splitItems.length > 1 && (
                             <button
                               type="button"
@@ -335,7 +371,7 @@ export default function InvoiceFormPage() {
                     data-testid="button-add-split-item"
                   >
                     <Plus className="w-4 h-4" />
-                    Add Another Item
+                    Add Another Task/Project
                   </Button>
 
                   {/* Totals summary */}
@@ -453,13 +489,53 @@ export default function InvoiceFormPage() {
                 data-testid="button-submit"
               >
                 {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                {samePurpose ? "Submit Receipt" : `Submit ${splitItems.length} Entries`}
+                {samePurpose ? "Submit Receipt" : `Submit ${splitItems.length} Tasks/Projects`}
               </Button>
             </form>
           </CardContent>
         </Card>
       </div>
       </div>
+
+      <Dialog open={showConfirm} onOpenChange={setShowConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirm Receipt Details</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between"><span className="text-muted-foreground">Property:</span><span className="font-medium">{property}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Date:</span><span className="font-medium">{purchaseDate}</span></div>
+            {samePurpose ? (
+              <>
+                <div className="flex justify-between"><span className="text-muted-foreground">What Was Bought:</span><span className="font-medium truncate ml-2">{description}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">What For / Use:</span><span className="font-medium truncate ml-2">{purpose}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Amount:</span><span className="font-medium">${amount}</span></div>
+              </>
+            ) : (
+              splitItems.map((item, i) => (
+                <div key={i} className="border-t pt-2 mt-2">
+                  <p className="text-xs font-medium text-muted-foreground mb-1">Task/Project {i + 1}</p>
+                  <div className="flex justify-between"><span className="text-muted-foreground">What:</span><span className="font-medium truncate ml-2">{item.description}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">For:</span><span className="font-medium truncate ml-2">{item.purpose}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Amount:</span><span className="font-medium">${item.amount}</span></div>
+                </div>
+              ))
+            )}
+            <div className="flex justify-between"><span className="text-muted-foreground">Bought By:</span><span className="font-medium">{resolvedBoughtBy}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Payment:</span><span className="font-medium">{paymentMethod === "cc" ? `Credit Card ••${lastFourDigits}` : "Cash"}</span></div>
+            {hasRmIssue && rentManagerIssue && (
+              <div className="flex justify-between"><span className="text-muted-foreground">RM Issue:</span><span className="font-medium">{rentManagerIssue}</span></div>
+            )}
+          </div>
+          <div className="flex gap-2 mt-4">
+            <Button variant="outline" className="flex-1" onClick={() => setShowConfirm(false)}>Edit</Button>
+            <Button className="flex-1" onClick={handleConfirmSubmit} disabled={submitting}>
+              {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+              Confirm & Submit
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </LogoBackground>
   );
 }

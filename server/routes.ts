@@ -101,6 +101,7 @@ async function syncToSheets(invoice: any, submittedByName: string): Promise<bool
     invoice.purchaseDate, invoice.description, invoice.purpose, invoice.amount,
     invoice.boughtBy, invoice.paymentMethod === "cc" ? "Credit Card" : "Cash",
     invoice.lastFourDigits || "", submittedByName, invoice.createdAt,
+    String(invoice.recordNumber || ""), invoice.rentManagerIssue || "",
   ];
 
   // Try Google API first (works on Railway)
@@ -460,6 +461,7 @@ export async function registerRoutes(
     if (!photoPath) return res.status(400).json({ error: "Photo is required" });
 
     const user = await storage.getUser(session.userId);
+    const recordNumber = await storage.getNextRecordNumber(parsed.data.property);
     const invoice = await storage.createInvoice({
       userId: session.userId,
       photoPath,
@@ -471,6 +473,8 @@ export async function registerRoutes(
       boughtBy: parsed.data.boughtBy || user?.displayName || "Unknown",
       paymentMethod: parsed.data.paymentMethod,
       lastFourDigits: parsed.data.paymentMethod === "cc" ? (parsed.data.lastFourDigits || null) : null,
+      recordNumber,
+      rentManagerIssue: parsed.data.rentManagerIssue || null,
       syncedToDrive: 0,
       syncedToSheets: 0,
       createdAt: new Date().toISOString(),
@@ -517,6 +521,55 @@ export async function registerRoutes(
     }));
 
     res.json(enriched);
+  });
+
+  app.put("/api/invoices/:id", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+
+    const existing = await storage.getInvoice(id);
+    if (!existing) return res.status(404).json({ error: "Receipt not found" });
+
+    // Managers can only edit their own
+    if (session.role !== "admin" && existing.userId !== session.userId) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const { description, purpose, amount, boughtBy, paymentMethod, lastFourDigits, rentManagerIssue } = req.body;
+
+    const updated = await storage.updateInvoice(id, {
+      description: description ?? existing.description,
+      purpose: purpose ?? existing.purpose,
+      amount: amount ?? existing.amount,
+      boughtBy: boughtBy ?? existing.boughtBy,
+      paymentMethod: paymentMethod ?? existing.paymentMethod,
+      lastFourDigits: lastFourDigits ?? existing.lastFourDigits,
+      rentManagerIssue: rentManagerIssue ?? existing.rentManagerIssue,
+    });
+
+    res.json(updated);
+
+    // Background: update the Sheets row
+    if (isGoogleEnabled() && sheetsConfig && updated) {
+      setImmediate(async () => {
+        try {
+          // Delete old row and add updated one
+          const user = await storage.getUser(session.userId);
+          const submittedByName = user?.displayName || "Unknown";
+          if (existing.property && sheetsConfig!.tabs[existing.property]) {
+            await deleteSheetRow(sheetsConfig!.spreadsheetId, existing.property, existing.purchaseDate, existing.description, existing.amount);
+            await appendSheetRow(sheetsConfig!.spreadsheetId, existing.property, [
+              updated.purchaseDate, updated.description, updated.purpose, updated.amount,
+              updated.boughtBy, updated.paymentMethod === "cc" ? "Credit Card" : "Cash",
+              updated.lastFourDigits || "", submittedByName, updated.createdAt,
+              String(updated.recordNumber || ""), updated.rentManagerIssue || "",
+            ]);
+          }
+        } catch (e) { console.error("[edit] Sheets update failed:", e); }
+      });
+    }
   });
 
   app.delete("/api/invoices/:id", async (req, res) => {
