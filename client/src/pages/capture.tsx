@@ -6,18 +6,16 @@ import { apiUpload } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import { LogoBackground } from "@/components/LogoBackground";
 
+const isDesktop = typeof window !== "undefined" && !("ontouchstart" in window);
+
 export default function CapturePage() {
   const [, setLocation] = useLocation();
   const [preview, setPreview] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [dragging, setDragging] = useState(false);
-  const [isDesktop] = useState(() => !('ontouchstart' in window));
-  const [showWebcam, setShowWebcam] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -41,34 +39,6 @@ export default function CapturePage() {
     reader.readAsDataURL(file);
   }
 
-  async function startWebcam() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-      streamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
-      setShowWebcam(true);
-    } catch {
-      setError("Camera not available. Please upload a file instead.");
-    }
-  }
-
-  function captureFromWebcam() {
-    if (!videoRef.current) return;
-    const canvas = document.createElement("canvas");
-    canvas.width = videoRef.current.videoWidth;
-    canvas.height = videoRef.current.videoHeight;
-    canvas.getContext("2d")?.drawImage(videoRef.current, 0, 0);
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
-    stopWebcam();
-    setPreview(dataUrl);
-  }
-
-  function stopWebcam() {
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    streamRef.current = null;
-    setShowWebcam(false);
-  }
-
   async function handleUpload() {
     if (!preview) return;
 
@@ -76,16 +46,14 @@ export default function CapturePage() {
     setError("");
 
     try {
-      // Convert data URL to blob
       const res = await fetch(preview);
       const blob = await res.blob();
       const formData = new FormData();
-      formData.append("photo", blob, `invoice-${Date.now()}.jpg`);
+      formData.append("photo", blob, `receipt-${Date.now()}.jpg`);
 
       const uploadRes = await apiUpload("/api/upload", formData);
       const data = await uploadRes.json();
 
-      // Store photo path in a global and navigate
       (window as any).__invoicePhotoPath = data.path;
       setLocation("/form");
     } catch (err: any) {
@@ -100,22 +68,11 @@ export default function CapturePage() {
       <div className="bg-background p-4 pt-6">
       <div className="max-w-lg mx-auto space-y-4">
         <h1 className="text-xl font-semibold" data-testid="text-capture-title">Snap Receipt</h1>
-        <p className="text-sm text-muted-foreground">Take a photo or upload an image of the receipt.</p>
+        <p className="text-sm text-muted-foreground">
+          {isDesktop ? "Upload or drag and drop an image of the receipt." : "Take a photo or upload an image of the receipt."}
+        </p>
 
-        {showWebcam ? (
-          <div className="space-y-3">
-            <div className="relative rounded-lg overflow-hidden bg-black">
-              <video ref={videoRef} autoPlay playsInline className="w-full" />
-            </div>
-            <div className="flex gap-2">
-              <Button variant="secondary" className="flex-1" onClick={stopWebcam}>Cancel</Button>
-              <Button className="flex-1" onClick={captureFromWebcam}>
-                <Camera className="w-4 h-4 mr-1" />
-                Snap Photo
-              </Button>
-            </div>
-          </div>
-        ) : !preview ? (
+        {!preview ? (
           <div
             className={`space-y-3 ${dragging ? "ring-2 ring-primary ring-offset-2 rounded-lg" : ""}`}
             onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
@@ -132,36 +89,46 @@ export default function CapturePage() {
                 Drop your file here
               </div>
             )}
-            <Card
-              className="border-2 border-dashed border-primary/30 cursor-pointer hover:border-primary/50 transition-colors"
-              onClick={() => isDesktop ? startWebcam() : cameraInputRef.current?.click()}
-              data-testid="button-camera"
-            >
-              <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
-                <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
-                  <Camera className="w-8 h-8 text-primary" />
-                </div>
-                <span className="text-sm font-medium">Take Photo</span>
-                <span className="text-xs text-muted-foreground">Opens your camera</span>
-              </CardContent>
-            </Card>
 
+            {/* Camera option — mobile only */}
+            {!isDesktop && (
+              <Card
+                className="border-2 border-dashed border-primary/30 cursor-pointer hover:border-primary/50 transition-colors"
+                onClick={() => cameraInputRef.current?.click()}
+                data-testid="button-camera"
+              >
+                <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
+                  <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
+                    <Camera className="w-8 h-8 text-primary" />
+                  </div>
+                  <span className="text-sm font-medium">Take Photo</span>
+                  <span className="text-xs text-muted-foreground">Opens your camera</span>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Drag and drop / upload card */}
             <Card
-              className="cursor-pointer hover:bg-muted/50 transition-colors"
+              className={`cursor-pointer hover:bg-muted/50 transition-colors ${isDesktop ? "border-2 border-dashed border-primary/30" : ""}`}
               onClick={() => fileInputRef.current?.click()}
               data-testid="button-upload"
             >
-              <CardContent className="flex items-center gap-4 py-4">
-                <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0">
-                  <Upload className="w-5 h-5 text-muted-foreground" />
+              <CardContent className={`flex ${isDesktop ? "flex-col" : ""} items-center gap-4 ${isDesktop ? "py-12" : "py-4"}`}>
+                <div className={`${isDesktop ? "w-16 h-16 rounded-2xl" : "w-10 h-10 rounded-lg"} bg-secondary flex items-center justify-center flex-shrink-0`}>
+                  <Upload className={`${isDesktop ? "w-8 h-8" : "w-5 h-5"} text-muted-foreground`} />
                 </div>
-                <div>
-                  <span className="text-sm font-medium block">Upload from Gallery</span>
+                <div className={isDesktop ? "text-center" : ""}>
+                  <span className="text-sm font-medium block">
+                    {isDesktop ? "Upload or Drag & Drop" : "Upload from Gallery"}
+                  </span>
                   <span className="text-xs text-muted-foreground">PNG, JPG, PDF — max 4MB</span>
                 </div>
               </CardContent>
             </Card>
 
+            {error && <p className="text-sm text-destructive">{error}</p>}
+
+            {/* Hidden file inputs */}
             <input
               ref={cameraInputRef}
               type="file"

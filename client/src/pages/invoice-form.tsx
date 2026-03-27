@@ -7,7 +7,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useLocation } from "wouter";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthToken } from "@/lib/queryClient";
+
+const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
+function authImgUrl(path: string) {
+  const token = getAuthToken();
+  return `${API_BASE}${path}${token ? `?token=${token}` : ""}`;
+}
 import { useAuth } from "@/hooks/use-auth";
 import { ArrowLeft, Loader2, CheckCircle2, User, PenLine, Plus, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -57,6 +63,7 @@ export default function InvoiceFormPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [zoomPhoto, setZoomPhoto] = useState(false);
 
   const resolvedBoughtBy = boughtByMode === "me" ? (user?.displayName || "") : boughtByCustom;
 
@@ -270,7 +277,7 @@ export default function InvoiceFormPage() {
                       data-testid="checkbox-rm-issue"
                     />
                     <Label htmlFor="rm-issue" className="text-sm font-normal cursor-pointer select-none">
-                      Open service issue on Rent Manager for this item
+                      Is there an open issue on Rent Manager for this item?
                     </Label>
                   </div>
                   {hasRmIssue && (
@@ -280,7 +287,7 @@ export default function InvoiceFormPage() {
                         id="rmIssueNumber"
                         value={rentManagerIssue}
                         onChange={e => setRentManagerIssue(e.target.value)}
-                        placeholder="e.g. RM-12345"
+                        placeholder="e.g. 12345"
                         data-testid="input-rm-issue"
                       />
                     </div>
@@ -503,6 +510,22 @@ export default function InvoiceFormPage() {
             <DialogTitle>Confirm Receipt Details</DialogTitle>
           </DialogHeader>
           <div className="space-y-2 text-sm">
+            {/* Photo thumbnail with zoom */}
+            {photoPath && (
+              <div
+                className="w-full h-32 rounded-lg overflow-hidden bg-muted cursor-pointer"
+                onClick={() => setZoomPhoto(true)}
+              >
+                {photoPath.includes(".pdf") ? (
+                  <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
+                    <ArrowLeft className="w-5 h-5 rotate-[135deg]" />
+                    <span className="text-sm">PDF Document — Tap to view</span>
+                  </div>
+                ) : (
+                  <img src={authImgUrl(photoPath)} alt="Receipt" className="w-full h-full object-contain" />
+                )}
+              </div>
+            )}
             <div className="flex justify-between"><span className="text-muted-foreground">Property:</span><span className="font-medium">{property}</span></div>
             <div className="flex justify-between"><span className="text-muted-foreground">Date:</span><span className="font-medium">{purchaseDate}</span></div>
             {samePurpose ? (
@@ -536,6 +559,24 @@ export default function InvoiceFormPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Fullscreen photo zoom */}
+      {zoomPhoto && photoPath && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4"
+          onClick={() => setZoomPhoto(false)}
+        >
+          <div className="relative max-w-lg w-full">
+            <img src={authImgUrl(photoPath)} alt="Receipt" className="w-full rounded-lg" />
+            <button
+              className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center"
+              onClick={() => setZoomPhoto(false)}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
     </LogoBackground>
   );
 }
