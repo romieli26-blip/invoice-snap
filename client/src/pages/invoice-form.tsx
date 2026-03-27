@@ -510,11 +510,11 @@ export default function InvoiceFormPage() {
             <DialogTitle>Confirm Receipt Details</DialogTitle>
           </DialogHeader>
           <div className="space-y-2 text-sm">
-            {/* Photo thumbnail with zoom */}
+            {/* Photo thumbnail — tap to zoom */}
             {photoPath && (
               <div
                 className="w-full h-32 rounded-lg overflow-hidden bg-muted cursor-pointer"
-                onClick={() => setZoomPhoto(true)}
+                onClick={() => { setShowConfirm(false); setZoomPhoto(true); }}
               >
                 {photoPath.includes(".pdf") ? (
                   <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
@@ -560,23 +560,12 @@ export default function InvoiceFormPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Fullscreen photo zoom */}
-      {zoomPhoto && photoPath && (
-        <div
-          className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-4"
-          onClick={() => setZoomPhoto(false)}
-        >
-          <div className="relative max-w-lg w-full">
-            <img src={authImgUrl(photoPath)} alt="Receipt" className="w-full rounded-lg" />
-            <button
-              className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center"
-              onClick={() => setZoomPhoto(false)}
-            >
-              ×
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Fullscreen photo zoom — shown as its own Dialog so it layers correctly */}
+      <Dialog open={zoomPhoto} onOpenChange={(open) => { setZoomPhoto(open); if (!open) setShowConfirm(true); }}>
+        <DialogContent className="max-w-lg p-2 bg-black border-none">
+          <img src={photoPath ? authImgUrl(photoPath) : ""} alt="Receipt" className="w-full rounded-lg" />
+        </DialogContent>
+      </Dialog>
     </LogoBackground>
   );
 }
