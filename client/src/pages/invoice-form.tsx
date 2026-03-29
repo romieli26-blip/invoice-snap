@@ -15,7 +15,7 @@ function authImgUrl(path: string) {
   return `${API_BASE}${path}${token ? `?token=${token}` : ""}`;
 }
 import { useAuth } from "@/hooks/use-auth";
-import { ArrowLeft, Loader2, CheckCircle2, User, PenLine, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Loader2, CheckCircle2, User, PenLine, Plus, Trash2, ChevronLeft, ChevronRight, FileText } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { LogoBackground } from "@/components/LogoBackground";
@@ -26,6 +26,8 @@ interface SplitItem {
   description: string;
   purpose: string;
   amount: string;
+  hasRmIssue: boolean;
+  rentManagerIssue: string;
 }
 
 export default function InvoiceFormPage() {
@@ -34,6 +36,9 @@ export default function InvoiceFormPage() {
   const { toast } = useToast();
 
   const photoPath = (window as any).__invoicePhotoPath || "";
+  const photoPaths: string[] = (window as any).__invoicePhotoPaths || (photoPath ? [photoPath] : []);
+  const [photoIndex, setPhotoIndex] = useState(0);
+  const [confirmPhotoIndex, setConfirmPhotoIndex] = useState(0);
 
   const { data: propertiesList, isLoading: propsLoading } = useQuery<PropertyItem[]>({
     queryKey: ["/api/properties"],
@@ -51,7 +56,7 @@ export default function InvoiceFormPage() {
   const [samePurpose, setSamePurpose] = useState(true);
   const [receiptTotal, setReceiptTotal] = useState("");
   const [splitItems, setSplitItems] = useState<SplitItem[]>([
-    { description: "", purpose: "", amount: "" },
+    { description: "", purpose: "", amount: "", hasRmIssue: false, rentManagerIssue: "" },
   ]);
 
   const [boughtByMode, setBoughtByMode] = useState<"me" | "other">("me");
@@ -72,7 +77,7 @@ export default function InvoiceFormPage() {
     setSplitItems(items => items.map((item, i) => i === index ? { ...item, [field]: value } : item));
   }
   function addSplitItem() {
-    setSplitItems(items => [...items, { description: "", purpose: "", amount: "" }]);
+    setSplitItems(items => [...items, { description: "", purpose: "", amount: "", hasRmIssue: false, rentManagerIssue: "" }]);
   }
   function removeSplitItem(index: number) {
     if (splitItems.length <= 1) return;
@@ -132,12 +137,14 @@ export default function InvoiceFormPage() {
   async function handleConfirmSubmit() {
     const boughtBy = resolvedBoughtBy || user?.displayName || "Unknown";
     const rmIssue = hasRmIssue ? rentManagerIssue : undefined;
+    const photoPathsJson = JSON.stringify(photoPaths);
 
     setSubmitting(true);
     try {
       if (samePurpose) {
         await apiRequest("POST", "/api/invoices", {
-          photoPath, property, purchaseDate, description, purpose, amount,
+          photoPath, photoPaths: photoPathsJson,
+          property, purchaseDate, description, purpose, amount,
           boughtBy, paymentMethod,
           lastFourDigits: paymentMethod === "cc" ? lastFourDigits : undefined,
           rentManagerIssue: rmIssue,
@@ -145,13 +152,14 @@ export default function InvoiceFormPage() {
       } else {
         for (const item of splitItems) {
           await apiRequest("POST", "/api/invoices", {
-            photoPath, property, purchaseDate,
+            photoPath, photoPaths: photoPathsJson,
+            property, purchaseDate,
             description: item.description,
             purpose: item.purpose,
             amount: item.amount,
             boughtBy, paymentMethod,
             lastFourDigits: paymentMethod === "cc" ? lastFourDigits : undefined,
-            rentManagerIssue: rmIssue,
+            rentManagerIssue: item.hasRmIssue ? item.rentManagerIssue : undefined,
           });
         }
       }
@@ -366,6 +374,27 @@ export default function InvoiceFormPage() {
                           placeholder="Amount ($)"
                           data-testid={`input-split-amount-${idx}`}
                         />
+                        <div className="flex items-center space-x-2 pt-1">
+                          <Checkbox
+                            id={`rm-split-${idx}`}
+                            checked={item.hasRmIssue}
+                            onCheckedChange={(checked) => {
+                              setSplitItems(items => items.map((it, i) => i === idx ? { ...it, hasRmIssue: checked === true } : it));
+                            }}
+                          />
+                          <Label htmlFor={`rm-split-${idx}`} className="text-xs font-normal cursor-pointer select-none">
+                            RM service issue?
+                          </Label>
+                        </div>
+                        {item.hasRmIssue && (
+                          <Input
+                            value={item.rentManagerIssue}
+                            onChange={e => updateSplitItem(idx, "rentManagerIssue", e.target.value)}
+                            placeholder="e.g. 12345"
+                            className="h-8 text-xs"
+                            data-testid={`input-split-rm-${idx}`}
+                          />
+                        )}
                       </div>
                     ))}
                   </div>
@@ -510,19 +539,31 @@ export default function InvoiceFormPage() {
             <DialogTitle>Confirm Receipt Details</DialogTitle>
           </DialogHeader>
           <div className="space-y-2 text-sm">
-            {/* Photo thumbnail — tap to zoom */}
-            {photoPath && (
-              <div
-                className="w-full h-32 rounded-lg overflow-hidden bg-muted cursor-pointer"
-                onClick={() => { setShowConfirm(false); setZoomPhoto(true); }}
-              >
-                {photoPath.includes(".pdf") ? (
+            {/* Photo carousel — tap to zoom */}
+            {photoPaths.length > 0 && (
+              <div className="relative w-full h-32 rounded-lg overflow-hidden bg-muted cursor-pointer" onClick={() => { setShowConfirm(false); setZoomPhoto(true); }}>
+                {photoPaths[confirmPhotoIndex]?.includes(".pdf") ? (
                   <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
-                    <ArrowLeft className="w-5 h-5 rotate-[135deg]" />
-                    <span className="text-sm">PDF Document — Tap to view</span>
+                    <FileText className="w-6 h-6" />
+                    <span className="text-sm">PDF Document</span>
                   </div>
                 ) : (
-                  <img src={authImgUrl(photoPath)} alt="Receipt" className="w-full h-full object-contain" />
+                  <img src={authImgUrl(photoPaths[confirmPhotoIndex])} alt="Receipt" className="w-full h-full object-contain" />
+                )}
+                {photoPaths.length > 1 && (
+                  <div className="absolute bottom-1 left-1/2 -translate-x-1/2 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded-full">
+                    {confirmPhotoIndex + 1} / {photoPaths.length}
+                  </div>
+                )}
+                {photoPaths.length > 1 && confirmPhotoIndex > 0 && (
+                  <button className="absolute left-1 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-black/40 text-white flex items-center justify-center" onClick={(e) => { e.stopPropagation(); setConfirmPhotoIndex(i => i - 1); }}>
+                    <ChevronLeft className="w-3 h-3" />
+                  </button>
+                )}
+                {photoPaths.length > 1 && confirmPhotoIndex < photoPaths.length - 1 && (
+                  <button className="absolute right-1 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-black/40 text-white flex items-center justify-center" onClick={(e) => { e.stopPropagation(); setConfirmPhotoIndex(i => i + 1); }}>
+                    <ChevronRight className="w-3 h-3" />
+                  </button>
                 )}
               </div>
             )}
@@ -560,10 +601,27 @@ export default function InvoiceFormPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Fullscreen photo zoom — shown as its own Dialog so it layers correctly */}
+      {/* Fullscreen photo zoom with carousel */}
       <Dialog open={zoomPhoto} onOpenChange={(open) => { setZoomPhoto(open); if (!open) setShowConfirm(true); }}>
         <DialogContent className="max-w-lg p-2 bg-black border-none">
-          <img src={photoPath ? authImgUrl(photoPath) : ""} alt="Receipt" className="w-full rounded-lg" />
+          <div className="relative">
+            <img src={photoPaths[confirmPhotoIndex] ? authImgUrl(photoPaths[confirmPhotoIndex]) : ""} alt="Receipt" className="w-full rounded-lg" />
+            {photoPaths.length > 1 && (
+              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-black/60 text-white text-xs px-2 py-0.5 rounded-full">
+                {confirmPhotoIndex + 1} / {photoPaths.length}
+              </div>
+            )}
+            {photoPaths.length > 1 && confirmPhotoIndex > 0 && (
+              <button className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center" onClick={() => setConfirmPhotoIndex(i => i - 1)}>
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+            )}
+            {photoPaths.length > 1 && confirmPhotoIndex < photoPaths.length - 1 && (
+              <button className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center" onClick={() => setConfirmPhotoIndex(i => i + 1)}>
+                <ChevronRight className="w-5 h-5" />
+              </button>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </LogoBackground>

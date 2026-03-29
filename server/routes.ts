@@ -180,29 +180,28 @@ let mainFolderId: string | null = null;
 const propertyFolderCache = new Map<string, string>();
 
 async function syncToDrive(invoice: any): Promise<boolean> {
-  const filePath = path.resolve(process.cwd(), invoice.photoPath.replace(/^\/api\/uploads\//, "uploads/"));
-  if (!fs.existsSync(filePath)) {
-    console.error("[drive] File not found:", filePath);
-    return false;
-  }
-  const ext = path.extname(filePath).slice(1) || "jpg";
-  const safeDesc = (invoice.description || "invoice").replace(/[^a-zA-Z0-9 _-]/g, "").slice(0, 40);
-  const fileName = `${invoice.property} - ${invoice.purchaseDate} ${safeDesc}.${ext}`;
+  const allPaths: string[] = invoice.photoPaths ? JSON.parse(invoice.photoPaths) : [invoice.photoPath];
+  const safeDesc = (invoice.description || "receipt").replace(/[^a-zA-Z0-9 _-]/g, "").slice(0, 40);
 
   // Try Google API first (works on Railway)
   if (isGoogleEnabled()) {
     try {
-      // Ensure "Main App Invoices" folder exists
-      if (!mainFolderId) {
-        mainFolderId = await ensureDriveFolder("Main App Invoices");
-      }
-      // Ensure property subfolder exists
+      if (!mainFolderId) mainFolderId = await ensureDriveFolder("Main App Invoices");
       let propertyFolderId = propertyFolderCache.get(invoice.property) || null;
       if (!propertyFolderId && mainFolderId) {
         propertyFolderId = await ensureDriveFolder(invoice.property, mainFolderId);
         if (propertyFolderId) propertyFolderCache.set(invoice.property, propertyFolderId);
       }
-      return await uploadToDrive(filePath, fileName, propertyFolderId || mainFolderId || undefined);
+      for (let i = 0; i < allPaths.length; i++) {
+        const p = allPaths[i];
+        const filePath = path.resolve(process.cwd(), p.replace(/^\/api\/uploads\//, "uploads/"));
+        if (!fs.existsSync(filePath)) continue;
+        const ext = path.extname(filePath).slice(1) || "jpg";
+        const suffix = allPaths.length > 1 ? ` (${i + 1} of ${allPaths.length})` : "";
+        const fileName = `${invoice.property} - ${invoice.purchaseDate} ${safeDesc}${suffix}.${ext}`;
+        await uploadToDrive(filePath, fileName, propertyFolderId || mainFolderId || undefined);
+      }
+      return true;
     } catch (err: any) {
       console.error("[drive] Google API upload failed:", err.message?.slice(0, 200));
       return false;
@@ -211,6 +210,10 @@ async function syncToDrive(invoice: any): Promise<boolean> {
 
   // Fallback to external-tool CLI (Perplexity sandbox)
   try {
+    const filePath = path.resolve(process.cwd(), invoice.photoPath.replace(/^\/api\/uploads\//, "uploads/"));
+    if (!fs.existsSync(filePath)) return false;
+    const ext = path.extname(filePath).slice(1) || "jpg";
+    const fileName = `${invoice.property} - ${invoice.purchaseDate} ${safeDesc}.${ext}`;
     const base64 = fs.readFileSync(filePath).toString("base64");
     callExternalTool("google_drive", "export_files", {
       file_urls: [`data:image/${ext};base64,${base64}`],
@@ -457,7 +460,7 @@ export async function registerRoutes(
     const parsed = invoiceFormSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-    const { photoPath } = req.body;
+    const { photoPath, photoPaths } = req.body;
     if (!photoPath) return res.status(400).json({ error: "Photo is required" });
 
     const user = await storage.getUser(session.userId);
@@ -465,6 +468,7 @@ export async function registerRoutes(
     const invoice = await storage.createInvoice({
       userId: session.userId,
       photoPath,
+      photoPaths: photoPaths || JSON.stringify([photoPath]),
       property: parsed.data.property,
       purchaseDate: parsed.data.purchaseDate,
       description: parsed.data.description,
@@ -518,6 +522,7 @@ export async function registerRoutes(
     const enriched = invoicesList.map(inv => ({
       ...inv,
       submittedBy: userMap.get(inv.userId) || "Unknown",
+      photoPaths: inv.photoPaths ? JSON.parse(inv.photoPaths) : [inv.photoPath],
     }));
 
     res.json(enriched);
@@ -607,22 +612,21 @@ export async function registerRoutes(
           }
         } catch (e) { console.error("[delete] Sheets cleanup failed:", e); }
 
-        try {
-          // Delete photo from Google Drive
-          const ext = path.extname(invoice.photoPath).slice(1) || "jpg";
-          const safeDesc = (invoice.description || "invoice").replace(/[^a-zA-Z0-9 _-]/g, "").slice(0, 40);
-          const driveFileName = `${invoice.property} - ${invoice.purchaseDate} ${safeDesc}.${ext}`;
-          await deleteFromDrive(driveFileName);
-        } catch (e) { console.error("[delete] Drive cleanup failed:", e); }
-
-        // Delete local upload file
-        try {
-          const localPath = path.resolve(process.cwd(), invoice.photoPath.replace(/^\/api\/uploads\//, "uploads/"));
-          if (fs.existsSync(localPath)) {
-            fs.unlinkSync(localPath);
-            console.log(`[delete] Removed local file: ${localPath}`);
-          }
-        } catch (e) { /* ignore */ }
+        // Delete all photos from Google Drive and local storage
+        const allPaths: string[] = invoice.photoPaths ? JSON.parse(invoice.photoPaths) : [invoice.photoPath];
+        const safeDesc = (invoice.description || "receipt").replace(/[^a-zA-Z0-9 _-]/g, "").slice(0, 40);
+        for (let i = 0; i < allPaths.length; i++) {
+          try {
+            const ext = path.extname(allPaths[i]).slice(1) || "jpg";
+            const suffix = allPaths.length > 1 ? ` (${i + 1} of ${allPaths.length})` : "";
+            const driveFileName = `${invoice.property} - ${invoice.purchaseDate} ${safeDesc}${suffix}.${ext}`;
+            await deleteFromDrive(driveFileName);
+          } catch (e) { console.error("[delete] Drive cleanup failed:", e); }
+          try {
+            const localPath = path.resolve(process.cwd(), allPaths[i].replace(/^\/api\/uploads\//, "uploads/"));
+            if (fs.existsSync(localPath)) { fs.unlinkSync(localPath); }
+          } catch (e) { /* ignore */ }
+        }
       });
     }
   });

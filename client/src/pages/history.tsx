@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
-import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2 } from "lucide-react";
+import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { apiRequest, queryClient, getAuthToken } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
@@ -30,7 +30,8 @@ export default function HistoryPage() {
   const { user, logout } = useAuth();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const [viewingPhoto, setViewingPhoto] = useState<string | null>(null);
+  const [viewingPhotos, setViewingPhotos] = useState<string[] | null>(null);
+  const [viewPhotoIdx, setViewPhotoIdx] = useState(0);
   const [editingInvoice, setEditingInvoice] = useState<EnrichedInvoice | null>(null);
   const [editDescription, setEditDescription] = useState("");
   const [editPurpose, setEditPurpose] = useState("");
@@ -146,10 +147,13 @@ export default function HistoryPage() {
               <Card key={inv.id} data-testid={`card-invoice-${inv.id}`}>
                 <CardContent className="py-3 flex gap-3">
                   <div
-                    className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center flex-shrink-0 overflow-hidden cursor-pointer"
-                    onClick={() => setViewingPhoto(inv.photoPath)}
+                    className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center flex-shrink-0 overflow-hidden cursor-pointer relative"
+                    onClick={() => setViewingPhotos((inv as any).photoPaths || [inv.photoPath])}
                   >
-                    <img src={authImgUrl(inv.photoPath)} alt="Receipt" className="w-full h-full object-cover" />
+                    <img src={authImgUrl(((inv as any).photoPaths || [inv.photoPath])[0])} alt="Receipt" className="w-full h-full object-cover" />
+                    {(inv as any).photoPaths?.length > 1 && (
+                      <span className="absolute bottom-0 right-0 bg-black/60 text-white text-[8px] px-1 rounded-tl">{(inv as any).photoPaths.length}</span>
+                    )}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
@@ -307,16 +311,31 @@ export default function HistoryPage() {
         </DialogContent>
       </Dialog>
 
-      {viewingPhoto && (
+      {viewingPhotos && (
         <div
           className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
-          onClick={() => setViewingPhoto(null)}
+          onClick={() => { setViewingPhotos(null); setViewPhotoIdx(0); }}
         >
-          <div className="relative max-w-lg w-full">
-            <img src={authImgUrl(viewingPhoto)} alt="Receipt" className="w-full rounded-lg" />
+          <div className="relative max-w-lg w-full" onClick={e => e.stopPropagation()}>
+            <img src={authImgUrl(viewingPhotos[viewPhotoIdx])} alt="Receipt" className="w-full rounded-lg" />
+            {viewingPhotos.length > 1 && (
+              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-black/60 text-white text-xs px-2 py-0.5 rounded-full">
+                {viewPhotoIdx + 1} / {viewingPhotos.length}
+              </div>
+            )}
+            {viewingPhotos.length > 1 && viewPhotoIdx > 0 && (
+              <button className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center" onClick={() => setViewPhotoIdx(i => i - 1)}>
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+            )}
+            {viewingPhotos.length > 1 && viewPhotoIdx < viewingPhotos.length - 1 && (
+              <button className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center" onClick={() => setViewPhotoIdx(i => i + 1)}>
+                <ChevronRight className="w-5 h-5" />
+              </button>
+            )}
             <button
               className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center"
-              onClick={() => setViewingPhoto(null)}
+              onClick={() => { setViewingPhotos(null); setViewPhotoIdx(0); }}
             >
               <X className="w-5 h-5" />
             </button>

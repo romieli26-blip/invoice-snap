@@ -57,6 +57,7 @@ export const invoices = sqliteTable("invoices", {
   lastFourDigits: text("last_four_digits"),
   recordNumber: integer("record_number"),
   rentManagerIssue: text("rent_manager_issue"),
+  photoPaths: text("photo_paths"), // JSON array of photo paths for multi-photo receipts
   syncedToDrive: integer("synced_to_drive").notNull().default(0),
   syncedToSheets: integer("synced_to_sheets").notNull().default(0),
   createdAt: text("created_at").notNull(),

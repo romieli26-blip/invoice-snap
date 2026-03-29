@@ -53,6 +53,7 @@ sqlite.exec(`
 // Migration: add new columns
 try { sqlite.exec("ALTER TABLE invoices ADD COLUMN record_number INTEGER"); } catch {}
 try { sqlite.exec("ALTER TABLE invoices ADD COLUMN rent_manager_issue TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE invoices ADD COLUMN photo_paths TEXT"); } catch {}
 
 export const db = drizzle(sqlite);
 
