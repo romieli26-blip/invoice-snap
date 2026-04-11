@@ -604,7 +604,7 @@ export async function registerRoutes(
           attachments.push({ filename: path.basename(photoFile), path: photoFile });
         }
         await sendNotificationEmails(
-          `New Receipt: ${typeLabel} $${invoice.amount} — ${invoice.property}`,
+          `New Receipt: ${typeLabel} $${invoice.amount} - ${invoice.property}`,
           `<h3>New ${typeLabel} Receipt Submitted</h3>
            <p><strong>Property:</strong> ${invoice.property}</p>
            <p><strong>Amount:</strong> $${invoice.amount}</p>
@@ -714,7 +714,7 @@ export async function registerRoutes(
           const photoFile = path.resolve(dataDir, "uploads", existing.photoPath.replace(/^\/api\/uploads\//, ""));
           if (fs.existsSync(photoFile)) attachments.push({ filename: path.basename(photoFile), path: photoFile });
           await sendNotificationEmails(
-            `Receipt EDITED: ${existing.property} #${existing.recordNumber || ""} — $${updated.amount}`,
+            `Receipt EDITED: ${existing.property} #${existing.recordNumber || ""} - $${updated.amount}`,
             `<h3>Receipt Edited</h3>
              <p><strong>Property:</strong> ${existing.property}</p>
              <p><strong>Record #:</strong> ${existing.recordNumber || "N/A"}</p>
@@ -722,7 +722,7 @@ export async function registerRoutes(
              <p><strong>Changes:</strong></p>
              <ul>${editEntry.changes.map((c: string) => `<li>${c}</li>`).join("")}</ul>
              <p><strong>New Amount:</strong> $${updated.amount}</p>
-             <p style="color:#888;font-size:12px;margin-top:16px;">— Receipt App</p>`,
+             <p style="color:#888;font-size:12px;margin-top:16px;">- Receipt App</p>`,
             attachments
           );
         } catch (e) { console.error("[edit-email] Failed:", e); }
@@ -928,7 +928,7 @@ export async function registerRoutes(
       try {
         const typeLabel = type === "income" ? "Income" : "Spent";
         await sendNotificationEmails(
-          `Cash ${typeLabel}: $${amount} — ${property}`,
+          `Cash ${typeLabel}: $${amount} - ${property}`,
           `<h3>New Cash ${typeLabel} Transaction</h3>
            <p><strong>Property:</strong> ${property}</p>
            <p><strong>Type:</strong> ${typeLabel}</p>

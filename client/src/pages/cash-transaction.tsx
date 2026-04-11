@@ -28,6 +28,7 @@ const INCOME_CATEGORIES = [
 
 const SPENT_CATEGORIES = [
   { value: "bank_deposit", label: "Bank Deposit" },
+  { value: "item_purchased", label: "Item Purchased" },
   { value: "contractor_pay", label: "Contractor Pay" },
   { value: "other", label: "Other" },
 ];
@@ -114,6 +115,13 @@ export default function CashTransactionPage() {
     }
     if (txType === "spent" && category === "bank_deposit") {
       if (!bankName.trim()) return "Please enter the bank name for deposits.";
+    }
+    if (txType === "spent" && category === "item_purchased") {
+      if (!description.trim()) return "Please enter what was purchased.";
+      if (!unitLotNumber.trim()) return "Please enter what the purchase was for / which project.";
+    }
+    if (txType === "spent" && category === "other") {
+      if (!description.trim()) return "Please describe what the cash was spent on.";
     }
 
     return null;
@@ -417,15 +425,37 @@ export default function CashTransactionPage() {
                   </div>
                 )}
 
-                {/* Description for all spent categories */}
-                {txType === "spent" && (
+                {/* Item Purchased: what for + project like receipts */}
+                {txType === "spent" && category === "item_purchased" && (
+                  <>
+                    <div className="space-y-2">
+                      <Label>What Was Purchased</Label>
+                      <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="e.g. Plumbing supplies, cleaning materials" data-testid="input-item-desc" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>What For / Which Project</Label>
+                      <Input value={unitLotNumber} onChange={e => setUnitLotNumber(e.target.value)} placeholder="e.g. Unit 4B repair, Park entrance cleanup" data-testid="input-item-project" />
+                    </div>
+                  </>
+                )}
+
+                {/* Other category: required description */}
+                {txType === "spent" && category === "other" && (
+                  <div className="space-y-2">
+                    <Label>What was the cash spent on? <span className="text-destructive">*</span></Label>
+                    <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Describe what the cash was spent on" data-testid="input-other-desc" />
+                  </div>
+                )}
+
+                {/* Description for bank_deposit and contractor_pay */}
+                {txType === "spent" && (category === "bank_deposit" || category === "contractor_pay") && (
                   <div className="space-y-2">
                     <Label htmlFor="cash-description">Description {category === "bank_deposit" ? "(optional)" : ""}</Label>
                     <Input
                       id="cash-description"
                       value={description}
                       onChange={e => setDescription(e.target.value)}
-                      placeholder={category === "bank_deposit" ? "e.g. Weekly deposit" : "e.g. Plumbing repair parts"}
+                      placeholder={category === "bank_deposit" ? "e.g. Weekly deposit" : "e.g. Plumbing repair for unit 5"}
                       data-testid="input-description"
                     />
                   </div>

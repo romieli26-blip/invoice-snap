@@ -229,6 +229,25 @@ export default function InvoiceFormPage() {
 
         <h1 className="text-xl font-semibold" data-testid="text-form-title">Receipt Details</h1>
 
+        {/* Photo preview with retake option */}
+        {photoPaths.length > 0 && (
+          <div className="relative rounded-lg overflow-hidden bg-muted">
+            <img src={authImgUrl(photoPaths[photoIndex] || photoPaths[0])} alt="Receipt" className="w-full max-h-32 object-contain" />
+            {photoPaths.length > 1 && (
+              <div className="absolute bottom-1 left-1/2 -translate-x-1/2 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded-full">
+                {photoIndex + 1} / {photoPaths.length}
+              </div>
+            )}
+            <button
+              type="button"
+              className="absolute top-1 right-1 bg-black/50 text-white text-[10px] px-2 py-1 rounded-full"
+              onClick={() => setLocation("/capture")}
+            >
+              Retake
+            </button>
+          </div>
+        )}
+
         <Card>
           <CardContent className="pt-6">
             <form onSubmit={handlePreSubmit} className="space-y-4">
