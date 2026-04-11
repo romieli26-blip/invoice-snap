@@ -123,6 +123,9 @@ export default function CashTransactionPage() {
     if (txType === "spent" && category === "other") {
       if (!description.trim()) return "Please describe what the cash was spent on.";
     }
+    if (txType === "spent" && !photoPath) {
+      return "Please take a photo or upload a receipt/document for this transaction.";
+    }
 
     return null;
   }
@@ -355,10 +358,10 @@ export default function CashTransactionPage() {
                   </div>
                 )}
 
-                {/* Photo upload for bank deposits */}
-                {txType === "spent" && category === "bank_deposit" && (
+                {/* Photo upload for ALL cash spent categories */}
+                {txType === "spent" && (
                   <div className="space-y-2">
-                    <Label>Deposit Slip Photo</Label>
+                    <Label>Photo / Receipt <span className="text-destructive">*</span></Label>
                     {photoPreview ? (
                       <div className="relative rounded-lg overflow-hidden bg-muted">
                         <img src={photoPreview} alt="Deposit slip" className="w-full max-h-32 object-contain" />
@@ -383,43 +386,6 @@ export default function CashTransactionPage() {
                         <Button type="button" variant="outline" size="sm" className="flex-1 gap-1" onClick={() => fileInputRef.current?.click()}>
                           <Upload className="w-3.5 h-3.5" /> Upload
                         </Button>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Contractor receipt photo */}
-                {txType === "spent" && category === "contractor_pay" && (
-                  <div className="space-y-2">
-                    <Label>Did the contractor provide a receipt?</Label>
-                    <div className="flex gap-2">
-                      <Button type="button" variant={contractorHasReceipt ? "default" : "outline"} size="sm" className="flex-1" onClick={() => setContractorHasReceipt(true)}>Yes</Button>
-                      <Button type="button" variant={!contractorHasReceipt ? "default" : "outline"} size="sm" className="flex-1" onClick={() => setContractorHasReceipt(false)}>No</Button>
-                    </div>
-                    {contractorHasReceipt && (
-                      <div>
-                        {photoPreview ? (
-                          <div className="relative rounded-lg overflow-hidden bg-muted">
-                            <img src={photoPreview} alt="Contractor receipt" className="w-full max-h-32 object-contain" />
-                            {uploading && (
-                              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                                <Loader2 className="w-6 h-6 animate-spin text-white" />
-                              </div>
-                            )}
-                            <button type="button" className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/50 text-white flex items-center justify-center" onClick={() => { setPhotoPreview(null); setPhotoPath(""); }}>
-                              <X className="w-3 h-3" />
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex gap-2">
-                            <Button type="button" variant="outline" size="sm" className="flex-1 gap-1" onClick={() => cameraInputRef.current?.click()}>
-                              <Camera className="w-3.5 h-3.5" /> Take Photo
-                            </Button>
-                            <Button type="button" variant="outline" size="sm" className="flex-1 gap-1" onClick={() => fileInputRef.current?.click()}>
-                              <Upload className="w-3.5 h-3.5" /> Upload
-                            </Button>
-                          </div>
-                        )}
                       </div>
                     )}
                   </div>
