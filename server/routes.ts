@@ -21,6 +21,16 @@ if (!fs.existsSync(uploadsDir)) {
 // ---- Google Sheets config ----
 const SHEETS_CONFIG_PATH = path.resolve(process.cwd(), "sheets-config.json");
 let sheetsConfig: { spreadsheetId: string; spreadsheetUrl?: string; tabs: Record<string, number> } | null = null;
+
+// Cash transactions sheets config
+const CASH_SHEETS_CONFIG_PATH = path.resolve(process.cwd(), "cash-sheets-config.json");
+let cashSheetsConfig: { spreadsheetId: string; tabs: Record<string, number> } | null = null;
+try {
+  if (fs.existsSync(CASH_SHEETS_CONFIG_PATH)) {
+    cashSheetsConfig = JSON.parse(fs.readFileSync(CASH_SHEETS_CONFIG_PATH, "utf-8"));
+    console.log(`[cash-sheets] Config loaded: spreadsheet ${cashSheetsConfig!.spreadsheetId}`);
+  }
+} catch {}
 try {
   if (fs.existsSync(SHEETS_CONFIG_PATH)) {
     sheetsConfig = JSON.parse(fs.readFileSync(SHEETS_CONFIG_PATH, "utf-8"));
@@ -795,10 +805,35 @@ export async function registerRoutes(
 
     res.json(tx);
 
-    // Background email notification
+    // Background sync and email notification
     setImmediate(async () => {
+      const submittedByName = user?.displayName || "Unknown";
+      // Sync to Cash Sheets
+      if (isGoogleEnabled() && cashSheetsConfig && cashSheetsConfig.tabs[property]) {
+        try {
+          const balance = await storage.getCashBalanceByProperty(property);
+          const row = [date, type, category, amount, unitLotNumber || "", tenantName || "", bankName || "", description || "", submittedByName, new Date().toISOString(), String(recordNumber), String(balance.toFixed(2))];
+          const ok = await appendSheetRow(cashSheetsConfig.spreadsheetId, property, row);
+          if (ok) await storage.updateCashTransactionSyncStatus(tx.id, "sheets", true);
+        } catch (e) { console.error("[cash-sheets] Sync error:", e); }
+      }
+      // Drive sync for photos
+      if (isGoogleEnabled() && photoPath) {
+        try {
+          const typeLabel = type === "income" ? "Income" : "Spent";
+          const filePath = path.resolve(dataDir, "uploads", photoPath.replace(/^\/api\/uploads\//, ""));
+          if (fs.existsSync(filePath)) {
+            if (!mainFolderId) mainFolderId = await ensureDriveFolder("Main App Invoices");
+            let cashFolder = await ensureDriveFolder("Cash Transactions", mainFolderId || undefined);
+            let propFolder = cashFolder ? await ensureDriveFolder(property, cashFolder) : null;
+            const ext = path.extname(filePath).slice(1) || "jpg";
+            const driveFileName = `Cash ${typeLabel}_${property}_${date}.${ext}`;
+            await uploadToDrive(filePath, driveFileName, propFolder || cashFolder || mainFolderId || undefined);
+            await storage.updateCashTransactionSyncStatus(tx.id, "drive", true);
+          }
+        } catch (e) { console.error("[cash-drive] Sync error:", e); }
+      }
       try {
-        const submittedByName = user?.displayName || "Unknown";
         const typeLabel = type === "income" ? "Income" : "Spent";
         await sendNotificationEmails(
           `Cash ${typeLabel}: $${amount} — ${property}`,
