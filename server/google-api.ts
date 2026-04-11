@@ -71,7 +71,7 @@ export async function createSheetTab(spreadsheetId: string, title: string): Prom
       range: `'${title}'!A1`,
       valueInputOption: "RAW",
       requestBody: {
-        values: [["Date", "Description", "What For / Use", "Amount ($)", "Bought By", "Payment Method", "Last 4 Digits", "Submitted By", "Submitted At", "Receipt Identification", "RM Service Issue #"]],
+        values: [["Date", "Description", "What For / Use", "Amount ($)", "Bought By", "Payment Method", "Last 4 Digits", "Submitted By", "Submitted At", "Receipt Identification", "RM Service Issue #", "Receipt Type", "Edit History"]],
       },
     });
 
@@ -188,6 +188,44 @@ export async function deleteFromDrive(fileName: string): Promise<boolean> {
   } catch (err: any) {
     console.error(`[google-api] Drive delete failed:`, err.message?.slice(0, 200));
     return false;
+  }
+}
+
+/**
+ * Highlight the last row in a sheet tab with a background color.
+ * color: { red, green, blue } each 0-1
+ */
+export async function highlightLastRow(
+  spreadsheetId: string,
+  tabName: string,
+  color: { red: number; green: number; blue: number }
+): Promise<void> {
+  if (!sheetsApi) return;
+  try {
+    // Get sheet ID and row count
+    const meta = await sheetsApi.spreadsheets.get({ spreadsheetId, fields: "sheets.properties" });
+    const sheet = meta.data.sheets?.find(s => s.properties?.title === tabName);
+    if (!sheet?.properties?.sheetId) return;
+    const sheetId = sheet.properties.sheetId;
+
+    // Get the number of rows with data
+    const range = await sheetsApi.spreadsheets.values.get({ spreadsheetId, range: `'${tabName}'!A:A` });
+    const rowCount = range.data.values?.length || 1;
+
+    await sheetsApi.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          repeatCell: {
+            range: { sheetId, startRowIndex: rowCount - 1, endRowIndex: rowCount, startColumnIndex: 0, endColumnIndex: 20 },
+            cell: { userEnteredFormat: { backgroundColor: { red: color.red, green: color.green, blue: color.blue } } },
+            fields: "userEnteredFormat.backgroundColor",
+          },
+        }],
+      },
+    });
+  } catch (err: any) {
+    console.error(`[google-api] Highlight failed:`, err.message?.slice(0, 100));
   }
 }
 

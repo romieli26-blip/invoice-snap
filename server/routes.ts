@@ -7,7 +7,7 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
-import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, deleteSheetRow, deleteFromDrive } from "./google-api";
+import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, deleteSheetRow, deleteFromDrive, highlightLastRow } from "./google-api";
 import nodemailer from "nodemailer";
 
 // Ensure uploads directory exists
@@ -546,6 +546,10 @@ export async function registerRoutes(
         console.log(`[sync] Sheets sync for invoice ${invoice.id}: ${sheetsOk}`);
         if (sheetsOk) {
           await storage.updateInvoiceSyncStatus(invoice.id, "sheets", true);
+          // Highlight refund rows in green
+          if ((invoice as any).receiptType === "refund" && sheetsConfig) {
+            await highlightLastRow(sheetsConfig.spreadsheetId, invoice.property, { red: 0.6, green: 1, blue: 0.6 });
+          }
         }
       } catch (e) { console.error("[sync] Sheets error:", e); }
       try {
@@ -656,8 +660,10 @@ export async function registerRoutes(
               updated.lastFourDigits || "", submittedByName, updated.createdAt,
               String(updated.recordNumber || ""), updated.rentManagerIssue || "",
               updated.receiptType || "expense",
-              `EDITED by ${editEntry.by} at ${editEntry.at}`,
+              `EDITED by ${editEntry.by} at ${editEntry.at}: ${editEntry.changes.join("; ")}`,
             ]);
+            // Highlight edited row in yellow
+            await highlightLastRow(sheetsConfig!.spreadsheetId, existing.property, { red: 1, green: 1, blue: 0.6 });
           }
         } catch (e) { console.error("[edit] Sheets update failed:", e); }
       });
@@ -986,6 +992,27 @@ export async function registerRoutes(
     });
 
     res.json(updated);
+
+    // Background: update the Cash Sheets row
+    if (isGoogleEnabled() && cashSheetsConfig && updated && cashSheetsConfig.tabs[existing.property]) {
+      setImmediate(async () => {
+        try {
+          const submittedByName = editUser?.displayName || "Unknown";
+          // Delete old row and add updated one
+          await deleteSheetRow(cashSheetsConfig!.spreadsheetId, existing.property, existing.date, existing.type, existing.amount);
+          const balance = await storage.getCashBalanceByProperty(existing.property);
+          await appendSheetRow(cashSheetsConfig!.spreadsheetId, existing.property, [
+            updated.date, updated.type, updated.category, updated.amount,
+            updated.unitLotNumber || "", updated.tenantName || "", updated.bankName || "",
+            updated.description || "", submittedByName, updated.createdAt,
+            String(updated.recordNumber || ""), String(balance.toFixed(2)),
+            `EDITED by ${editEntry.by} at ${editEntry.at}: ${editEntry.changes.join("; ")}`,
+          ]);
+          // Highlight edited row in yellow
+          await highlightLastRow(cashSheetsConfig!.spreadsheetId, existing.property, { red: 1, green: 1, blue: 0.6 });
+        } catch (e) { console.error("[cash-edit] Sheets sync failed:", e); }
+      });
+    }
   });
 
   app.get("/api/cash-balances", async (req, res) => {
