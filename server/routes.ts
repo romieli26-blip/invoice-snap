@@ -52,26 +52,37 @@ const EMAIL_RECIPIENTS = [
   { name: "Dustin", email: "Dustin@Jetsettercapital.com" },
 ];
 
-const emailTransporter = process.env.GMAIL_APP_PASSWORD ? nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: "jetsetterinvoices1@gmail.com",
-    pass: process.env.GMAIL_APP_PASSWORD,
-  },
-}) : null;
+// Lazy-initialized email transporter
+let _emailTransporter: any = null;
+function getEmailTransporter() {
+  if (_emailTransporter) return _emailTransporter;
+  const pass = process.env.GMAIL_APP_PASSWORD;
+  if (!pass) {
+    console.log("[email] GMAIL_APP_PASSWORD not set");
+    return null;
+  }
+  _emailTransporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: { user: "jetsetterinvoices1@gmail.com", pass },
+  });
+  console.log("[email] Transporter initialized");
+  return _emailTransporter;
+}
 
-async function sendNotificationEmails(subject: string, htmlBody: string) {
-  if (!emailTransporter) {
+async function sendNotificationEmails(subject: string, htmlBody: string, attachments?: any[]) {
+  const transporter = getEmailTransporter();
+  if (!transporter) {
     console.log("[email] Skipping — no GMAIL_APP_PASSWORD configured");
     return;
   }
   for (const recipient of EMAIL_RECIPIENTS) {
     try {
-      await emailTransporter.sendMail({
+      await transporter.sendMail({
         from: '"Receipt App" <jetsetterinvoices1@gmail.com>',
         to: `${recipient.name} <${recipient.email}>`,
         subject,
         html: htmlBody,
+        attachments: attachments || [],
       });
       console.log(`[email] Sent to ${recipient.email}`);
     } catch (err: any) {
@@ -560,9 +571,14 @@ export async function registerRoutes(
         }
       } catch (e) { console.error("[sync] Drive error:", e); }
 
-      // Email notification
+      // Email notification with photo attachment
       try {
-        const typeLabel = invoice.receiptType === "refund" ? "REFUND" : "Expense";
+        const typeLabel = (invoice as any).receiptType === "refund" ? "REFUND" : "Expense";
+        const attachments: any[] = [];
+        const photoFile = path.resolve(dataDir, "uploads", invoice.photoPath.replace(/^\/api\/uploads\//, ""));
+        if (fs.existsSync(photoFile)) {
+          attachments.push({ filename: path.basename(photoFile), path: photoFile });
+        }
         await sendNotificationEmails(
           `New Receipt: ${typeLabel} $${invoice.amount} — ${invoice.property}`,
           `<h3>New ${typeLabel} Receipt Submitted</h3>
@@ -573,7 +589,8 @@ export async function registerRoutes(
            <p><strong>Bought By:</strong> ${invoice.boughtBy}</p>
            <p><strong>Submitted By:</strong> ${submittedByName}</p>
            <p><strong>Date:</strong> ${invoice.purchaseDate}</p>
-           <p><strong>Record #:</strong> ${invoice.recordNumber || "N/A"}</p>`
+           <p><strong>Record #:</strong> ${invoice.recordNumber || "N/A"}</p>`,
+          attachments
         );
       } catch (e) { console.error("[email] Notification error:", e); }
     });
@@ -666,6 +683,25 @@ export async function registerRoutes(
             await highlightLastRow(sheetsConfig!.spreadsheetId, existing.property, { red: 1, green: 1, blue: 0.6 });
           }
         } catch (e) { console.error("[edit] Sheets update failed:", e); }
+
+        // Edit notification email
+        try {
+          const attachments: any[] = [];
+          const photoFile = path.resolve(dataDir, "uploads", existing.photoPath.replace(/^\/api\/uploads\//, ""));
+          if (fs.existsSync(photoFile)) attachments.push({ filename: path.basename(photoFile), path: photoFile });
+          await sendNotificationEmails(
+            `Receipt EDITED: ${existing.property} #${existing.recordNumber || ""} — $${updated.amount}`,
+            `<h3>Receipt Edited</h3>
+             <p><strong>Property:</strong> ${existing.property}</p>
+             <p><strong>Record #:</strong> ${existing.recordNumber || "N/A"}</p>
+             <p><strong>Edited by:</strong> ${editEntry.by}</p>
+             <p><strong>Changes:</strong></p>
+             <ul>${editEntry.changes.map((c: string) => `<li>${c}</li>`).join("")}</ul>
+             <p><strong>New Amount:</strong> $${updated.amount}</p>
+             <p style="color:#888;font-size:12px;margin-top:16px;">— Receipt App</p>`,
+            attachments
+          );
+        } catch (e) { console.error("[edit-email] Failed:", e); }
       });
     }
   });

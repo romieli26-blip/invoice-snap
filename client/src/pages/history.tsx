@@ -158,7 +158,7 @@ export default function HistoryPage() {
             data-testid="button-new-invoice"
           >
             <Camera className="w-5 h-5" />
-            New Receipt
+            Credit Card Receipt
           </Button>
           <Button
             variant="outline"

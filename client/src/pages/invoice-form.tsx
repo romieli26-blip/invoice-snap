@@ -61,7 +61,7 @@ export default function InvoiceFormPage() {
 
   const [boughtByMode, setBoughtByMode] = useState<"me" | "other">("me");
   const [boughtByCustom, setBoughtByCustom] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<"cash" | "cc">("cc");
+  const paymentMethod = "cc"; // Always credit card for receipts
   const [lastFourDigits, setLastFourDigits] = useState("");
   const [hasRmIssue, setHasRmIssue] = useState(false);
   const [rentManagerIssue, setRentManagerIssue] = useState("");
@@ -579,24 +579,7 @@ export default function InvoiceFormPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>Payment Method</Label>
-                <Select
-                  value={paymentMethod}
-                  onValueChange={(v: "cash" | "cc") => setPaymentMethod(v)}
-                >
-                  <SelectTrigger data-testid="select-payment">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="cc">Credit Card</SelectItem>
-                    <SelectItem value="cash">Cash</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {paymentMethod === "cc" && (
-                <div className="space-y-2">
-                  <Label htmlFor="lastFour">Last 4 Digits of Card</Label>
+                  <Label htmlFor="lastFour">Last 4 Digits of Credit Card</Label>
                   <Input
                     id="lastFour"
                     value={lastFourDigits}
@@ -610,8 +593,7 @@ export default function InvoiceFormPage() {
                     pattern="[0-9]{4}"
                     data-testid="input-last-four"
                   />
-                </div>
-              )}
+              </div>
 
               <Button
                 type="submit"
