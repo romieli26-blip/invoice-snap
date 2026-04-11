@@ -8,6 +8,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
 import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, deleteSheetRow, deleteFromDrive } from "./google-api";
+import nodemailer from "nodemailer";
 
 // Ensure uploads directory exists
 // Use DATA_DIR for persistent storage on Railway
@@ -32,6 +33,41 @@ try {
 function saveSheetsConfig() {
   if (!sheetsConfig) return;
   fs.writeFileSync(SHEETS_CONFIG_PATH, JSON.stringify(sheetsConfig, null, 2));
+}
+
+// ---- Email notifications ----
+const EMAIL_RECIPIENTS = [
+  { name: "Ben", email: "Ben@Jetsettercapital.com" },
+  { name: "Jared", email: "Jared@Jetsettercapital.com" },
+  { name: "Dustin", email: "Dustin@Jetsettercapital.com" },
+];
+
+const emailTransporter = process.env.GMAIL_APP_PASSWORD ? nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: "jetsetterinvoices1@gmail.com",
+    pass: process.env.GMAIL_APP_PASSWORD,
+  },
+}) : null;
+
+async function sendNotificationEmails(subject: string, htmlBody: string) {
+  if (!emailTransporter) {
+    console.log("[email] Skipping — no GMAIL_APP_PASSWORD configured");
+    return;
+  }
+  for (const recipient of EMAIL_RECIPIENTS) {
+    try {
+      await emailTransporter.sendMail({
+        from: '"Invoice Snap" <jetsetterinvoices1@gmail.com>',
+        to: `${recipient.name} <${recipient.email}>`,
+        subject,
+        html: htmlBody,
+      });
+      console.log(`[email] Sent to ${recipient.email}`);
+    } catch (err: any) {
+      console.error(`[email] Failed to send to ${recipient.email}:`, err.message?.slice(0, 200));
+    }
+  }
 }
 
 function callExternalTool(sourceId: string, toolName: string, args: Record<string, any>) {
@@ -104,6 +140,7 @@ async function syncToSheets(invoice: any, submittedByName: string): Promise<bool
     invoice.boughtBy, invoice.paymentMethod === "cc" ? "Credit Card" : "Cash",
     invoice.lastFourDigits || "", submittedByName, invoice.createdAt,
     String(invoice.recordNumber || ""), invoice.rentManagerIssue || "",
+    invoice.receiptType || "expense",
   ];
 
   // Try Google API first (works on Railway)
@@ -481,6 +518,7 @@ export async function registerRoutes(
       lastFourDigits: parsed.data.paymentMethod === "cc" ? (parsed.data.lastFourDigits || null) : null,
       recordNumber,
       rentManagerIssue: parsed.data.rentManagerIssue || null,
+      receiptType: req.body.receiptType || "expense",
       syncedToDrive: 0,
       syncedToSheets: 0,
       createdAt: new Date().toISOString(),
@@ -488,7 +526,7 @@ export async function registerRoutes(
 
     res.json(invoice);
 
-    // Background sync to Google Drive & Sheets (non-blocking)
+    // Background sync to Google Drive & Sheets + email notification (non-blocking)
     setImmediate(async () => {
       const submittedByName = user?.displayName || "Unknown";
       try {
@@ -505,6 +543,23 @@ export async function registerRoutes(
           await storage.updateInvoiceSyncStatus(invoice.id, "drive", true);
         }
       } catch (e) { console.error("[sync] Drive error:", e); }
+
+      // Email notification
+      try {
+        const typeLabel = invoice.receiptType === "refund" ? "REFUND" : "Expense";
+        await sendNotificationEmails(
+          `New Receipt: ${typeLabel} $${invoice.amount} — ${invoice.property}`,
+          `<h3>New ${typeLabel} Receipt Submitted</h3>
+           <p><strong>Property:</strong> ${invoice.property}</p>
+           <p><strong>Amount:</strong> $${invoice.amount}</p>
+           <p><strong>Description:</strong> ${invoice.description}</p>
+           <p><strong>Purpose:</strong> ${invoice.purpose}</p>
+           <p><strong>Bought By:</strong> ${invoice.boughtBy}</p>
+           <p><strong>Submitted By:</strong> ${submittedByName}</p>
+           <p><strong>Date:</strong> ${invoice.purchaseDate}</p>
+           <p><strong>Record #:</strong> ${invoice.recordNumber || "N/A"}</p>`
+        );
+      } catch (e) { console.error("[email] Notification error:", e); }
     });
   });
 
@@ -702,6 +757,122 @@ export async function registerRoutes(
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", "attachment; filename=invoices.csv");
     res.send(csv);
+  });
+
+  // ---- CASH TRANSACTIONS ----
+  app.post("/api/cash-transactions", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+
+    const { property, type, category, amount, date, unitLotNumber, tenantName, bankName, description, photoPath, photoPaths } = req.body;
+    if (!property || !type || !category || !amount || !date) {
+      return res.status(400).json({ error: "property, type, category, amount, and date are required" });
+    }
+    if (!["income", "spent"].includes(type)) {
+      return res.status(400).json({ error: "type must be 'income' or 'spent'" });
+    }
+
+    const user = await storage.getUser(session.userId);
+    const recordNumber = await storage.getNextCashRecordNumber(property);
+    const tx = await storage.createCashTransaction({
+      userId: session.userId,
+      property,
+      type,
+      category,
+      amount,
+      date,
+      unitLotNumber: unitLotNumber || null,
+      tenantName: tenantName || null,
+      bankName: bankName || null,
+      description: description || null,
+      photoPath: photoPath || null,
+      photoPaths: photoPaths || null,
+      recordNumber,
+      syncedToSheets: 0,
+      syncedToDrive: 0,
+      createdAt: new Date().toISOString(),
+    });
+
+    res.json(tx);
+
+    // Background email notification
+    setImmediate(async () => {
+      try {
+        const submittedByName = user?.displayName || "Unknown";
+        const typeLabel = type === "income" ? "Income" : "Spent";
+        await sendNotificationEmails(
+          `Cash ${typeLabel}: $${amount} — ${property}`,
+          `<h3>New Cash ${typeLabel} Transaction</h3>
+           <p><strong>Property:</strong> ${property}</p>
+           <p><strong>Type:</strong> ${typeLabel}</p>
+           <p><strong>Category:</strong> ${category}</p>
+           <p><strong>Amount:</strong> $${amount}</p>
+           <p><strong>Date:</strong> ${date}</p>
+           ${description ? `<p><strong>Description:</strong> ${description}</p>` : ""}
+           ${tenantName ? `<p><strong>Tenant:</strong> ${tenantName}</p>` : ""}
+           ${unitLotNumber ? `<p><strong>Unit/Lot:</strong> ${unitLotNumber}</p>` : ""}
+           ${bankName ? `<p><strong>Bank:</strong> ${bankName}</p>` : ""}
+           <p><strong>Submitted By:</strong> ${submittedByName}</p>
+           <p><strong>Record #:</strong> ${recordNumber}</p>`
+        );
+      } catch (e) { console.error("[email] Cash tx notification error:", e); }
+    });
+  });
+
+  app.get("/api/cash-transactions", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+
+    let txList;
+    if (session.role === "admin") {
+      txList = await storage.getAllCashTransactions();
+    } else {
+      txList = await storage.getCashTransactionsByUser(session.userId);
+    }
+
+    const allUsers = await storage.getAllUsers();
+    const userMap = new Map(allUsers.map(u => [u.id, u.displayName]));
+    const enriched = txList.map(tx => ({
+      ...tx,
+      submittedBy: userMap.get(tx.userId) || "Unknown",
+    }));
+
+    res.json(enriched);
+  });
+
+  app.delete("/api/cash-transactions/:id", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+
+    const tx = await storage.getCashTransaction(id);
+    if (!tx) return res.status(404).json({ error: "Transaction not found" });
+
+    if (session.role !== "admin" && tx.userId !== session.userId) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    await storage.deleteCashTransaction(id);
+    res.json({ ok: true });
+  });
+
+  app.get("/api/cash-balances", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+
+    let props;
+    if (session.role === "admin") {
+      props = await storage.getAllProperties();
+    } else {
+      props = await storage.getPropertiesForUser(session.userId);
+    }
+
+    const balances: Record<string, number> = {};
+    for (const p of props) {
+      balances[p.name] = await storage.getCashBalanceByProperty(p.name);
+    }
+    res.json(balances);
   });
 
   return httpServer;

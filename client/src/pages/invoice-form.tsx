@@ -65,6 +65,7 @@ export default function InvoiceFormPage() {
   const [lastFourDigits, setLastFourDigits] = useState("");
   const [hasRmIssue, setHasRmIssue] = useState(false);
   const [rentManagerIssue, setRentManagerIssue] = useState("");
+  const [receiptType, setReceiptType] = useState<"expense" | "refund">("expense");
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
@@ -148,6 +149,7 @@ export default function InvoiceFormPage() {
           boughtBy, paymentMethod,
           lastFourDigits: paymentMethod === "cc" ? lastFourDigits : undefined,
           rentManagerIssue: rmIssue,
+          receiptType,
         });
       } else {
         for (const item of splitItems) {
@@ -160,6 +162,7 @@ export default function InvoiceFormPage() {
             boughtBy, paymentMethod,
             lastFourDigits: paymentMethod === "cc" ? lastFourDigits : undefined,
             rentManagerIssue: item.hasRmIssue ? item.rentManagerIssue : undefined,
+            receiptType,
           });
         }
       }
@@ -208,6 +211,37 @@ export default function InvoiceFormPage() {
         <Card>
           <CardContent className="pt-6">
             <form onSubmit={handlePreSubmit} className="space-y-4">
+              {/* Receipt Type Toggle */}
+              <div className="space-y-2">
+                <Label>Receipt Type</Label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setReceiptType("expense")}
+                    className={`flex-1 flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors ${
+                      receiptType === "expense"
+                        ? "border-primary bg-primary/10 text-primary font-medium"
+                        : "border-border bg-background text-muted-foreground hover:bg-muted/50"
+                    }`}
+                    data-testid="button-type-expense"
+                  >
+                    Expense
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReceiptType("refund")}
+                    className={`flex-1 flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors ${
+                      receiptType === "refund"
+                        ? "border-green-600 bg-green-600/10 text-green-600 font-medium"
+                        : "border-border bg-background text-muted-foreground hover:bg-muted/50"
+                    }`}
+                    data-testid="button-type-refund"
+                  >
+                    Refund
+                  </button>
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <Label>Property</Label>
                 <Select value={property} onValueChange={setProperty}>
@@ -567,6 +601,7 @@ export default function InvoiceFormPage() {
                 )}
               </div>
             )}
+            <div><span className="text-muted-foreground text-xs">Type</span><p className={`font-medium ${receiptType === "refund" ? "text-green-600" : ""}`}>{receiptType === "refund" ? "Refund" : "Expense"}</p></div>
             <div><span className="text-muted-foreground text-xs">Property</span><p className="font-medium">{property}</p></div>
             <div><span className="text-muted-foreground text-xs">Date</span><p className="font-medium">{purchaseDate}</p></div>
             {samePurpose ? (

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
-import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, DollarSign } from "lucide-react";
 import { apiRequest, queryClient, getAuthToken } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
@@ -44,6 +44,10 @@ export default function HistoryPage() {
 
   const { data: invoices, isLoading } = useQuery<EnrichedInvoice[]>({
     queryKey: ["/api/invoices"],
+  });
+
+  const { data: cashBalances } = useQuery<Record<string, number>>({
+    queryKey: ["/api/cash-balances"],
   });
 
   async function handleExport() {
@@ -105,15 +109,43 @@ export default function HistoryPage() {
       </div>
 
       <div className="max-w-lg mx-auto p-4 space-y-4">
-        {/* New Receipt Button */}
-        <Button
-          className="w-full h-14 text-base gap-2"
-          onClick={() => setLocation("/capture")}
-          data-testid="button-new-invoice"
-        >
-          <Camera className="w-5 h-5" />
-          New Receipt
-        </Button>
+        {/* Action Buttons */}
+        <div className="grid grid-cols-2 gap-3">
+          <Button
+            className="h-14 text-base gap-2"
+            onClick={() => setLocation("/capture")}
+            data-testid="button-new-invoice"
+          >
+            <Camera className="w-5 h-5" />
+            New Receipt
+          </Button>
+          <Button
+            variant="outline"
+            className="h-14 text-base gap-2"
+            onClick={() => setLocation("/cash")}
+            data-testid="button-cash-transaction"
+          >
+            <DollarSign className="w-5 h-5" />
+            Cash Transaction
+          </Button>
+        </div>
+
+        {/* Cash Balances */}
+        {cashBalances && Object.keys(cashBalances).length > 0 && (
+          <div className="border rounded-lg p-3 space-y-1.5">
+            <h3 className="text-xs font-medium text-muted-foreground mb-2">Cash on Hand</h3>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+              {Object.entries(cashBalances).map(([prop, balance]) => (
+                <div key={prop} className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground truncate mr-2">{prop}</span>
+                  <span className={`font-medium tabular-nums ${balance < 0 ? "text-destructive" : "text-primary"}`}>
+                    ${balance.toFixed(2)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Section header */}
         <div className="flex items-center justify-between">

@@ -58,10 +58,40 @@ export const invoices = sqliteTable("invoices", {
   recordNumber: integer("record_number"),
   rentManagerIssue: text("rent_manager_issue"),
   photoPaths: text("photo_paths"), // JSON array of photo paths for multi-photo receipts
+  receiptType: text("receipt_type").default("expense"), // "expense" or "refund"
   syncedToDrive: integer("synced_to_drive").notNull().default(0),
   syncedToSheets: integer("synced_to_sheets").notNull().default(0),
   createdAt: text("created_at").notNull(),
 });
+
+// ---- Cash Transactions ----
+export const cashTransactions = sqliteTable("cash_transactions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  property: text("property").notNull(),
+  type: text("type").notNull(), // "income" or "spent"
+  category: text("category").notNull(), // income: rental_income, washer, dryer, vending, store_items, other. spent: bank_deposit, item_purchased, contractor_pay, other
+  amount: text("amount").notNull(),
+  date: text("date").notNull(),
+  // Income-specific fields
+  unitLotNumber: text("unit_lot_number"),
+  tenantName: text("tenant_name"),
+  // Spent-specific fields
+  bankName: text("bank_name"),
+  description: text("description"),
+  // Photo (for deposit slips etc)
+  photoPath: text("photo_path"),
+  photoPaths: text("photo_paths"),
+  // Record tracking
+  recordNumber: integer("record_number"),
+  syncedToSheets: integer("synced_to_sheets").notNull().default(0),
+  syncedToDrive: integer("synced_to_drive").notNull().default(0),
+  createdAt: text("created_at").notNull(),
+});
+
+export const insertCashTransactionSchema = createInsertSchema(cashTransactions).omit({ id: true });
+export type CashTransaction = typeof cashTransactions.$inferSelect;
+export type InsertCashTransaction = z.infer<typeof insertCashTransactionSchema>;
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true });
 export const insertInvoiceSchema = createInsertSchema(invoices).omit({ id: true });

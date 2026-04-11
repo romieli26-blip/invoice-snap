@@ -1,4 +1,4 @@
-import { type User, type InsertUser, type Invoice, type InsertInvoice, type Property, type InsertProperty, users, invoices, properties, sessions, userProperties } from "@shared/schema";
+import { type User, type InsertUser, type Invoice, type InsertInvoice, type Property, type InsertProperty, type CashTransaction, type InsertCashTransaction, users, invoices, properties, sessions, userProperties, cashTransactions } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, desc, inArray } from "drizzle-orm";
@@ -61,6 +61,30 @@ sqlite.exec(`
 try { sqlite.exec("ALTER TABLE invoices ADD COLUMN record_number INTEGER"); } catch {}
 try { sqlite.exec("ALTER TABLE invoices ADD COLUMN rent_manager_issue TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE invoices ADD COLUMN photo_paths TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE invoices ADD COLUMN receipt_type TEXT DEFAULT 'expense'"); } catch {}
+
+// Cash transactions table
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS cash_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    property TEXT NOT NULL,
+    type TEXT NOT NULL,
+    category TEXT NOT NULL,
+    amount TEXT NOT NULL,
+    date TEXT NOT NULL,
+    unit_lot_number TEXT,
+    tenant_name TEXT,
+    bank_name TEXT,
+    description TEXT,
+    photo_path TEXT,
+    photo_paths TEXT,
+    record_number INTEGER,
+    synced_to_sheets INTEGER NOT NULL DEFAULT 0,
+    synced_to_drive INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+`);
 
 export const db = drizzle(sqlite);
 
@@ -93,6 +117,16 @@ export interface IStorage {
   getPropertiesForUser(userId: number): Promise<Property[]>;
   setUserProperties(userId: number, propertyIds: number[]): Promise<void>;
   getUserPropertyIds(userId: number): Promise<number[]>;
+  // Cash transaction methods
+  createCashTransaction(tx: InsertCashTransaction): Promise<CashTransaction>;
+  getCashTransactionsByProperty(property: string): Promise<CashTransaction[]>;
+  getAllCashTransactions(): Promise<CashTransaction[]>;
+  getCashTransactionsByUser(userId: number): Promise<CashTransaction[]>;
+  deleteCashTransaction(id: number): Promise<void>;
+  getCashTransaction(id: number): Promise<CashTransaction | undefined>;
+  getNextCashRecordNumber(property: string): Promise<number>;
+  updateCashTransactionSyncStatus(id: number, target: "drive" | "sheets", synced: boolean): Promise<void>;
+  getCashBalanceByProperty(property: string): Promise<number>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -212,6 +246,48 @@ export class DatabaseStorage implements IStorage {
   async getUserPropertyIds(userId: number): Promise<number[]> {
     const rows = db.select().from(userProperties).where(eq(userProperties.userId, userId)).all();
     return rows.map(r => r.propertyId);
+  }
+
+  // ---- Cash Transactions ----
+  async createCashTransaction(tx: InsertCashTransaction): Promise<CashTransaction> {
+    return db.insert(cashTransactions).values(tx).returning().get();
+  }
+  async getCashTransactionsByProperty(property: string): Promise<CashTransaction[]> {
+    return db.select().from(cashTransactions).where(eq(cashTransactions.property, property)).orderBy(desc(cashTransactions.id)).all();
+  }
+  async getAllCashTransactions(): Promise<CashTransaction[]> {
+    return db.select().from(cashTransactions).orderBy(desc(cashTransactions.id)).all();
+  }
+  async getCashTransactionsByUser(userId: number): Promise<CashTransaction[]> {
+    return db.select().from(cashTransactions).where(eq(cashTransactions.userId, userId)).orderBy(desc(cashTransactions.id)).all();
+  }
+  async deleteCashTransaction(id: number): Promise<void> {
+    db.delete(cashTransactions).where(eq(cashTransactions.id, id)).run();
+  }
+  async getCashTransaction(id: number): Promise<CashTransaction | undefined> {
+    return db.select().from(cashTransactions).where(eq(cashTransactions.id, id)).get();
+  }
+  async getNextCashRecordNumber(property: string): Promise<number> {
+    const result = sqlite.prepare("SELECT MAX(record_number) as maxNum FROM cash_transactions WHERE property = ?").get(property) as any;
+    return (result?.maxNum || 0) + 1;
+  }
+  async updateCashTransactionSyncStatus(id: number, target: "drive" | "sheets", synced: boolean): Promise<void> {
+    const val = synced ? 1 : 0;
+    if (target === "drive") {
+      db.update(cashTransactions).set({ syncedToDrive: val }).where(eq(cashTransactions.id, id)).run();
+    } else {
+      db.update(cashTransactions).set({ syncedToSheets: val }).where(eq(cashTransactions.id, id)).run();
+    }
+  }
+  async getCashBalanceByProperty(property: string): Promise<number> {
+    const rows = db.select().from(cashTransactions).where(eq(cashTransactions.property, property)).all();
+    let balance = 0;
+    for (const row of rows) {
+      const amt = parseFloat(row.amount) || 0;
+      if (row.type === "income") balance += amt;
+      else if (row.type === "spent") balance -= amt;
+    }
+    return balance;
   }
 }
 
