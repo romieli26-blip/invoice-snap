@@ -10,7 +10,9 @@ import { execSync } from "child_process";
 import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, deleteSheetRow, deleteFromDrive } from "./google-api";
 
 // Ensure uploads directory exists
-const uploadsDir = path.resolve(process.cwd(), "uploads");
+// Use DATA_DIR for persistent storage on Railway
+const dataDir = process.env.DATA_DIR || ".";
+const uploadsDir = path.resolve(dataDir, "uploads");
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }

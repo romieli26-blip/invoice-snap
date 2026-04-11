@@ -3,7 +3,14 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, desc, inArray } from "drizzle-orm";
 
-const sqlite = new Database("data.db");
+import path from "path";
+
+// Use DATA_DIR env var for persistent storage on Railway (mount a volume at /data)
+const dataDir = process.env.DATA_DIR || ".";
+const dbPath = path.join(dataDir, "data.db");
+console.log(`[storage] Database path: ${dbPath}`);
+
+const sqlite = new Database(dbPath);
 sqlite.pragma("journal_mode = WAL");
 
 // Auto-create tables if they don't exist (needed for fresh deployments like Railway)
