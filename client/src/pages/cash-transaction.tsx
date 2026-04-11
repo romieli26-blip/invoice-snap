@@ -6,7 +6,13 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useLocation } from "wouter";
-import { apiRequest, apiUpload, queryClient } from "@/lib/queryClient";
+import { apiRequest, apiUpload, queryClient, getAuthToken } from "@/lib/queryClient";
+
+const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
+function authImgUrl(p: string) {
+  const token = getAuthToken();
+  return `${API_BASE}${p}${token ? `?token=${token}` : ""}`;
+}
 import { useAuth } from "@/hooks/use-auth";
 import { ArrowLeft, Loader2, CheckCircle2, DollarSign, TrendingUp, TrendingDown, Upload, Camera, X } from "lucide-react";
 import { useRef } from "react";
@@ -454,6 +460,19 @@ export default function CashTransactionPage() {
             <DialogTitle>Confirm Cash Transaction</DialogTitle>
           </DialogHeader>
           <div className="space-y-2 text-sm">
+            {/* Photo preview with retake */}
+            {photoPath && (
+              <div className="relative w-full h-32 rounded-lg overflow-hidden bg-muted">
+                <img src={authImgUrl(photoPath)} alt="Transaction" className="w-full h-full object-contain" />
+                <button
+                  type="button"
+                  className="absolute top-1 right-1 bg-black/50 text-white text-[10px] px-2 py-1 rounded-full"
+                  onClick={() => { setShowConfirm(false); setPhotoPreview(null); setPhotoPath(""); }}
+                >
+                  Retake
+                </button>
+              </div>
+            )}
             <div>
               <span className="text-muted-foreground text-xs">Type</span>
               <p className={`font-medium ${txType === "income" ? "text-green-600" : "text-red-600"}`}>

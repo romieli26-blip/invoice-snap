@@ -940,7 +940,8 @@ export async function registerRoutes(
            ${unitLotNumber ? `<p><strong>Unit/Lot:</strong> ${unitLotNumber}</p>` : ""}
            ${bankName ? `<p><strong>Bank:</strong> ${bankName}</p>` : ""}
            <p><strong>Submitted By:</strong> ${submittedByName}</p>
-           <p><strong>Record #:</strong> ${recordNumber}</p>`
+           <p><strong>Record #:</strong> ${recordNumber}</p>`,
+          photoPath ? [{ filename: path.basename(photoPath.replace(/^\/api\/uploads\//, "")), path: path.resolve(dataDir, "uploads", photoPath.replace(/^\/api\/uploads\//, "")) }] : []
         );
       } catch (e) { console.error("[email] Cash tx notification error:", e); }
     });

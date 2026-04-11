@@ -330,8 +330,17 @@ export default function HistoryPage() {
             <div className="space-y-2">
               {cashTxs.map((tx: any) => (
                 <Card key={tx.id}>
-                  <CardContent className="py-3">
-                    <div className="flex items-start justify-between gap-2">
+                  <CardContent className="py-3 flex gap-3">
+                    {/* Photo thumbnail */}
+                    {tx.photoPath && (
+                      <div
+                        className="w-12 h-12 rounded-lg bg-muted flex-shrink-0 overflow-hidden cursor-pointer"
+                        onClick={() => setViewingPhotos(tx.photoPaths || [tx.photoPath])}
+                      >
+                        <img src={authImgUrl((tx.photoPaths || [tx.photoPath])[0])} alt="" className="w-full h-full object-cover" />
+                      </div>
+                    )}
+                    <div className="flex items-start justify-between gap-2 flex-1">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${tx.type === "income" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
