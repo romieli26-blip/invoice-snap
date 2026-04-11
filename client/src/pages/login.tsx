@@ -4,7 +4,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/use-auth";
+import { apiRequest } from "@/lib/queryClient";
 import { Camera, Loader2 } from "lucide-react";
 import { LogoBackground } from "@/components/LogoBackground";
 
@@ -15,6 +17,10 @@ export default function LoginPage() {
   const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showForgot, setShowForgot] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotSending, setForgotSending] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -87,9 +93,46 @@ export default function LoginPage() {
               {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
               Sign In
             </Button>
+            <button
+              type="button"
+              className="w-full text-center text-xs text-muted-foreground hover:underline mt-2"
+              onClick={() => setShowForgot(true)}
+            >
+              Forgot your login details?
+            </button>
           </form>
         </CardContent>
       </Card>
+
+      <Dialog open={showForgot} onOpenChange={setShowForgot}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Recover Login Details</DialogTitle></DialogHeader>
+          {forgotSent ? (
+            <p className="text-sm text-center py-4">If an account with that email exists, login details have been sent to your email.</p>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">Enter the email address associated with your account. We'll send your username and a temporary password.</p>
+              <Input
+                type="email"
+                value={forgotEmail}
+                onChange={e => setForgotEmail(e.target.value)}
+                placeholder="your@email.com"
+              />
+              <Button className="w-full" disabled={forgotSending || !forgotEmail} onClick={async () => {
+                setForgotSending(true);
+                try {
+                  await apiRequest("POST", "/api/forgot-password", { email: forgotEmail });
+                  setForgotSent(true);
+                } catch {}
+                finally { setForgotSending(false); }
+              }}>
+                {forgotSending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                Send Login Details
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
       </div>
     </LogoBackground>
   );

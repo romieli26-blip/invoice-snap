@@ -377,6 +377,57 @@ export async function registerRoutes(
     });
   }
 
+  // ---- FORGOT PASSWORD (public, no auth) ----
+  app.post("/api/forgot-password", async (req, res) => {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Email is required" });
+
+    const allUsers = await storage.getAllUsers();
+    const user = allUsers.find(u => u.email && u.email.toLowerCase() === email.toLowerCase());
+
+    if (!user) {
+      return res.json({ ok: true, message: "If an account with that email exists, login details have been sent." });
+    }
+
+    const tempPassword = crypto.randomBytes(4).toString("hex");
+    await storage.updateUser(user.id, { password: tempPassword });
+
+    try {
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+      const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+      if (clientId && clientSecret && refreshToken) {
+        const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
+        oauth2Client.setCredentials({ refresh_token: refreshToken });
+        const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+
+        const mime = [
+          `To: ${user.displayName} <${user.email}>`,
+          `From: "Receipt App" <jetsetterinvoices1@gmail.com>`,
+          `Subject: Receipt App - Your Login Details`,
+          `MIME-Version: 1.0`,
+          `Content-Type: text/html; charset="UTF-8"`,
+          ``,
+          `<h3>Login Details</h3>
+           <p>Hi ${user.displayName},</p>
+           <p>Your login details for the Receipt App:</p>
+           <p><strong>Username:</strong> ${user.username}</p>
+           <p><strong>Temporary Password:</strong> ${tempPassword}</p>
+           <p>Please log in and ask your admin to update your password.</p>
+           <p style="color:#888;font-size:12px;margin-top:16px;">- Receipt App</p>`,
+        ].join("\r\n");
+
+        const raw = Buffer.from(mime).toString("base64url");
+        await gmail.users.messages.send({ userId: "me", requestBody: { raw } });
+        console.log(`[forgot-password] Sent login details to ${user.email}`);
+      }
+    } catch (err: any) {
+      console.error("[forgot-password] Email failed:", err.message?.slice(0, 200));
+    }
+
+    res.json({ ok: true, message: "If an account with that email exists, login details have been sent." });
+  });
+
   // ---- AUTH ----
   app.post("/api/login", async (req, res) => {
     const parsed = loginSchema.safeParse(req.body);
@@ -465,6 +516,28 @@ export async function registerRoutes(
 
     await storage.deleteUser(id);
     res.json({ ok: true });
+  });
+
+  app.put("/api/users/:id", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+
+    const existing = await storage.getUser(id);
+    if (!existing) return res.status(404).json({ error: "User not found" });
+
+    const { displayName, email, password, role, dailyReport } = req.body;
+
+    const updateData: any = {};
+    if (displayName !== undefined) updateData.displayName = displayName;
+    if (email !== undefined) updateData.email = email || null;
+    if (password !== undefined && password.trim()) updateData.password = password;
+    if (role !== undefined) updateData.role = role;
+    if (dailyReport !== undefined) updateData.dailyReport = dailyReport ? 1 : 0;
+
+    const updated = await storage.updateUser(id, updateData);
+    res.json(updated);
   });
 
   app.get("/api/users/:id/properties", async (req, res) => {
@@ -925,6 +998,20 @@ export async function registerRoutes(
       await sendNotificationEmails(`Daily Summary - ${date}`, html);
       (EMAIL_RECIPIENTS as any).length = 0;
       origRecipients.forEach(r => (EMAIL_RECIPIENTS as any).push(r));
+    }
+
+    // Save report to Google Drive "Daily Reports" folder
+    if (isGoogleEnabled()) {
+      try {
+        const reportsFolder = await ensureDriveFolder("Daily Reports");
+        if (reportsFolder) {
+          const reportPath = path.resolve(dataDir, `report-${date}.html`);
+          fs.writeFileSync(reportPath, html);
+          await uploadToDrive(reportPath, `Daily Report - ${date}.html`, reportsFolder);
+          try { fs.unlinkSync(reportPath); } catch {}
+          console.log(`[daily-report] Saved to Drive: Daily Report - ${date}.html`);
+        }
+      } catch (e: any) { console.error("[daily-report] Drive save failed:", e.message?.slice(0, 200)); }
     }
 
     res.json({ ok: true, date, receipts: todayInvoices.length, cashTx: todayCash.length, sentTo: recipientEmails.map(r => r.email) });

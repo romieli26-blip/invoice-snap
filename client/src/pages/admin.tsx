@@ -12,7 +12,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Plus, Trash2, UserCircle, Shield, Loader2, Building2, Settings } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, UserCircle, Shield, Loader2, Building2, Settings, Pencil } from "lucide-react";
 import { LogoBackground } from "@/components/LogoBackground";
 
 interface UserItem {
@@ -46,6 +46,15 @@ export default function AdminPage() {
   const [newDailyReport, setNewDailyReport] = useState(false);
 
   const [newUserPropertyIds, setNewUserPropertyIds] = useState<number[]>([]);
+
+  // Edit user state
+  const [editingUser, setEditingUser] = useState<any>(null);
+  const [editUserName, setEditUserName] = useState("");
+  const [editUserEmail, setEditUserEmail] = useState("");
+  const [editUserPassword, setEditUserPassword] = useState("");
+  const [editUserRole, setEditUserRole] = useState("manager");
+  const [editUserDailyReport, setEditUserDailyReport] = useState(false);
+  const [editUserSaving, setEditUserSaving] = useState(false);
 
   // Edit properties assignment state
   const [editPropsUserId, setEditPropsUserId] = useState<number | null>(null);
@@ -478,6 +487,21 @@ export default function AdminPage() {
                     </div>
                     {u.id !== user?.id && (
                       <div className="flex items-center gap-1 flex-shrink-0">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-muted-foreground hover:text-primary"
+                          onClick={() => {
+                            setEditingUser(u);
+                            setEditUserName(u.displayName);
+                            setEditUserEmail(u.email || "");
+                            setEditUserPassword("");
+                            setEditUserRole(u.role);
+                            setEditUserDailyReport(u.dailyReport === 1);
+                          }}
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Button>
                         {u.role !== "admin" && (
                           <Button
                             variant="ghost"
@@ -507,6 +531,65 @@ export default function AdminPage() {
             </div>
           )}
         </section>
+
+        {/* ---- EDIT USER DIALOG ---- */}
+        <Dialog open={editingUser !== null} onOpenChange={(open) => { if (!open) setEditingUser(null); }}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Edit User: {editingUser?.username}</DialogTitle></DialogHeader>
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Display Name</Label>
+                <Input value={editUserName} onChange={e => setEditUserName(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Email (optional)</Label>
+                <Input type="email" value={editUserEmail} onChange={e => setEditUserEmail(e.target.value)} placeholder="user@example.com" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">New Password (leave blank to keep current)</Label>
+                <Input type="password" value={editUserPassword} onChange={e => setEditUserPassword(e.target.value)} placeholder="Leave blank to keep unchanged" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Role</Label>
+                <Select value={editUserRole} onValueChange={setEditUserRole}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin">Admin</SelectItem>
+                    <SelectItem value="manager">Manager</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {editUserRole === "admin" && editUserEmail && (
+                <div className="flex items-center space-x-2">
+                  <Checkbox id="edit-daily" checked={editUserDailyReport} onCheckedChange={c => setEditUserDailyReport(c === true)} />
+                  <Label htmlFor="edit-daily" className="text-sm font-normal cursor-pointer">Subscribe to daily reports</Label>
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2 mt-4">
+              <Button variant="outline" className="flex-1" onClick={() => setEditingUser(null)}>Cancel</Button>
+              <Button className="flex-1" disabled={editUserSaving} onClick={async () => {
+                setEditUserSaving(true);
+                try {
+                  await apiRequest("PUT", `/api/users/${editingUser.id}`, {
+                    displayName: editUserName,
+                    email: editUserEmail || undefined,
+                    password: editUserPassword || undefined,
+                    role: editUserRole,
+                    dailyReport: editUserDailyReport,
+                  });
+                  queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+                  setEditingUser(null);
+                  toast({ title: "User updated" });
+                } catch { toast({ title: "Failed to update", variant: "destructive" }); }
+                finally { setEditUserSaving(false); }
+              }}>
+                {editUserSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                Save Changes
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* ---- EDIT PROPERTIES DIALOG ---- */}
         <Dialog open={editPropsUserId !== null} onOpenChange={(open) => { if (!open) setEditPropsUserId(null); }}>
