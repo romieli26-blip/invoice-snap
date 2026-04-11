@@ -236,10 +236,12 @@ async function syncToDrive(invoice: any): Promise<boolean> {
   if (isGoogleEnabled()) {
     try {
       if (!mainFolderId) mainFolderId = await ensureDriveFolder("Main App Invoices");
-      let propertyFolderId = propertyFolderCache.get(invoice.property) || null;
-      if (!propertyFolderId && mainFolderId) {
-        propertyFolderId = await ensureDriveFolder(invoice.property, mainFolderId);
-        if (propertyFolderId) propertyFolderCache.set(invoice.property, propertyFolderId);
+      // Receipts subfolder: Main App Invoices > Receipts > Property
+      const receiptsFolder = await ensureDriveFolder("Receipts", mainFolderId || undefined);
+      let propertyFolderId = propertyFolderCache.get("receipts_" + invoice.property) || null;
+      if (!propertyFolderId && receiptsFolder) {
+        propertyFolderId = await ensureDriveFolder(invoice.property, receiptsFolder);
+        if (propertyFolderId) propertyFolderCache.set("receipts_" + invoice.property, propertyFolderId);
       }
       for (let i = 0; i < allPaths.length; i++) {
         const p = allPaths[i];
@@ -248,7 +250,7 @@ async function syncToDrive(invoice: any): Promise<boolean> {
         const ext = path.extname(filePath).slice(1) || "jpg";
         const suffix = allPaths.length > 1 ? ` (${i + 1} of ${allPaths.length})` : "";
         const fileName = `${invoice.property} - ${invoice.purchaseDate} ${safeDesc}${suffix}.${ext}`;
-        await uploadToDrive(filePath, fileName, propertyFolderId || mainFolderId || undefined);
+        await uploadToDrive(filePath, fileName, propertyFolderId || receiptsFolder || mainFolderId || undefined);
       }
       return true;
     } catch (err: any) {
@@ -613,6 +615,20 @@ export async function registerRoutes(
 
     const { description, purpose, amount, boughtBy, paymentMethod, lastFourDigits, rentManagerIssue } = req.body;
 
+    // Track what changed
+    const changes: string[] = [];
+    if (description !== undefined && description !== existing.description) changes.push(`Description: "${existing.description}" → "${description}"`);
+    if (purpose !== undefined && purpose !== existing.purpose) changes.push(`Purpose: "${existing.purpose}" → "${purpose}"`);
+    if (amount !== undefined && amount !== existing.amount) changes.push(`Amount: $${existing.amount} → $${amount}`);
+    if (boughtBy !== undefined && boughtBy !== existing.boughtBy) changes.push(`Bought By: "${existing.boughtBy}" → "${boughtBy}"`);
+    if (paymentMethod !== undefined && paymentMethod !== existing.paymentMethod) changes.push(`Payment: "${existing.paymentMethod}" → "${paymentMethod}"`);
+    if (rentManagerIssue !== undefined && rentManagerIssue !== (existing.rentManagerIssue || "")) changes.push(`RM Issue: "${existing.rentManagerIssue || ""}" → "${rentManagerIssue}"`);
+
+    const editUser = await storage.getUser(session.userId);
+    const editEntry = { by: editUser?.displayName || "Unknown", at: new Date().toISOString(), changes };
+    const existingHistory = existing.editHistory ? JSON.parse(existing.editHistory) : [];
+    existingHistory.push(editEntry);
+
     const updated = await storage.updateInvoice(id, {
       description: description ?? existing.description,
       purpose: purpose ?? existing.purpose,
@@ -621,6 +637,7 @@ export async function registerRoutes(
       paymentMethod: paymentMethod ?? existing.paymentMethod,
       lastFourDigits: lastFourDigits ?? existing.lastFourDigits,
       rentManagerIssue: rentManagerIssue ?? existing.rentManagerIssue,
+      editHistory: JSON.stringify(existingHistory),
     });
 
     res.json(updated);
@@ -630,8 +647,7 @@ export async function registerRoutes(
       setImmediate(async () => {
         try {
           // Delete old row and add updated one
-          const user = await storage.getUser(session.userId);
-          const submittedByName = user?.displayName || "Unknown";
+          const submittedByName = editUser?.displayName || "Unknown";
           if (existing.property && sheetsConfig!.tabs[existing.property]) {
             await deleteSheetRow(sheetsConfig!.spreadsheetId, existing.property, existing.purchaseDate, existing.description, existing.amount);
             await appendSheetRow(sheetsConfig!.spreadsheetId, existing.property, [
@@ -639,6 +655,8 @@ export async function registerRoutes(
               updated.boughtBy, updated.paymentMethod === "cc" ? "Credit Card" : "Cash",
               updated.lastFourDigits || "", submittedByName, updated.createdAt,
               String(updated.recordNumber || ""), updated.rentManagerIssue || "",
+              updated.receiptType || "expense",
+              `EDITED by ${editEntry.by} at ${editEntry.at}`,
             ]);
           }
         } catch (e) { console.error("[edit] Sheets update failed:", e); }
@@ -875,6 +893,41 @@ export async function registerRoutes(
     res.json(enriched);
   });
 
+  app.get("/api/cash-transactions/export", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    if (session.role !== "admin") return res.status(403).json({ error: "Admin only" });
+
+    const txs = await storage.getAllCashTransactions();
+    const users = await storage.getAllUsers();
+    const userMap = new Map(users.map((u: any) => [u.id, u.displayName]));
+
+    const headers = ["Date", "Property", "Type", "Category", "Amount", "Unit/Lot", "Tenant Name", "Bank Name", "Description", "Submitted By", "Record #", "Edited"];
+    const rows = txs.map(tx => {
+      const submittedBy = userMap.get(tx.userId) || "Unknown";
+      const edited = tx.editHistory ? "Yes" : "";
+      return [
+        tx.date,
+        `"${(tx.property || "").replace(/"/g, '""')}"`,
+        tx.type,
+        `"${(tx.category || "").replace(/"/g, '""')}"`,
+        tx.amount,
+        `"${(tx.unitLotNumber || "").replace(/"/g, '""')}"`,
+        `"${(tx.tenantName || "").replace(/"/g, '""')}"`,
+        `"${(tx.bankName || "").replace(/"/g, '""')}"`,
+        `"${(tx.description || "").replace(/"/g, '""')}"`,
+        `"${submittedBy.replace(/"/g, '""')}"`,
+        String(tx.recordNumber || ""),
+        edited,
+      ].join(",");
+    });
+
+    const csv = [headers.join(","), ...rows].join("\n");
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", "attachment; filename=cash-transactions.csv");
+    res.send(csv);
+  });
+
   app.delete("/api/cash-transactions/:id", async (req, res) => {
     const session = await requireAuth(req, res);
     if (!session) return;
@@ -890,6 +943,49 @@ export async function registerRoutes(
 
     await storage.deleteCashTransaction(id);
     res.json({ ok: true });
+  });
+
+  app.put("/api/cash-transactions/:id", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+
+    const existing = await storage.getCashTransaction(id);
+    if (!existing) return res.status(404).json({ error: "Not found" });
+    if (session.role !== "admin" && existing.userId !== session.userId) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const { category, amount, date, unitLotNumber, tenantName, bankName, description } = req.body;
+
+    // Track changes
+    const changes: string[] = [];
+    if (amount !== undefined && amount !== existing.amount) changes.push(`Amount: $${existing.amount} → $${amount}`);
+    if (category !== undefined && category !== existing.category) changes.push(`Category: "${existing.category}" → "${category}"`);
+    if (description !== undefined && description !== (existing.description || "")) changes.push(`Description: "${existing.description || ""}" → "${description}"`);
+    if (date !== undefined && date !== existing.date) changes.push(`Date: "${existing.date}" → "${date}"`);
+    if (unitLotNumber !== undefined && unitLotNumber !== (existing.unitLotNumber || "")) changes.push(`Unit/Lot: "${existing.unitLotNumber || ""}" → "${unitLotNumber}"`);
+    if (tenantName !== undefined && tenantName !== (existing.tenantName || "")) changes.push(`Tenant: "${existing.tenantName || ""}" → "${tenantName}"`);
+    if (bankName !== undefined && bankName !== (existing.bankName || "")) changes.push(`Bank: "${existing.bankName || ""}" → "${bankName}"`);
+
+    const editUser = await storage.getUser(session.userId);
+    const editEntry = { by: editUser?.displayName || "Unknown", at: new Date().toISOString(), changes };
+    const existingHistory = existing.editHistory ? JSON.parse(existing.editHistory) : [];
+    existingHistory.push(editEntry);
+
+    const updated = await storage.updateCashTransaction(id, {
+      category: category ?? existing.category,
+      amount: amount ?? existing.amount,
+      date: date ?? existing.date,
+      unitLotNumber: unitLotNumber ?? existing.unitLotNumber,
+      tenantName: tenantName ?? existing.tenantName,
+      bankName: bankName ?? existing.bankName,
+      description: description ?? existing.description,
+      editHistory: JSON.stringify(existingHistory),
+    });
+
+    res.json(updated);
   });
 
   app.get("/api/cash-balances", async (req, res) => {

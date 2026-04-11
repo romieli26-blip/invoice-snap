@@ -166,7 +166,7 @@ export default function AdminPage() {
 
   return (
     <LogoBackground>
-      <div className="bg-background p-4 pt-6">
+      <div className="bg-background p-4 pt-6 pb-12 min-h-screen">
       <div className="max-w-lg mx-auto space-y-6">
         <button
           onClick={() => setLocation("/")}

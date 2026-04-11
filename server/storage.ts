@@ -62,6 +62,8 @@ try { sqlite.exec("ALTER TABLE invoices ADD COLUMN record_number INTEGER"); } ca
 try { sqlite.exec("ALTER TABLE invoices ADD COLUMN rent_manager_issue TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE invoices ADD COLUMN photo_paths TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE invoices ADD COLUMN receipt_type TEXT DEFAULT 'expense'"); } catch {}
+try { sqlite.exec("ALTER TABLE invoices ADD COLUMN edit_history TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE cash_transactions ADD COLUMN edit_history TEXT"); } catch {}
 
 // Cash transactions table
 sqlite.exec(`
@@ -125,6 +127,7 @@ export interface IStorage {
   deleteCashTransaction(id: number): Promise<void>;
   getCashTransaction(id: number): Promise<CashTransaction | undefined>;
   getNextCashRecordNumber(property: string): Promise<number>;
+  updateCashTransaction(id: number, data: any): Promise<CashTransaction | undefined>;
   updateCashTransactionSyncStatus(id: number, target: "drive" | "sheets", synced: boolean): Promise<void>;
   getCashBalanceByProperty(property: string): Promise<number>;
 }
@@ -270,6 +273,9 @@ export class DatabaseStorage implements IStorage {
   async getNextCashRecordNumber(property: string): Promise<number> {
     const result = sqlite.prepare("SELECT MAX(record_number) as maxNum FROM cash_transactions WHERE property = ?").get(property) as any;
     return (result?.maxNum || 0) + 1;
+  }
+  async updateCashTransaction(id: number, data: any): Promise<CashTransaction | undefined> {
+    return db.update(cashTransactions).set(data).where(eq(cashTransactions.id, id)).returning().get();
   }
   async updateCashTransactionSyncStatus(id: number, target: "drive" | "sheets", synced: boolean): Promise<void> {
     const val = synced ? 1 : 0;

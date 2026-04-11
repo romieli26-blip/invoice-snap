@@ -50,6 +50,47 @@ export default function HistoryPage() {
     queryKey: ["/api/cash-balances"],
   });
 
+  const { data: cashTxs } = useQuery<any[]>({
+    queryKey: ["/api/cash-transactions"],
+  });
+
+  // Cash transaction edit state
+  const [editingCashTx, setEditingCashTx] = useState<any | null>(null);
+  const [editCashAmount, setEditCashAmount] = useState("");
+  const [editCashCategory, setEditCashCategory] = useState("");
+  const [editCashDescription, setEditCashDescription] = useState("");
+  const [editCashUnitLot, setEditCashUnitLot] = useState("");
+  const [editCashTenantName, setEditCashTenantName] = useState("");
+  const [editCashBankName, setEditCashBankName] = useState("");
+  const [editCashSaving, setEditCashSaving] = useState(false);
+
+  async function handleCashDelete(id: number) {
+    if (!window.confirm("Delete this cash transaction?")) return;
+    try {
+      await apiRequest("DELETE", `/api/cash-transactions/${id}`);
+      queryClient.invalidateQueries({ queryKey: ["/api/cash-transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cash-balances"] });
+      toast({ title: "Transaction deleted" });
+    } catch {
+      toast({ title: "Failed to delete", variant: "destructive" });
+    }
+  }
+
+  async function handleCashExport() {
+    try {
+      const res = await apiRequest("GET", "/api/cash-transactions/export");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "cash-transactions.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast({ title: "Export failed", variant: "destructive" });
+    }
+  }
+
   async function handleExport() {
     try {
       const res = await apiRequest("GET", "/api/invoices/export");
@@ -274,6 +315,75 @@ export default function HistoryPage() {
             <p className="text-xs text-muted-foreground mt-1">Tap "New Receipt" to submit your first one.</p>
           </div>
         )}
+
+        {/* ---- CASH TRANSACTIONS SECTION ---- */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-medium text-muted-foreground">Cash Transactions</h2>
+            {user?.role === "admin" && cashTxs && cashTxs.length > 0 && (
+              <Button variant="ghost" size="sm" onClick={handleCashExport} className="text-xs gap-1">
+                <Download className="w-3.5 h-3.5" /> Export CSV
+              </Button>
+            )}
+          </div>
+          {cashTxs && cashTxs.length > 0 ? (
+            <div className="space-y-2">
+              {cashTxs.map((tx: any) => (
+                <Card key={tx.id}>
+                  <CardContent className="py-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${tx.type === "income" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
+                            {tx.type === "income" ? "Income" : "Spent"}
+                          </span>
+                          <span className="text-xs text-muted-foreground">{(tx.category || "").replace(/_/g, " ")}</span>
+                        </div>
+                        <p className="text-sm font-medium mt-1">${tx.amount}</p>
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 gap-0.5">
+                            <Building2 className="w-2.5 h-2.5" />
+                            {tx.property}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">{tx.date}</span>
+                          {tx.description && <span className="text-xs text-muted-foreground truncate max-w-[120px]">{tx.description}</span>}
+                          {tx.recordNumber && (
+                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 font-mono">
+                              #{tx.recordNumber}
+                            </Badge>
+                          )}
+                          {user?.role === "admin" && tx.submittedBy && (
+                            <span className="text-xs text-muted-foreground">by {tx.submittedBy}</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button className="text-muted-foreground hover:text-primary p-0.5" onClick={() => {
+                          if (window.confirm("You are about to edit this item. Are you sure?")) {
+                            setEditingCashTx(tx);
+                            setEditCashAmount(tx.amount);
+                            setEditCashCategory(tx.category);
+                            setEditCashDescription(tx.description || "");
+                            setEditCashUnitLot(tx.unitLotNumber || "");
+                            setEditCashTenantName(tx.tenantName || "");
+                            setEditCashBankName(tx.bankName || "");
+                          }
+                        }}>
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button className="text-muted-foreground hover:text-destructive p-0.5" onClick={() => handleCashDelete(tx.id)}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-4">No cash transactions yet.</p>
+          )}
+        </div>
       </div>
 
       {/* Footer */}
@@ -337,6 +447,66 @@ export default function HistoryPage() {
               }
             }}>
               {editSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+              Save Changes
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editingCashTx !== null} onOpenChange={(open) => { if (!open) setEditingCashTx(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Edit Cash Transaction</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Amount ($)</Label>
+              <Input type="number" step="0.01" value={editCashAmount} onChange={e => setEditCashAmount(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Description</Label>
+              <Input value={editCashDescription} onChange={e => setEditCashDescription(e.target.value)} />
+            </div>
+            {editingCashTx?.category === "bank_deposit" && (
+              <div className="space-y-1">
+                <Label className="text-xs">Bank Name</Label>
+                <Input value={editCashBankName} onChange={e => setEditCashBankName(e.target.value)} />
+              </div>
+            )}
+            {editingCashTx?.category === "rental_income" && (
+              <>
+                <div className="space-y-1">
+                  <Label className="text-xs">Unit/Lot</Label>
+                  <Input value={editCashUnitLot} onChange={e => setEditCashUnitLot(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Tenant Name</Label>
+                  <Input value={editCashTenantName} onChange={e => setEditCashTenantName(e.target.value)} />
+                </div>
+              </>
+            )}
+          </div>
+          <div className="flex gap-2 mt-4">
+            <Button variant="outline" className="flex-1" onClick={() => setEditingCashTx(null)}>Cancel</Button>
+            <Button className="flex-1" disabled={editCashSaving} onClick={async () => {
+              setEditCashSaving(true);
+              try {
+                await apiRequest("PUT", `/api/cash-transactions/${editingCashTx!.id}`, {
+                  amount: editCashAmount,
+                  description: editCashDescription,
+                  bankName: editCashBankName || undefined,
+                  unitLotNumber: editCashUnitLot || undefined,
+                  tenantName: editCashTenantName || undefined,
+                });
+                queryClient.invalidateQueries({ queryKey: ["/api/cash-transactions"] });
+                queryClient.invalidateQueries({ queryKey: ["/api/cash-balances"] });
+                setEditingCashTx(null);
+                toast({ title: "Transaction updated" });
+              } catch {
+                toast({ title: "Failed to update", variant: "destructive" });
+              } finally {
+                setEditCashSaving(false);
+              }
+            }}>
+              {editCashSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
               Save Changes
             </Button>
           </div>

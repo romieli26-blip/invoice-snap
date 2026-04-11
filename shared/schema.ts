@@ -59,6 +59,7 @@ export const invoices = sqliteTable("invoices", {
   rentManagerIssue: text("rent_manager_issue"),
   photoPaths: text("photo_paths"), // JSON array of photo paths for multi-photo receipts
   receiptType: text("receipt_type").default("expense"), // "expense" or "refund"
+  editHistory: text("edit_history"), // JSON array of edits: [{by, at, changes}]
   syncedToDrive: integer("synced_to_drive").notNull().default(0),
   syncedToSheets: integer("synced_to_sheets").notNull().default(0),
   createdAt: text("created_at").notNull(),
@@ -84,6 +85,7 @@ export const cashTransactions = sqliteTable("cash_transactions", {
   photoPaths: text("photo_paths"),
   // Record tracking
   recordNumber: integer("record_number"),
+  editHistory: text("edit_history"), // JSON array of edits: [{by, at, changes}]
   syncedToSheets: integer("synced_to_sheets").notNull().default(0),
   syncedToDrive: integer("synced_to_drive").notNull().default(0),
   createdAt: text("created_at").notNull(),

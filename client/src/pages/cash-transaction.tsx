@@ -28,7 +28,6 @@ const INCOME_CATEGORIES = [
 
 const SPENT_CATEGORIES = [
   { value: "bank_deposit", label: "Bank Deposit" },
-  { value: "item_purchased", label: "Item Purchased" },
   { value: "contractor_pay", label: "Contractor Pay" },
   { value: "other", label: "Other" },
 ];
@@ -52,6 +51,7 @@ export default function CashTransactionPage() {
   const [bankName, setBankName] = useState("");
   const [description, setDescription] = useState("");
 
+  const [contractorHasReceipt, setContractorHasReceipt] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
@@ -377,8 +377,43 @@ export default function CashTransactionPage() {
                         </Button>
                       </div>
                     )}
-                    <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => e.target.files?.[0] && handlePhotoFile(e.target.files[0])} />
-                    <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,application/pdf" className="hidden" onChange={e => e.target.files?.[0] && handlePhotoFile(e.target.files[0])} />
+                  </div>
+                )}
+
+                {/* Contractor receipt photo */}
+                {txType === "spent" && category === "contractor_pay" && (
+                  <div className="space-y-2">
+                    <Label>Did the contractor provide a receipt?</Label>
+                    <div className="flex gap-2">
+                      <Button type="button" variant={contractorHasReceipt ? "default" : "outline"} size="sm" className="flex-1" onClick={() => setContractorHasReceipt(true)}>Yes</Button>
+                      <Button type="button" variant={!contractorHasReceipt ? "default" : "outline"} size="sm" className="flex-1" onClick={() => setContractorHasReceipt(false)}>No</Button>
+                    </div>
+                    {contractorHasReceipt && (
+                      <div>
+                        {photoPreview ? (
+                          <div className="relative rounded-lg overflow-hidden bg-muted">
+                            <img src={photoPreview} alt="Contractor receipt" className="w-full max-h-32 object-contain" />
+                            {uploading && (
+                              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                                <Loader2 className="w-6 h-6 animate-spin text-white" />
+                              </div>
+                            )}
+                            <button type="button" className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/50 text-white flex items-center justify-center" onClick={() => { setPhotoPreview(null); setPhotoPath(""); }}>
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex gap-2">
+                            <Button type="button" variant="outline" size="sm" className="flex-1 gap-1" onClick={() => cameraInputRef.current?.click()}>
+                              <Camera className="w-3.5 h-3.5" /> Take Photo
+                            </Button>
+                            <Button type="button" variant="outline" size="sm" className="flex-1 gap-1" onClick={() => fileInputRef.current?.click()}>
+                              <Upload className="w-3.5 h-3.5" /> Upload
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -395,6 +430,10 @@ export default function CashTransactionPage() {
                     />
                   </div>
                 )}
+
+                {/* Hidden file inputs for photo upload (shared by bank_deposit and contractor_pay) */}
+                <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => e.target.files?.[0] && handlePhotoFile(e.target.files[0])} />
+                <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,application/pdf" className="hidden" onChange={e => e.target.files?.[0] && handlePhotoFile(e.target.files[0])} />
 
                 <Button
                   type="submit"
