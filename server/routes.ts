@@ -68,7 +68,7 @@ async function sendNotificationEmails(subject: string, htmlBody: string) {
   for (const recipient of EMAIL_RECIPIENTS) {
     try {
       await emailTransporter.sendMail({
-        from: '"Invoice Snap" <jetsetterinvoices1@gmail.com>',
+        from: '"Receipt App" <jetsetterinvoices1@gmail.com>',
         to: `${recipient.name} <${recipient.email}>`,
         subject,
         html: htmlBody,
