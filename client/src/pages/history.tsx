@@ -153,21 +153,21 @@ export default function HistoryPage() {
         {/* Action Buttons */}
         <div className="grid grid-cols-2 gap-3">
           <Button
-            className="h-14 text-base gap-2"
+            className="h-20 text-sm gap-1.5 flex-col leading-tight"
             onClick={() => setLocation("/capture")}
             data-testid="button-new-invoice"
           >
-            <Camera className="w-5 h-5" />
-            Credit Card Receipt
+            <Camera className="w-6 h-6" />
+            <span className="text-center">New Credit Card<br/>Receipt</span>
           </Button>
           <Button
+            className="h-20 text-sm gap-1.5 flex-col leading-tight bg-orange-100 hover:bg-orange-200 text-orange-800 border border-orange-300"
             variant="outline"
-            className="h-14 text-base gap-2"
             onClick={() => setLocation("/cash")}
             data-testid="button-cash-transaction"
           >
-            <DollarSign className="w-5 h-5" />
-            Cash Transaction
+            <Camera className="w-6 h-6" />
+            <span className="text-center">New Cash<br/>Transaction</span>
           </Button>
         </div>
 

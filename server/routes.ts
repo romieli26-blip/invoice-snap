@@ -267,13 +267,16 @@ async function syncToDrive(invoice: any): Promise<boolean> {
   // Try Google API first (works on Railway)
   if (isGoogleEnabled()) {
     try {
-      if (!mainFolderId) mainFolderId = await ensureDriveFolder("Main App Invoices");
-      // Receipts subfolder: Main App Invoices > Receipts > Property
-      const receiptsFolder = await ensureDriveFolder("Receipts", mainFolderId || undefined);
-      let propertyFolderId = propertyFolderCache.get("receipts_" + invoice.property) || null;
-      if (!propertyFolderId && receiptsFolder) {
-        propertyFolderId = await ensureDriveFolder(invoice.property, receiptsFolder);
-        if (propertyFolderId) propertyFolderCache.set("receipts_" + invoice.property, propertyFolderId);
+      // Folder structure: Credit Card Receipts > Property
+      let ccReceiptsFolder = propertyFolderCache.get("__cc_receipts_root") || null;
+      if (!ccReceiptsFolder) {
+        ccReceiptsFolder = await ensureDriveFolder("Credit Card Receipts");
+        if (ccReceiptsFolder) propertyFolderCache.set("__cc_receipts_root", ccReceiptsFolder);
+      }
+      let propertyFolderId = propertyFolderCache.get("cc_" + invoice.property) || null;
+      if (!propertyFolderId && ccReceiptsFolder) {
+        propertyFolderId = await ensureDriveFolder(invoice.property, ccReceiptsFolder);
+        if (propertyFolderId) propertyFolderCache.set("cc_" + invoice.property, propertyFolderId);
       }
       for (let i = 0; i < allPaths.length; i++) {
         const p = allPaths[i];
@@ -282,7 +285,7 @@ async function syncToDrive(invoice: any): Promise<boolean> {
         const ext = path.extname(filePath).slice(1) || "jpg";
         const suffix = allPaths.length > 1 ? ` (${i + 1} of ${allPaths.length})` : "";
         const fileName = `${invoice.property} - ${invoice.purchaseDate} ${safeDesc}${suffix}.${ext}`;
-        await uploadToDrive(filePath, fileName, propertyFolderId || receiptsFolder || mainFolderId || undefined);
+        await uploadToDrive(filePath, fileName, propertyFolderId || ccReceiptsFolder || undefined);
       }
       return true;
     } catch (err: any) {
@@ -904,12 +907,20 @@ export async function registerRoutes(
           const typeLabel = type === "income" ? "Income" : "Spent";
           const filePath = path.resolve(dataDir, "uploads", photoPath.replace(/^\/api\/uploads\//, ""));
           if (fs.existsSync(filePath)) {
-            if (!mainFolderId) mainFolderId = await ensureDriveFolder("Main App Invoices");
-            let cashFolder = await ensureDriveFolder("Cash Transactions", mainFolderId || undefined);
-            let propFolder = cashFolder ? await ensureDriveFolder(property, cashFolder) : null;
+            // Folder structure: Cash Transactions > Property
+            let cashFolder = propertyFolderCache.get("__cash_root") || null;
+            if (!cashFolder) {
+              cashFolder = await ensureDriveFolder("Cash Transactions");
+              if (cashFolder) propertyFolderCache.set("__cash_root", cashFolder);
+            }
+            let propFolder = propertyFolderCache.get("cash_" + property) || null;
+            if (!propFolder && cashFolder) {
+              propFolder = await ensureDriveFolder(property, cashFolder);
+              if (propFolder) propertyFolderCache.set("cash_" + property, propFolder);
+            }
             const ext = path.extname(filePath).slice(1) || "jpg";
             const driveFileName = `Cash ${typeLabel}_${property}_${date}.${ext}`;
-            await uploadToDrive(filePath, driveFileName, propFolder || cashFolder || mainFolderId || undefined);
+            await uploadToDrive(filePath, driveFileName, propFolder || cashFolder || undefined);
             await storage.updateCashTransactionSyncStatus(tx.id, "drive", true);
           }
         } catch (e) { console.error("[cash-drive] Sync error:", e); }
