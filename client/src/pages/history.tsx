@@ -32,6 +32,7 @@ export default function HistoryPage() {
   const { toast } = useToast();
   const [viewingPhotos, setViewingPhotos] = useState<string[] | null>(null);
   const [viewPhotoIdx, setViewPhotoIdx] = useState(0);
+  const [photoZoom, setPhotoZoom] = useState(1);
   const [editingInvoice, setEditingInvoice] = useState<EnrichedInvoice | null>(null);
   const [editDescription, setEditDescription] = useState("");
   const [editPurpose, setEditPurpose] = useState("");
@@ -525,22 +526,36 @@ export default function HistoryPage() {
       {viewingPhotos && (
         <div
           className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
-          onClick={() => { setViewingPhotos(null); setViewPhotoIdx(0); }}
+          onClick={() => { setViewingPhotos(null); setViewPhotoIdx(0); setPhotoZoom(1); }}
         >
           <div className="relative max-w-lg w-full" onClick={e => e.stopPropagation()}>
-            <img src={authImgUrl(viewingPhotos[viewPhotoIdx])} alt="Receipt" className="w-full rounded-lg" />
+            <div className="overflow-auto max-h-[80vh] rounded-lg" style={{ cursor: photoZoom > 1 ? "grab" : "default" }}>
+              <img
+                src={authImgUrl(viewingPhotos[viewPhotoIdx])}
+                alt="Receipt"
+                className="w-full rounded-lg transition-transform"
+                style={{ transform: `scale(${photoZoom})`, transformOrigin: "center center" }}
+                onDoubleClick={() => setPhotoZoom(z => z === 1 ? 2.5 : 1)}
+              />
+            </div>
+            {/* Zoom controls */}
+            <div className="absolute top-2 left-2 flex gap-1">
+              <button className="w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center text-lg font-bold" onClick={() => setPhotoZoom(z => Math.min(z + 0.5, 4))}>+</button>
+              <button className="w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center text-lg font-bold" onClick={() => setPhotoZoom(z => Math.max(z - 0.5, 1))}>-</button>
+              {photoZoom > 1 && <button className="h-8 px-2 rounded-full bg-black/50 text-white flex items-center justify-center text-xs" onClick={() => setPhotoZoom(1)}>Reset</button>}
+            </div>
             {viewingPhotos.length > 1 && (
               <div className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-black/60 text-white text-xs px-2 py-0.5 rounded-full">
                 {viewPhotoIdx + 1} / {viewingPhotos.length}
               </div>
             )}
             {viewingPhotos.length > 1 && viewPhotoIdx > 0 && (
-              <button className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center" onClick={() => setViewPhotoIdx(i => i - 1)}>
+              <button className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center" onClick={() => { setViewPhotoIdx(i => i - 1); setPhotoZoom(1); }}>
                 <ChevronLeft className="w-5 h-5" />
               </button>
             )}
             {viewingPhotos.length > 1 && viewPhotoIdx < viewingPhotos.length - 1 && (
-              <button className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center" onClick={() => setViewPhotoIdx(i => i + 1)}>
+              <button className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center" onClick={() => { setViewPhotoIdx(i => i + 1); setPhotoZoom(1); }}>
                 <ChevronRight className="w-5 h-5" />
               </button>
             )}

@@ -963,6 +963,7 @@ export async function registerRoutes(
     const enriched = txList.map(tx => ({
       ...tx,
       submittedBy: userMap.get(tx.userId) || "Unknown",
+      photoPaths: tx.photoPaths ? JSON.parse(tx.photoPaths) : (tx.photoPath ? [tx.photoPath] : []),
     }));
 
     res.json(enriched);
