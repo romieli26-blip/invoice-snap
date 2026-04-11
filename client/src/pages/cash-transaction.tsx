@@ -6,9 +6,10 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useLocation } from "wouter";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, apiUpload, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
-import { ArrowLeft, Loader2, CheckCircle2, DollarSign, TrendingUp, TrendingDown } from "lucide-react";
+import { ArrowLeft, Loader2, CheckCircle2, DollarSign, TrendingUp, TrendingDown, Upload, Camera, X } from "lucide-react";
+import { useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { LogoBackground } from "@/components/LogoBackground";
@@ -53,6 +54,40 @@ export default function CashTransactionPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+
+  // Photo upload for deposit slips
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [photoPath, setPhotoPath] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  async function handlePhotoFile(file: File) {
+    if (!file) return;
+    if (file.size > 4 * 1024 * 1024) {
+      toast({ title: "File too large", description: "Max 4MB.", variant: "destructive" });
+      return;
+    }
+    // Show preview
+    const reader = new FileReader();
+    reader.onload = () => setPhotoPreview(reader.result as string);
+    reader.readAsDataURL(file);
+
+    // Upload immediately
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("photo", file, `cash-${Date.now()}.jpg`);
+      const res = await apiUpload("/api/upload", formData);
+      const data = await res.json();
+      setPhotoPath(data.path);
+    } catch {
+      toast({ title: "Upload failed", description: "Please try again.", variant: "destructive" });
+      setPhotoPreview(null);
+    } finally {
+      setUploading(false);
+    }
+  }
 
   const { data: propertiesList, isLoading: propsLoading } = useQuery<PropertyItem[]>({
     queryKey: ["/api/properties"],
@@ -103,6 +138,8 @@ export default function CashTransactionPage() {
         tenantName: tenantName || undefined,
         bankName: bankName || undefined,
         description: description || undefined,
+        photoPath: photoPath || undefined,
+        photoPaths: photoPath ? JSON.stringify([photoPath]) : undefined,
       });
       setShowConfirm(false);
       setSubmitted(true);
@@ -303,6 +340,41 @@ export default function CashTransactionPage() {
                       placeholder="e.g. Chase, Wells Fargo"
                       data-testid="input-bank-name"
                     />
+                  </div>
+                )}
+
+                {/* Photo upload for bank deposits */}
+                {txType === "spent" && category === "bank_deposit" && (
+                  <div className="space-y-2">
+                    <Label>Deposit Slip Photo</Label>
+                    {photoPreview ? (
+                      <div className="relative rounded-lg overflow-hidden bg-muted">
+                        <img src={photoPreview} alt="Deposit slip" className="w-full max-h-32 object-contain" />
+                        {uploading && (
+                          <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                            <Loader2 className="w-6 h-6 animate-spin text-white" />
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/50 text-white flex items-center justify-center"
+                          onClick={() => { setPhotoPreview(null); setPhotoPath(""); }}
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <Button type="button" variant="outline" size="sm" className="flex-1 gap-1" onClick={() => cameraInputRef.current?.click()}>
+                          <Camera className="w-3.5 h-3.5" /> Take Photo
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" className="flex-1 gap-1" onClick={() => fileInputRef.current?.click()}>
+                          <Upload className="w-3.5 h-3.5" /> Upload
+                        </Button>
+                      </div>
+                    )}
+                    <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => e.target.files?.[0] && handlePhotoFile(e.target.files[0])} />
+                    <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,application/pdf" className="hidden" onChange={e => e.target.files?.[0] && handlePhotoFile(e.target.files[0])} />
                   </div>
                 )}
 
