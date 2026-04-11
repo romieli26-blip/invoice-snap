@@ -96,6 +96,15 @@ export default function InvoiceFormPage() {
     if (!property) return "Please select a property.";
     if (!purchaseDate) return "Please select the date of purchase.";
 
+    if (receiptType === "refund") {
+      if (!amount.trim()) return "Please enter the refund amount.";
+      if (!purpose.trim()) return "Please enter the reason for the refund.";
+      const amountNum = parseFloat(amount);
+      if (isNaN(amountNum) || amountNum <= 0) return "Amount must be greater than $0.";
+      if (amountNum > 10000) return "For refunds over $10,000, please contact your asset manager.";
+      return null;
+    }
+
     if (samePurpose) {
       if (!description.trim()) return "Please enter what was bought.";
       if (!purpose.trim()) return "Please enter what the purchase was for.";
@@ -142,7 +151,18 @@ export default function InvoiceFormPage() {
 
     setSubmitting(true);
     try {
-      if (samePurpose) {
+      if (receiptType === "refund") {
+        await apiRequest("POST", "/api/invoices", {
+          photoPath, photoPaths: photoPathsJson,
+          property, purchaseDate,
+          description: "Refund",
+          purpose,
+          amount,
+          boughtBy: user?.displayName || "Unknown",
+          paymentMethod: "cash",
+          receiptType: "refund",
+        });
+      } else if (samePurpose) {
         await apiRequest("POST", "/api/invoices", {
           photoPath, photoPaths: photoPathsJson,
           property, purchaseDate, description, purpose, amount,
@@ -273,6 +293,46 @@ export default function InvoiceFormPage() {
                 />
               </div>
 
+              {receiptType === "refund" ? (
+                /* ---- REFUND: simplified form ---- */
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="amount">Amount ($)</Label>
+                    <Input
+                      id="amount"
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      max="10000"
+                      value={amount}
+                      onChange={e => setAmount(e.target.value)}
+                      placeholder="0.00"
+                      data-testid="input-amount"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="purpose">Reason for Refund</Label>
+                    <Input
+                      id="purpose"
+                      value={purpose}
+                      onChange={e => setPurpose(e.target.value)}
+                      placeholder="e.g. Overcharge on unit 5B, duplicate payment"
+                      data-testid="input-purpose"
+                    />
+                  </div>
+                  <Button
+                    type="submit"
+                    className="w-full"
+                    disabled={submitting}
+                    data-testid="button-submit"
+                  >
+                    {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                    Submit Refund
+                  </Button>
+                </>
+              ) : (
+                /* ---- EXPENSE: full form ---- */
+                <>
               {/* Split receipt toggle */}
               <div className="flex items-center space-x-2 py-1">
                 <Checkbox
@@ -561,6 +621,8 @@ export default function InvoiceFormPage() {
                 {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
                 {samePurpose ? "Submit Receipt" : `Submit ${splitItems.length} Tasks/Projects`}
               </Button>
+              </>
+              )}
             </form>
           </CardContent>
         </Card>

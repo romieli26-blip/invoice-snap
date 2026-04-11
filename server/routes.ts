@@ -243,7 +243,7 @@ async function syncToDrive(invoice: any): Promise<boolean> {
       }
       for (let i = 0; i < allPaths.length; i++) {
         const p = allPaths[i];
-        const filePath = path.resolve(process.cwd(), p.replace(/^\/api\/uploads\//, "uploads/"));
+        const filePath = path.resolve(dataDir, "uploads", p.replace(/^\/api\/uploads\//, ""));
         if (!fs.existsSync(filePath)) continue;
         const ext = path.extname(filePath).slice(1) || "jpg";
         const suffix = allPaths.length > 1 ? ` (${i + 1} of ${allPaths.length})` : "";
@@ -259,7 +259,7 @@ async function syncToDrive(invoice: any): Promise<boolean> {
 
   // Fallback to external-tool CLI (Perplexity sandbox)
   try {
-    const filePath = path.resolve(process.cwd(), invoice.photoPath.replace(/^\/api\/uploads\//, "uploads/"));
+    const filePath = path.resolve(dataDir, "uploads", invoice.photoPath.replace(/^\/api\/uploads\//, ""));
     if (!fs.existsSync(filePath)) return false;
     const ext = path.extname(filePath).slice(1) || "jpg";
     const fileName = `${invoice.property} - ${invoice.purchaseDate} ${safeDesc}.${ext}`;
@@ -692,7 +692,7 @@ export async function registerRoutes(
             await deleteFromDrive(driveFileName);
           } catch (e) { console.error("[delete] Drive cleanup failed:", e); }
           try {
-            const localPath = path.resolve(process.cwd(), allPaths[i].replace(/^\/api\/uploads\//, "uploads/"));
+            const localPath = path.resolve(dataDir, "uploads", allPaths[i].replace(/^\/api\/uploads\//, ""));
             if (fs.existsSync(localPath)) { fs.unlinkSync(localPath); }
           } catch (e) { /* ignore */ }
         }
