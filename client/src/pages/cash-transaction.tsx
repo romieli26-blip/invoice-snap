@@ -13,6 +13,7 @@ import { useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { LogoBackground } from "@/components/LogoBackground";
+import { compressImage } from "@/lib/compress-image";
 
 interface PropertyItem { id: number; name: string; sheetsTabId: number | null; }
 
@@ -62,10 +63,13 @@ export default function CashTransactionPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
-  async function handlePhotoFile(file: File) {
-    if (!file) return;
+  async function handlePhotoFile(rawFile: File) {
+    if (!rawFile) return;
+    // Compress image to prevent memory issues
+    let file = rawFile;
+    try { file = await compressImage(rawFile); } catch {}
     if (file.size > 4 * 1024 * 1024) {
-      toast({ title: "File too large", description: "Max 4MB.", variant: "destructive" });
+      toast({ title: "File too large", description: "Max 4MB. Please reduce the resolution.", variant: "destructive" });
       return;
     }
     // Show preview

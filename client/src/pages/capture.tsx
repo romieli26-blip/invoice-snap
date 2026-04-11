@@ -5,6 +5,7 @@ import { Camera, Upload, X, Loader2, FileText, Plus, ChevronLeft, ChevronRight }
 import { apiUpload } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import { LogoBackground } from "@/components/LogoBackground";
+import { compressImage } from "@/lib/compress-image";
 
 const isDesktop = typeof window !== "undefined" && !("ontouchstart" in window);
 
@@ -29,15 +30,22 @@ export default function CapturePage() {
     e.target.value = "";
   }
 
-  function processFile(file: File) {
+  async function processFile(rawFile: File) {
     setError("");
     const allowedTypes = ["image/jpeg", "image/png", "application/pdf"];
-    if (!allowedTypes.includes(file.type)) {
+    if (!allowedTypes.includes(rawFile.type)) {
       setError("Invalid file type. Only PNG, JPG, and PDF are allowed.");
       return;
     }
+
+    // Compress image to prevent phone memory issues
+    let file = rawFile;
+    try {
+      file = await compressImage(rawFile);
+    } catch {}
+
     if (file.size > 4 * 1024 * 1024) {
-      setError("File too large. Max 4MB.");
+      setError("File too large. Max 4MB. Please reduce the resolution or crop the image.");
       return;
     }
     const reader = new FileReader();
