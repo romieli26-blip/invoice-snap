@@ -8,7 +8,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
 import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, deleteSheetRow, deleteFromDrive, highlightLastRow } from "./google-api";
-import nodemailer from "nodemailer";
+// nodemailer removed — using Gmail API instead (SMTP blocked on Railway)
 
 // Ensure uploads directory exists
 // Use DATA_DIR for persistent storage on Railway
@@ -52,42 +52,63 @@ const EMAIL_RECIPIENTS = [
   { name: "Dustin", email: "Dustin@Jetsettercapital.com" },
 ];
 
-// Lazy-initialized email transporter
-let _emailTransporter: any = null;
-function getEmailTransporter() {
-  if (_emailTransporter) return _emailTransporter;
-  const pass = process.env.GMAIL_APP_PASSWORD;
-  if (!pass) {
-    console.log("[email] GMAIL_APP_PASSWORD not set");
-    return null;
-  }
-  _emailTransporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: { user: "jetsetterinvoices1@gmail.com", pass },
-  });
-  console.log("[email] Transporter initialized");
-  return _emailTransporter;
-}
+// Email via Gmail API (SMTP is blocked on Railway)
+import { google } from "googleapis";
 
-async function sendNotificationEmails(subject: string, htmlBody: string, attachments?: any[]) {
-  const transporter = getEmailTransporter();
-  if (!transporter) {
-    console.log("[email] Skipping — no GMAIL_APP_PASSWORD configured");
+async function sendNotificationEmails(subject: string, htmlBody: string, attachments?: { filename: string; path: string }[]) {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+  if (!clientId || !clientSecret || !refreshToken) {
+    console.log("[email] No Google OAuth credentials, skipping email");
     return;
   }
-  for (const recipient of EMAIL_RECIPIENTS) {
-    try {
-      await transporter.sendMail({
-        from: '"Receipt App" <jetsetterinvoices1@gmail.com>',
-        to: `${recipient.name} <${recipient.email}>`,
-        subject,
-        html: htmlBody,
-        attachments: attachments || [],
-      });
-      console.log(`[email] Sent to ${recipient.email}`);
-    } catch (err: any) {
-      console.error(`[email] Failed to send to ${recipient.email}:`, err.message?.slice(0, 200));
+
+  try {
+    const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
+    oauth2Client.setCredentials({ refresh_token: refreshToken });
+    const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+
+    for (const recipient of EMAIL_RECIPIENTS) {
+      try {
+        // Build MIME message
+        const boundary = "boundary_" + Date.now();
+        let mime = [
+          `To: ${recipient.name} <${recipient.email}>`,
+          `From: "Receipt App" <jetsetterinvoices1@gmail.com>`,
+          `Subject: ${subject}`,
+          `MIME-Version: 1.0`,
+        ];
+
+        if (attachments && attachments.length > 0) {
+          mime.push(`Content-Type: multipart/mixed; boundary="${boundary}"`, "");
+          mime.push(`--${boundary}`);
+          mime.push(`Content-Type: text/html; charset="UTF-8"`, "", htmlBody, "");
+          for (const att of attachments) {
+            if (fs.existsSync(att.path)) {
+              const fileData = fs.readFileSync(att.path).toString("base64");
+              const ext = path.extname(att.filename).slice(1) || "jpg";
+              const mimeType = ext === "pdf" ? "application/pdf" : `image/${ext}`;
+              mime.push(`--${boundary}`);
+              mime.push(`Content-Type: ${mimeType}; name="${att.filename}"`);
+              mime.push(`Content-Disposition: attachment; filename="${att.filename}"`);
+              mime.push(`Content-Transfer-Encoding: base64`, "", fileData, "");
+            }
+          }
+          mime.push(`--${boundary}--`);
+        } else {
+          mime.push(`Content-Type: text/html; charset="UTF-8"`, "", htmlBody);
+        }
+
+        const raw = Buffer.from(mime.join("\r\n")).toString("base64url");
+        await gmail.users.messages.send({ userId: "me", requestBody: { raw } });
+        console.log(`[email] Sent to ${recipient.email}`);
+      } catch (err: any) {
+        console.error(`[email] Failed to send to ${recipient.email}:`, err.message?.slice(0, 200));
+      }
     }
+  } catch (err: any) {
+    console.error("[email] Gmail API error:", err.message?.slice(0, 200));
   }
 }
 
