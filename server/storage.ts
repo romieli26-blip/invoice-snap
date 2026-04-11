@@ -62,6 +62,8 @@ try { sqlite.exec("ALTER TABLE invoices ADD COLUMN record_number INTEGER"); } ca
 try { sqlite.exec("ALTER TABLE invoices ADD COLUMN rent_manager_issue TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE invoices ADD COLUMN photo_paths TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE invoices ADD COLUMN receipt_type TEXT DEFAULT 'expense'"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN email TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN daily_report INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE invoices ADD COLUMN edit_history TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE cash_transactions ADD COLUMN edit_history TEXT"); } catch {}
 
@@ -285,6 +287,18 @@ export class DatabaseStorage implements IStorage {
       db.update(cashTransactions).set({ syncedToSheets: val }).where(eq(cashTransactions.id, id)).run();
     }
   }
+  async getDailyReportSubscribers(): Promise<User[]> {
+    return db.select().from(users).where(eq(users.dailyReport, 1)).all();
+  }
+
+  async getInvoicesByDate(date: string): Promise<Invoice[]> {
+    return db.select().from(invoices).where(eq(invoices.purchaseDate, date)).all();
+  }
+
+  async getCashTransactionsByDate(date: string): Promise<CashTransaction[]> {
+    return db.select().from(cashTransactions).where(eq(cashTransactions.date, date)).all();
+  }
+
   async getCashBalanceByProperty(property: string): Promise<number> {
     const rows = db.select().from(cashTransactions).where(eq(cashTransactions.property, property)).all();
     let balance = 0;

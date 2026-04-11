@@ -424,6 +424,8 @@ export async function registerRoutes(
         username: u.username,
         displayName: u.displayName,
         role: u.role,
+        email: u.email || "",
+        dailyReport: u.dailyReport || 0,
         assignedProperties: propIds.map(pid => propMap.get(pid)).filter(Boolean) as string[],
       };
     }));
@@ -434,7 +436,7 @@ export async function registerRoutes(
     const session = await requireAdmin(req, res);
     if (!session) return;
 
-    const { username, password, displayName, role } = req.body;
+    const { username, password, displayName, role, email, dailyReport } = req.body;
     if (!username || !password || !displayName) {
       return res.status(400).json({ error: "Username, password, and display name are required" });
     }
@@ -447,9 +449,11 @@ export async function registerRoutes(
       password,
       displayName,
       role: role || "manager",
+      email: email || null,
+      dailyReport: dailyReport ? 1 : 0,
     });
 
-    res.json({ id: user.id, username: user.username, displayName: user.displayName, role: user.role });
+    res.json({ id: user.id, username: user.username, displayName: user.displayName, role: user.role, email: user.email, dailyReport: user.dailyReport });
   });
 
   app.delete("/api/users/:id", async (req, res) => {
@@ -815,6 +819,115 @@ export async function registerRoutes(
     }
 
     res.json({ ok: true, sheetsSync: sheetsCount, driveSync: driveCount, total: allInvoices.length });
+  });
+
+  // ---- DAILY REPORT ----
+  app.post("/api/admin/daily-report", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+
+    const date = req.body.date || new Date().toISOString().split("T")[0];
+    const allProps = await storage.getAllProperties();
+    const allUsers = await storage.getAllUsers();
+    const userMap = new Map(allUsers.map(u => [u.id, u.displayName]));
+
+    // Get today's data
+    const todayInvoices = await storage.getInvoicesByDate(date);
+    const todayCash = await storage.getCashTransactionsByDate(date);
+
+    // Build HTML report
+    let html = `<div style="font-family:Arial,sans-serif;max-width:800px;margin:0 auto;">`;
+    html += `<h1 style="color:#1a5c3a;">Daily Summary - ${date}</h1>`;
+    html += `<p style="color:#666;">Generated on ${new Date().toISOString().replace("T", " ").slice(0, 19)}</p>`;
+
+    // Credit Card Receipts section
+    html += `<h2 style="color:#333;border-bottom:2px solid #1a5c3a;padding-bottom:5px;">Credit Card Receipts</h2>`;
+    if (todayInvoices.length === 0) {
+      html += `<p style="color:#888;">No credit card receipts today.</p>`;
+    } else {
+      let totalExpenses = 0, totalRefunds = 0;
+      const byProperty = new Map<string, typeof todayInvoices>();
+      for (const inv of todayInvoices) {
+        const list = byProperty.get(inv.property) || [];
+        list.push(inv);
+        byProperty.set(inv.property, list);
+        const amt = parseFloat(inv.amount) || 0;
+        if ((inv as any).receiptType === "refund") totalRefunds += amt;
+        else totalExpenses += amt;
+      }
+      for (const [prop, invs] of byProperty) {
+        html += `<h3 style="color:#1a5c3a;">${prop}</h3>`;
+        html += `<table style="border-collapse:collapse;width:100%;margin-bottom:10px;">`;
+        html += `<tr style="background:#f0f0f0;"><th style="text-align:left;padding:6px;border:1px solid #ddd;">Description</th><th style="padding:6px;border:1px solid #ddd;">Amount</th><th style="padding:6px;border:1px solid #ddd;">Type</th><th style="padding:6px;border:1px solid #ddd;">By</th><th style="padding:6px;border:1px solid #ddd;">CC</th></tr>`;
+        for (const inv of invs) {
+          const type = (inv as any).receiptType === "refund" ? "<span style='color:green;'>Refund</span>" : "Expense";
+          html += `<tr><td style="padding:6px;border:1px solid #ddd;">${inv.description}</td><td style="padding:6px;border:1px solid #ddd;text-align:right;">$${inv.amount}</td><td style="padding:6px;border:1px solid #ddd;text-align:center;">${type}</td><td style="padding:6px;border:1px solid #ddd;">${inv.boughtBy}</td><td style="padding:6px;border:1px solid #ddd;text-align:center;">**${inv.lastFourDigits || "N/A"}</td></tr>`;
+        }
+        html += `</table>`;
+      }
+      html += `<div style="background:#f8f8f8;padding:10px;border-radius:5px;margin:10px 0;">`;
+      html += `<strong>Daily Totals:</strong> Expenses: $${totalExpenses.toFixed(2)} | Refunds: $${totalRefunds.toFixed(2)} | Net: $${(totalExpenses - totalRefunds).toFixed(2)}`;
+      html += `</div>`;
+    }
+
+    // Cash Transactions section
+    html += `<h2 style="color:#333;border-bottom:2px solid #e67e22;padding-bottom:5px;">Cash Transactions</h2>`;
+    if (todayCash.length === 0) {
+      html += `<p style="color:#888;">No cash transactions today.</p>`;
+    } else {
+      let totalIncome = 0, totalSpent = 0;
+      const byPropCash = new Map<string, typeof todayCash>();
+      for (const tx of todayCash) {
+        const list = byPropCash.get(tx.property) || [];
+        list.push(tx);
+        byPropCash.set(tx.property, list);
+        const amt = parseFloat(tx.amount) || 0;
+        if (tx.type === "income") totalIncome += amt;
+        else totalSpent += amt;
+      }
+      for (const [prop, txs] of byPropCash) {
+        html += `<h3 style="color:#e67e22;">${prop}</h3>`;
+        html += `<table style="border-collapse:collapse;width:100%;margin-bottom:10px;">`;
+        html += `<tr style="background:#f0f0f0;"><th style="text-align:left;padding:6px;border:1px solid #ddd;">Category</th><th style="padding:6px;border:1px solid #ddd;">Amount</th><th style="padding:6px;border:1px solid #ddd;">Type</th><th style="padding:6px;border:1px solid #ddd;">Details</th></tr>`;
+        for (const tx of txs) {
+          const typeColor = tx.type === "income" ? "green" : "red";
+          const details = [tx.description, tx.tenantName, tx.bankName].filter(Boolean).join(", ");
+          html += `<tr><td style="padding:6px;border:1px solid #ddd;">${tx.category.replace(/_/g, " ")}</td><td style="padding:6px;border:1px solid #ddd;text-align:right;">$${tx.amount}</td><td style="padding:6px;border:1px solid #ddd;text-align:center;"><span style='color:${typeColor};'>${tx.type}</span></td><td style="padding:6px;border:1px solid #ddd;">${details}</td></tr>`;
+        }
+        html += `</table>`;
+      }
+      html += `<div style="background:#f8f8f8;padding:10px;border-radius:5px;margin:10px 0;">`;
+      html += `<strong>Daily Totals:</strong> Income: $${totalIncome.toFixed(2)} | Spent: $${totalSpent.toFixed(2)} | Net: $${(totalIncome - totalSpent).toFixed(2)}`;
+      html += `</div>`;
+    }
+
+    // Cash on Hand per property
+    html += `<h2 style="color:#333;border-bottom:2px solid #333;padding-bottom:5px;">Cash on Hand</h2>`;
+    html += `<table style="border-collapse:collapse;width:100%;">`;
+    for (const prop of allProps) {
+      const balance = await storage.getCashBalanceByProperty(prop.name);
+      const color = balance >= 0 ? "green" : "red";
+      html += `<tr><td style="padding:6px;border:1px solid #ddd;">${prop.name}</td><td style="padding:6px;border:1px solid #ddd;text-align:right;color:${color};font-weight:bold;">$${balance.toFixed(2)}</td></tr>`;
+    }
+    html += `</table>`;
+
+    html += `<p style="color:#888;font-size:12px;margin-top:20px;">- Receipt App Daily Report</p></div>`;
+
+    // Send to subscribed admins
+    const subscribers = await storage.getDailyReportSubscribers();
+    const recipientEmails = subscribers.filter(u => u.email).map(u => ({ name: u.displayName, email: u.email! }));
+
+    if (recipientEmails.length > 0) {
+      const origRecipients = EMAIL_RECIPIENTS;
+      // Temporarily override recipients
+      (EMAIL_RECIPIENTS as any).length = 0;
+      recipientEmails.forEach(r => (EMAIL_RECIPIENTS as any).push(r));
+      await sendNotificationEmails(`Daily Summary - ${date}`, html);
+      (EMAIL_RECIPIENTS as any).length = 0;
+      origRecipients.forEach(r => (EMAIL_RECIPIENTS as any).push(r));
+    }
+
+    res.json({ ok: true, date, receipts: todayInvoices.length, cashTx: todayCash.length, sentTo: recipientEmails.map(r => r.email) });
   });
 
   app.get("/api/invoices/export", async (req, res) => {

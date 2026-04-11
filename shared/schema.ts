@@ -28,6 +28,8 @@ export const users = sqliteTable("users", {
   password: text("password").notNull(),
   displayName: text("display_name").notNull(),
   role: text("role").notNull().default("manager"), // "admin" or "manager"
+  email: text("email"), // optional email for notifications
+  dailyReport: integer("daily_report").default(0), // 1 = subscribed to daily reports
 });
 
 export const sessions = sqliteTable("sessions", {

@@ -11,6 +11,7 @@ import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Plus, Trash2, UserCircle, Shield, Loader2, Building2, Settings } from "lucide-react";
 import { LogoBackground } from "@/components/LogoBackground";
 
@@ -19,6 +20,8 @@ interface UserItem {
   username: string;
   displayName: string;
   role: string;
+  email?: string;
+  dailyReport?: number;
   assignedProperties: string[];
 }
 
@@ -39,6 +42,8 @@ export default function AdminPage() {
   const [newPassword, setNewPassword] = useState("");
   const [newDisplayName, setNewDisplayName] = useState("");
   const [newRole, setNewRole] = useState("manager");
+  const [newEmail, setNewEmail] = useState("");
+  const [newDailyReport, setNewDailyReport] = useState(false);
 
   const [newUserPropertyIds, setNewUserPropertyIds] = useState<number[]>([]);
 
@@ -62,6 +67,8 @@ export default function AdminPage() {
         password: newPassword,
         displayName: newDisplayName,
         role: newRole,
+        email: newEmail || undefined,
+        dailyReport: newDailyReport,
       });
       const newUser = await res.json();
       if (newRole === "manager" && newUserPropertyIds.length > 0) {
@@ -74,6 +81,8 @@ export default function AdminPage() {
       setNewPassword("");
       setNewDisplayName("");
       setNewRole("manager");
+      setNewEmail("");
+      setNewDailyReport(false);
       setNewUserPropertyIds([]);
       setUserDialogOpen(false);
       toast({ title: "User created" });
@@ -196,6 +205,23 @@ export default function AdminPage() {
           }}
         >
           Re-sync All Receipts to Google
+        </Button>
+
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full gap-2"
+          onClick={async () => {
+            try {
+              const res = await apiRequest("POST", "/api/admin/daily-report", { date: new Date().toISOString().split("T")[0] });
+              const data = await res.json();
+              toast({ title: "Daily report sent", description: `${data.receipts} receipts, ${data.cashTx} cash transactions. Sent to: ${data.sentTo.join(", ") || "No subscribers"}` });
+            } catch (e: any) {
+              toast({ title: "Report failed", description: e.message || "Error", variant: "destructive" });
+            }
+          }}
+        >
+          Send Daily Report
         </Button>
 
         {/* ---- PROPERTIES SECTION ---- */}
@@ -359,6 +385,28 @@ export default function AdminPage() {
                       </SelectContent>
                     </Select>
                   </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="new-email">Email (optional)</Label>
+                    <Input
+                      id="new-email"
+                      type="email"
+                      value={newEmail}
+                      onChange={e => setNewEmail(e.target.value)}
+                      placeholder="user@example.com"
+                    />
+                  </div>
+                  {newRole === "admin" && newEmail && (
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="daily-report"
+                        checked={newDailyReport}
+                        onCheckedChange={(checked) => setNewDailyReport(checked === true)}
+                      />
+                      <Label htmlFor="daily-report" className="text-sm font-normal cursor-pointer">
+                        Subscribe to daily reports
+                      </Label>
+                    </div>
+                  )}
                   {newRole === "manager" && propertiesList && propertiesList.length > 0 && (
                     <div className="space-y-2">
                       <Label>Assign Properties</Label>
@@ -416,6 +464,12 @@ export default function AdminPage() {
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium">{u.displayName}</p>
                       <p className="text-xs text-muted-foreground">@{u.username} · {u.role === "admin" ? "Admin" : "Manager"}</p>
+                      {u.email && (
+                        <p className="text-xs text-muted-foreground">{u.email}</p>
+                      )}
+                      {u.dailyReport === 1 && (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-green-600 border-green-300">Daily Reports</Badge>
+                      )}
                       {u.role === "manager" && u.assignedProperties && u.assignedProperties.length > 0 && (
                         <p className="text-xs text-primary/70 truncate">
                           {u.assignedProperties.join(", ")}
