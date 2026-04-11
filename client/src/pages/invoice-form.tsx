@@ -128,6 +128,7 @@ export default function InvoiceFormPage() {
     }
 
     if (boughtByMode === "other" && !boughtByCustom.trim()) return "Please enter who made the purchase.";
+    if (paymentMethod === "cc" && lastFourDigits.length !== 4) return "Please enter the last 4 digits of the credit card.";
 
     return null;
   }
