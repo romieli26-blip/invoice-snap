@@ -35,6 +35,9 @@ export function initGoogleApis(): boolean {
   const auth = getAuth();
   if (!auth) {
     console.log("[google-api] No OAuth2 credentials configured, Google sync disabled");
+    console.log("[google-api] GOOGLE_CLIENT_ID:", process.env.GOOGLE_CLIENT_ID ? "SET" : "MISSING");
+    console.log("[google-api] GOOGLE_CLIENT_SECRET:", process.env.GOOGLE_CLIENT_SECRET ? "SET" : "MISSING");
+    console.log("[google-api] GOOGLE_REFRESH_TOKEN:", process.env.GOOGLE_REFRESH_TOKEN ? "SET" : "MISSING");
     return false;
   }
 

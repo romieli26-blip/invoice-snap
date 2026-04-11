@@ -179,6 +179,25 @@ export default function AdminPage() {
 
         <h1 className="text-xl font-semibold" data-testid="text-admin-title">Admin Panel</h1>
 
+        {/* ---- SYNC BUTTON ---- */}
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full gap-2"
+          data-testid="button-resync"
+          onClick={async () => {
+            try {
+              const res = await apiRequest("POST", "/api/admin/resync");
+              const data = await res.json();
+              toast({ title: "Sync complete", description: `${data.sheetsSync} rows synced to Sheets, ${data.driveSync} photos synced to Drive (${data.total} total receipts).` });
+            } catch (e: any) {
+              toast({ title: "Sync failed", description: e.message || "Check Google API configuration.", variant: "destructive" });
+            }
+          }}
+        >
+          Re-sync All Receipts to Google
+        </Button>
+
         {/* ---- PROPERTIES SECTION ---- */}
         <section className="space-y-3">
           <div className="flex items-center justify-between">

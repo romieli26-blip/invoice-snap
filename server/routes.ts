@@ -490,17 +490,19 @@ export async function registerRoutes(
     setImmediate(async () => {
       const submittedByName = user?.displayName || "Unknown";
       try {
-        const sheetsOk = syncToSheets(invoice, submittedByName);
+        const sheetsOk = await syncToSheets(invoice, submittedByName);
+        console.log(`[sync] Sheets sync for invoice ${invoice.id}: ${sheetsOk}`);
         if (sheetsOk) {
           await storage.updateInvoiceSyncStatus(invoice.id, "sheets", true);
         }
-      } catch (e) { /* ignore sync errors */ }
+      } catch (e) { console.error("[sync] Sheets error:", e); }
       try {
-        const driveOk = syncToDrive(invoice);
+        const driveOk = await syncToDrive(invoice);
+        console.log(`[sync] Drive sync for invoice ${invoice.id}: ${driveOk}`);
         if (driveOk) {
           await storage.updateInvoiceSyncStatus(invoice.id, "drive", true);
         }
-      } catch (e) { /* ignore sync errors */ }
+      } catch (e) { console.error("[sync] Drive error:", e); }
     });
   });
 
@@ -629,6 +631,39 @@ export async function registerRoutes(
         }
       });
     }
+  });
+
+  // Admin endpoint to re-sync all unsynced invoices to Google Sheets + Drive
+  app.post("/api/admin/resync", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    if (!isGoogleEnabled() || !sheetsConfig) {
+      return res.status(400).json({ error: "Google API not configured" });
+    }
+
+    const allInvoices = await storage.getAllInvoices();
+    const users = await storage.getAllUsers();
+    const userMap = new Map(users.map((u: any) => [u.id, u.displayName]));
+    let sheetsCount = 0;
+    let driveCount = 0;
+
+    for (const inv of allInvoices) {
+      const submittedByName = userMap.get(inv.userId) || "Unknown";
+      if (!inv.syncedToSheets) {
+        try {
+          const ok = await syncToSheets(inv, submittedByName);
+          if (ok) { await storage.updateInvoiceSyncStatus(inv.id, "sheets", true); sheetsCount++; }
+        } catch (e) { console.error(`[resync] Sheets failed for invoice ${inv.id}:`, e); }
+      }
+      if (!inv.syncedToDrive) {
+        try {
+          const ok = await syncToDrive(inv);
+          if (ok) { await storage.updateInvoiceSyncStatus(inv.id, "drive", true); driveCount++; }
+        } catch (e) { console.error(`[resync] Drive failed for invoice ${inv.id}:`, e); }
+      }
+    }
+
+    res.json({ ok: true, sheetsSync: sheetsCount, driveSync: driveCount, total: allInvoices.length });
   });
 
   app.get("/api/invoices/export", async (req, res) => {
