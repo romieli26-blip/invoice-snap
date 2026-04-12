@@ -1573,28 +1573,61 @@ export async function registerRoutes(
     const text = data.text;
     const rows: { date: string; description: string; amount: string }[] = [];
 
-    // Try to find transaction lines: date pattern + text + amount pattern
+    // Try to infer the statement year from the text (look for "2025" or "2026" etc.)
+    const yearMatch = text.match(/20\d{2}/);
+    const defaultYear = yearMatch ? yearMatch[0] : new Date().getFullYear().toString();
+
     const lines = text.split("\n").map(l => l.trim()).filter(l => l);
     for (const line of lines) {
-      // Match patterns like: 01/15/2026 STORE NAME 123.45 or 01-15-2026 STORE NAME $123.45
-      const dateMatch = line.match(/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/);
-      const amountMatch = line.match(/\$?([\d,]+\.\d{2})\s*$/);
-      if (dateMatch && amountMatch) {
-        const dateParts = dateMatch[1].split(/[\/\-]/);
-        let date = "";
-        if (dateParts[0].length === 4) {
-          date = dateMatch[1];
-        } else if (dateParts.length === 3) {
-          const y = dateParts[2].length === 2 ? "20" + dateParts[2] : dateParts[2];
-          date = `${y}-${dateParts[0].padStart(2, "0")}-${dateParts[1].padStart(2, "0")}`;
+      // Match amount at end of line: $65.41 or 65.41 or -$65.41
+      const amountMatch = line.match(/-?\$?([\d,]+\.\d{2})\s*$/);
+      if (!amountMatch) continue;
+
+      // Match date at start: MM/DD/YYYY, MM-DD-YYYY, MM/DD, or MM/DD MM/DD (sale+post date)
+      // Pattern: optional sale date + post date, then description, then amount
+      const datePatterns = [
+        // MM/DD/YYYY or MM-DD-YYYY (full date)
+        /^(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/,
+        // MM/DD MM/DD (sale date + post date, no year - common in CC statements)
+        /^(\d{1,2}\/\d{1,2})\s+\d{1,2}\/\d{1,2}\s/,
+        // Single MM/DD (no year)
+        /^(\d{1,2}\/\d{1,2})\s/,
+      ];
+
+      let date = "";
+      let descStart = 0;
+      for (const pat of datePatterns) {
+        const m = line.match(pat);
+        if (m) {
+          const raw = m[1];
+          const parts = raw.split(/[\/\-]/);
+          if (parts.length === 3) {
+            // Has year: MM/DD/YYYY
+            const y = parts[2].length === 2 ? "20" + parts[2] : parts[2];
+            date = `${y}-${parts[0].padStart(2, "0")}-${parts[1].padStart(2, "0")}`;
+          } else if (parts.length === 2) {
+            // No year: MM/DD — use default year from statement
+            date = `${defaultYear}-${parts[0].padStart(2, "0")}-${parts[1].padStart(2, "0")}`;
+          }
+          // For "MM/DD MM/DD" pattern, skip past both dates
+          const dualDateMatch = line.match(/^\d{1,2}\/\d{1,2}\s+\d{1,2}\/\d{1,2}\s/);
+          descStart = dualDateMatch ? dualDateMatch[0].length : m[0].length;
+          break;
         }
-        let amount = amountMatch[1].replace(/,/g, "");
-        // Extract description: everything between date and amount
-        let desc = line.slice(dateMatch.index! + dateMatch[0].length, amountMatch.index!).trim();
-        if (!desc) desc = "Unknown";
-        if (date && amount && parseFloat(amount) > 0) {
-          rows.push({ date, description: desc, amount });
-        }
+      }
+
+      if (!date) continue;
+
+      let amount = amountMatch[1].replace(/,/g, "");
+      // Extract description: everything between date(s) and amount
+      let desc = line.slice(descStart, amountMatch.index!).trim();
+      // Clean up extra whitespace and state abbreviations
+      desc = desc.replace(/\s{2,}/g, " ");
+      if (!desc) desc = "Unknown";
+
+      // Skip negative amounts (payments/credits) and zero amounts
+      if (parseFloat(amount) > 0 && !line.startsWith("-") && !amountMatch[0].startsWith("-")) {
+        rows.push({ date, description: desc, amount });
       }
     }
     return rows;
