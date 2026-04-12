@@ -9,7 +9,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient, getAuthToken } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, Upload, Trash2, Loader2, FileText, Eye, Camera, X } from "lucide-react";
+import { ArrowLeft, Upload, Trash2, Loader2, FileText, Eye, Camera, X, ChevronLeft, ChevronRight, Plus, ZoomIn } from "lucide-react";
 import { useRef } from "react";
 import { LogoBackground } from "@/components/LogoBackground";
 import { compressImage } from "@/lib/compress-image";
@@ -39,13 +39,33 @@ export default function DocumentsPage() {
   const { toast } = useToast();
 
   const [docType, setDocType] = useState("");
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<string[]>([]);
+  const [viewIdx, setViewIdx] = useState(0);
+  const [zoomOpen, setZoomOpen] = useState(false);
   const [bankName, setBankName] = useState("");
   const [routingNumber, setRoutingNumber] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const cameraRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  function addFile(f: File | null) {
+    if (!f) return;
+    setFiles(prev => [...prev, f]);
+    const reader = new FileReader();
+    reader.onload = () => {
+      setPreviews(prev => [...prev, reader.result as string]);
+      setViewIdx(previews.length);
+    };
+    reader.readAsDataURL(f);
+  }
+  function removeFile(idx: number) {
+    setFiles(prev => prev.filter((_, i) => i !== idx));
+    setPreviews(prev => prev.filter((_, i) => i !== idx));
+    if (viewIdx >= previews.length - 1) setViewIdx(Math.max(0, previews.length - 2));
+  }
+  function clearFiles() { setFiles([]); setPreviews([]); setViewIdx(0); }
 
   const { data: documents, isLoading } = useQuery<UserDocument[]>({
     queryKey: ["/api/user-documents"],
@@ -55,39 +75,42 @@ export default function DocumentsPage() {
     e.preventDefault();
     if (!docType) return;
 
+    if (files.length === 0 && docType !== "banking") {
+      toast({ title: "Please add at least one photo or file", variant: "destructive" });
+      return;
+    }
+
     setSubmitting(true);
     try {
-      const formData = new FormData();
-      formData.append("docType", docType);
+      // Upload each file as a separate document entry
+      for (const f of (files.length > 0 ? files : [null])) {
+        const formData = new FormData();
+        formData.append("docType", docType);
 
-      if (file) {
-        // Compress if image
-        if (file.type.startsWith("image/")) {
-          const compressed = await compressImage(file);
-          formData.append("file", compressed);
-        } else {
-          formData.append("file", file);
+        if (f) {
+          const toUpload = f.type.startsWith("image/") ? await compressImage(f) : f;
+          formData.append("document", toUpload);
         }
-      }
 
-      if (docType === "banking") {
-        formData.append("bankName", bankName);
-        formData.append("routingNumber", routingNumber);
-        formData.append("accountNumber", accountNumber);
-      }
+        if (docType === "banking") {
+          formData.append("bankName", bankName);
+          formData.append("routingNumber", routingNumber);
+          formData.append("accountNumber", accountNumber);
+        }
 
-      const token = getAuthToken();
-      const res = await fetch(`${API_BASE}/api/user-documents`, {
-        method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: formData,
-      });
-      if (!res.ok) throw new Error("Upload failed");
+        const token = getAuthToken();
+        const res = await fetch(`${API_BASE}/api/user-documents`, {
+          method: "POST",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: formData,
+        });
+        if (!res.ok) throw new Error("Upload failed");
+      }
 
       queryClient.invalidateQueries({ queryKey: ["/api/user-documents"] });
-      toast({ title: "Document uploaded" });
+      toast({ title: `${files.length || 1} document(s) uploaded` });
       setDocType("");
-      setFile(null);
+      clearFiles();
       setBankName("");
       setRoutingNumber("");
       setAccountNumber("");
@@ -168,27 +191,53 @@ export default function DocumentsPage() {
 
                 {docType && (
                   <div className="space-y-2">
-                    <Label>{docType === "banking" ? "Voided Check / Direct Deposit Form" : "Upload Photo or Scan"}</Label>
-                    {file ? (
-                      <div className="flex items-center gap-2 bg-muted/50 rounded p-2">
-                        <FileText className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-sm truncate flex-1">{file.name}</span>
-                        <button type="button" onClick={() => setFile(null)} className="text-muted-foreground hover:text-destructive">
-                          <X className="w-4 h-4" />
+                    <Label>{docType === "banking" ? "Voided Check / Direct Deposit Form" : "Upload Photo(s) or Scan"}</Label>
+                    
+                    {/* Photo carousel preview */}
+                    {previews.length > 0 && (
+                      <div className="relative rounded-lg overflow-hidden bg-muted">
+                        <img src={previews[viewIdx]} alt="Preview" className="w-full max-h-40 object-contain cursor-pointer" onClick={() => setZoomOpen(true)} />
+                        {previews.length > 1 && (
+                          <div className="absolute bottom-1 left-1/2 -translate-x-1/2 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded-full">
+                            {viewIdx + 1} / {previews.length}
+                          </div>
+                        )}
+                        {previews.length > 1 && viewIdx > 0 && (
+                          <button type="button" className="absolute left-1 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-black/40 text-white flex items-center justify-center" onClick={() => setViewIdx(i => i - 1)}>
+                            <ChevronLeft className="w-3 h-3" />
+                          </button>
+                        )}
+                        {previews.length > 1 && viewIdx < previews.length - 1 && (
+                          <button type="button" className="absolute right-1 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-black/40 text-white flex items-center justify-center" onClick={() => setViewIdx(i => i + 1)}>
+                            <ChevronRight className="w-3 h-3" />
+                          </button>
+                        )}
+                        <button type="button" className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/50 text-white flex items-center justify-center" onClick={() => removeFile(viewIdx)}>
+                          <X className="w-3 h-3" />
+                        </button>
+                        <button type="button" className="absolute top-1 left-1 w-6 h-6 rounded-full bg-black/50 text-white flex items-center justify-center" onClick={() => setZoomOpen(true)}>
+                          <ZoomIn className="w-3 h-3" />
                         </button>
                       </div>
-                    ) : (
-                      <div className="flex gap-2">
-                        <Button type="button" variant="outline" size="sm" className="flex-1 gap-1" onClick={() => cameraRef.current?.click()}>
-                          <Camera className="w-3.5 h-3.5" /> Take Photo
-                        </Button>
-                        <Button type="button" variant="outline" size="sm" className="flex-1 gap-1" onClick={() => fileRef.current?.click()}>
-                          <Upload className="w-3.5 h-3.5" /> Upload File
-                        </Button>
-                      </div>
                     )}
-                    <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => { setFile(e.target.files?.[0] || null); e.target.value = ""; }} />
-                    <input ref={fileRef} type="file" accept="image/*,.pdf" className="hidden" onChange={e => { setFile(e.target.files?.[0] || null); e.target.value = ""; }} />
+
+                    {/* Add photo buttons */}
+                    <div className="flex gap-2">
+                      <Button type="button" variant="outline" size="sm" className="flex-1 gap-1" onClick={() => cameraRef.current?.click()}>
+                        <Camera className="w-3.5 h-3.5" /> {previews.length > 0 ? "Add Photo" : "Take Photo"}
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" className="flex-1 gap-1" onClick={() => fileRef.current?.click()}>
+                        <Upload className="w-3.5 h-3.5" /> {previews.length > 0 ? "Add File" : "Upload File"}
+                      </Button>
+                    </div>
+                    {previews.length > 0 && (
+                      <p className="text-[10px] text-muted-foreground text-center">
+                        {previews.length} photo(s) added. Tap photo to zoom. Use arrows to navigate.
+                      </p>
+                    )}
+
+                    <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => { addFile(e.target.files?.[0] || null); e.target.value = ""; }} />
+                    <input ref={fileRef} type="file" accept="image/*,.pdf" className="hidden" onChange={e => { addFile(e.target.files?.[0] || null); e.target.value = ""; }} />
                   </div>
                 )}
 
@@ -242,6 +291,32 @@ export default function DocumentsPage() {
           )}
         </div>
       </div>
+      {/* Zoom overlay */}
+      {zoomOpen && previews.length > 0 && (
+        <div className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4" onClick={() => setZoomOpen(false)}>
+          <div className="relative max-w-lg w-full" onClick={e => e.stopPropagation()}>
+            <img src={previews[viewIdx]} alt="Zoomed" className="w-full rounded-lg" />
+            {previews.length > 1 && (
+              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-black/60 text-white text-xs px-2 py-0.5 rounded-full">
+                {viewIdx + 1} / {previews.length}
+              </div>
+            )}
+            {previews.length > 1 && viewIdx > 0 && (
+              <button className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center" onClick={() => setViewIdx(i => i - 1)}>
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+            )}
+            {previews.length > 1 && viewIdx < previews.length - 1 && (
+              <button className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center" onClick={() => setViewIdx(i => i + 1)}>
+                <ChevronRight className="w-5 h-5" />
+              </button>
+            )}
+            <button className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center" onClick={() => setZoomOpen(false)}>
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      )}
     </LogoBackground>
   );
 }
