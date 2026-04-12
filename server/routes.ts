@@ -7,6 +7,7 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
+import pdfParse from "pdf-parse";
 import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, deleteSheetRow, deleteFromDrive, highlightLastRow } from "./google-api";
 // nodemailer removed — using Gmail API instead (SMTP blocked on Railway)
 
@@ -1524,6 +1525,10 @@ export async function registerRoutes(
 
   function parseStatementCsv(filePath: string): { date: string; description: string; amount: string }[] {
     const content = fs.readFileSync(filePath, "utf-8");
+    return parseStatementText(content);
+  }
+
+  function parseStatementText(content: string): { date: string; description: string; amount: string }[] {
     const lines = content.split("\n").map(l => l.trim()).filter(l => l);
     if (lines.length < 2) return [];
 
@@ -1556,6 +1561,39 @@ export async function registerRoutes(
     return rows;
   }
 
+  async function parseStatementPdf(filePath: string): Promise<{ date: string; description: string; amount: string }[]> {
+    const buffer = fs.readFileSync(filePath);
+    const data = await pdfParse(buffer);
+    const text = data.text;
+    const rows: { date: string; description: string; amount: string }[] = [];
+
+    // Try to find transaction lines: date pattern + text + amount pattern
+    const lines = text.split("\n").map(l => l.trim()).filter(l => l);
+    for (const line of lines) {
+      // Match patterns like: 01/15/2026 STORE NAME 123.45 or 01-15-2026 STORE NAME $123.45
+      const dateMatch = line.match(/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/);
+      const amountMatch = line.match(/\$?([\d,]+\.\d{2})\s*$/);
+      if (dateMatch && amountMatch) {
+        const dateParts = dateMatch[1].split(/[\/\-]/);
+        let date = "";
+        if (dateParts[0].length === 4) {
+          date = dateMatch[1];
+        } else if (dateParts.length === 3) {
+          const y = dateParts[2].length === 2 ? "20" + dateParts[2] : dateParts[2];
+          date = `${y}-${dateParts[0].padStart(2, "0")}-${dateParts[1].padStart(2, "0")}`;
+        }
+        let amount = amountMatch[1].replace(/,/g, "");
+        // Extract description: everything between date and amount
+        let desc = line.slice(dateMatch.index! + dateMatch[0].length, amountMatch.index!).trim();
+        if (!desc) desc = "Unknown";
+        if (date && amount && parseFloat(amount) > 0) {
+          rows.push({ date, description: desc, amount });
+        }
+      }
+    }
+    return rows;
+  }
+
   app.post("/api/admin/upload-statement", upload.single("statement"), async (req: any, res) => {
     const session = await requireAdmin(req, res);
     if (!session) return;
@@ -1570,7 +1608,13 @@ export async function registerRoutes(
     const filePath = `/api/uploads/${req.file.filename}`;
     const fullPath = path.resolve(dataDir, "uploads", req.file.filename);
 
-    const transactions = parseStatementCsv(fullPath);
+    const ext = path.extname(req.file.originalname || req.file.filename).toLowerCase();
+    let transactions: { date: string; description: string; amount: string }[];
+    if (ext === ".pdf" || req.file.mimetype === "application/pdf") {
+      transactions = await parseStatementPdf(fullPath);
+    } else {
+      transactions = parseStatementCsv(fullPath);
+    }
 
     const stmt = await storage.createCcStatement({
       property,
@@ -1592,7 +1636,8 @@ export async function registerRoutes(
             if (statementsFolder) {
               const propFolder = await ensureDriveFolder(property, statementsFolder);
               if (propFolder) {
-                await uploadToDrive(fullPath, `Statement_${property}_${startDate}_to_${endDate}.csv`, propFolder);
+                const driveExt = ext === ".pdf" ? ".pdf" : ".csv";
+                await uploadToDrive(fullPath, `Statement_${property}_${startDate}_to_${endDate}${driveExt}`, propFolder);
               }
             }
           }

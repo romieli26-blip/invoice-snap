@@ -128,7 +128,7 @@ export default function InvoiceFormPage() {
     }
 
     if (boughtByMode === "other" && !boughtByCustom.trim()) return "Please enter who made the purchase.";
-    if (paymentMethod === "cc" && lastFourDigits.length !== 5) return "Please enter the last 5 digits of the credit card.";
+    if (paymentMethod === "cc" && (lastFourDigits.length < 4 || lastFourDigits.length > 5)) return "Please enter the last 4 or 5 digits of the credit card.";
 
     return null;
   }
@@ -598,7 +598,7 @@ export default function InvoiceFormPage() {
               </div>
 
               <div className="space-y-2">
-                  <Label htmlFor="lastFour">Last 5 Digits of Credit Card</Label>
+                  <Label htmlFor="lastFour">Last 4-5 Digits of Credit Card</Label>
                   <Input
                     id="lastFour"
                     value={lastFourDigits}
@@ -606,10 +606,10 @@ export default function InvoiceFormPage() {
                       const v = e.target.value.replace(/\D/g, "").slice(0, 5);
                       setLastFourDigits(v);
                     }}
-                    placeholder="1234"
+                    placeholder="1234 or 12345"
                     maxLength={5}
                     inputMode="numeric"
-                    pattern="[0-9]{5}"
+                    pattern="[0-9]{4,5}"
                     data-testid="input-last-four"
                   />
               </div>

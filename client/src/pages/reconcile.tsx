@@ -115,8 +115,8 @@ export default function ReconcilePage() {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label>Statement File (CSV)</Label>
-                  <Input type="file" accept=".csv" onChange={e => setFile(e.target.files?.[0] || null)} />
+                  <Label>Statement File (CSV or PDF)</Label>
+                  <Input type="file" accept=".csv,.pdf,text/csv,application/pdf" onChange={e => setFile(e.target.files?.[0] || null)} />
                 </div>
                 <Button
                   className="w-full bg-yellow-500 hover:bg-yellow-600 text-black"
