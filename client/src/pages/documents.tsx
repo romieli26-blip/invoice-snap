@@ -223,21 +223,24 @@ export default function DocumentsPage() {
 
                     {/* Add photo buttons */}
                     <div className="flex gap-2">
-                      <Button type="button" variant="outline" size="sm" className="flex-1 gap-1" onClick={() => cameraRef.current?.click()}>
-                        <Camera className="w-3.5 h-3.5" /> {previews.length > 0 ? "Add Photo" : "Take Photo"}
-                      </Button>
-                      <Button type="button" variant="outline" size="sm" className="flex-1 gap-1" onClick={() => fileRef.current?.click()}>
-                        <Upload className="w-3.5 h-3.5" /> {previews.length > 0 ? "Add File" : "Upload File"}
-                      </Button>
+                      <label className="flex-1 cursor-pointer">
+                        <span className="inline-flex items-center justify-center w-full whitespace-nowrap rounded-md text-sm font-medium border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-3 gap-1">
+                          <Camera className="w-3.5 h-3.5" /> {previews.length > 0 ? "Add Photo" : "Take Photo"}
+                        </span>
+                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e => { addFile(e.target.files?.[0] || null); e.target.value = ""; }} />
+                      </label>
+                      <label className="flex-1 cursor-pointer">
+                        <span className="inline-flex items-center justify-center w-full whitespace-nowrap rounded-md text-sm font-medium border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-3 gap-1">
+                          <Upload className="w-3.5 h-3.5" /> {previews.length > 0 ? "Add File" : "Upload File"}
+                        </span>
+                        <input type="file" accept="image/*,.pdf" className="hidden" onChange={e => { addFile(e.target.files?.[0] || null); e.target.value = ""; }} />
+                      </label>
                     </div>
                     {previews.length > 0 && (
                       <p className="text-[10px] text-muted-foreground text-center">
                         {previews.length} photo(s) added. Tap photo to zoom. Use arrows to navigate.
                       </p>
                     )}
-
-                    <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => { addFile(e.target.files?.[0] || null); e.target.value = ""; }} />
-                    <input ref={fileRef} type="file" accept="image/*,.pdf" className="hidden" onChange={e => { addFile(e.target.files?.[0] || null); e.target.value = ""; }} />
                   </div>
                 )}
 

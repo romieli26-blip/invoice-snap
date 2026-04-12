@@ -1912,12 +1912,12 @@ export async function registerRoutes(
   });
 
   // ---- User Documents ----
-  app.post("/api/user-documents", upload.single("file"), async (req, res) => {
+  app.post("/api/user-documents", upload.single("document"), async (req, res) => {
     const session = await requireAuth(req, res);
     if (!session) return;
     const { docType, bankName, routingNumber, accountNumber } = req.body;
     if (!docType) return res.status(400).json({ error: "docType is required" });
-    const filePath = req.file ? `/uploads/${req.file.filename}` : null;
+    const filePath = req.file ? `/api/uploads/${req.file.filename}` : null;
     const doc = await storage.createUserDocument({
       userId: session.userId,
       docType,
