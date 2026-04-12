@@ -1,7 +1,7 @@
 import { type User, type InsertUser, type Invoice, type InsertInvoice, type Property, type InsertProperty, type CashTransaction, type InsertCashTransaction, type CcStatement, type TimeReport, type UserDocument, users, invoices, properties, sessions, userProperties, cashTransactions, ccStatements, timeReports, userDocuments } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
-import { eq, desc, inArray } from "drizzle-orm";
+import { eq, desc, inArray, and, gte, lte } from "drizzle-orm";
 
 import path from "path";
 
@@ -397,11 +397,16 @@ export class DatabaseStorage implements IStorage {
     return db.update(ccStatements).set(data).where(eq(ccStatements.id, id)).returning().get();
   }
   async getInvoicesByPropertyAndDateRange(property: string, startDate: string, endDate: string): Promise<Invoice[]> {
-    // Use raw SQL for BETWEEN query
-    const rows = sqlite.prepare(
-      "SELECT * FROM invoices WHERE property = ? AND purchase_date >= ? AND purchase_date <= ? ORDER BY purchase_date"
-    ).all(property, startDate, endDate) as Invoice[];
-    return rows;
+    return db.select().from(invoices)
+      .where(
+        and(
+          eq(invoices.property, property),
+          gte(invoices.purchaseDate, startDate),
+          lte(invoices.purchaseDate, endDate)
+        )
+      )
+      .orderBy(invoices.purchaseDate)
+      .all();
   }
 
   // ---- Time Reports ----

@@ -71,13 +71,35 @@ export default function DocumentsPage() {
     queryKey: ["/api/user-documents"],
   });
 
+  // Check if a photo_id document already exists
+  const hasPhotoId = documents?.some(d => d.docType === "photo_id");
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!docType) return;
 
+    // Photo ID: only allow one — must delete previous first
+    if (docType === "photo_id" && hasPhotoId) {
+      toast({ title: "Photo ID already uploaded", description: "Delete the existing one before adding a new one.", variant: "destructive" });
+      return;
+    }
+
+    // Photo required for photo_id and w9, optional for banking
     if (files.length === 0 && docType !== "banking") {
       toast({ title: "Please add at least one photo or file", variant: "destructive" });
       return;
+    }
+
+    // Validate banking number fields
+    if (docType === "banking") {
+      if (routingNumber && !/^\d+$/.test(routingNumber)) {
+        toast({ title: "Routing number must contain only numbers", variant: "destructive" });
+        return;
+      }
+      if (accountNumber && !/^\d+$/.test(accountNumber)) {
+        toast({ title: "Account number must contain only numbers", variant: "destructive" });
+        return;
+      }
     }
 
     setSubmitting(true);
@@ -172,7 +194,13 @@ export default function DocumentsPage() {
                   </Select>
                 </div>
 
-                {docType === "banking" && (
+                {docType === "photo_id" && hasPhotoId && (
+                <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-md p-3">
+                  <p className="text-sm text-amber-800 dark:text-amber-300">You already have a Photo ID on file. Delete the existing one below before uploading a new one.</p>
+                </div>
+              )}
+
+              {docType === "banking" && (
                   <>
                     <div className="space-y-1">
                       <Label className="text-xs">Bank Name</Label>
@@ -180,11 +208,29 @@ export default function DocumentsPage() {
                     </div>
                     <div className="space-y-1">
                       <Label className="text-xs">Routing Number</Label>
-                      <Input value={routingNumber} onChange={e => setRoutingNumber(e.target.value)} placeholder="9-digit routing" />
+                      <Input
+                        value={routingNumber}
+                        onChange={e => {
+                          const v = e.target.value.replace(/\D/g, "");
+                          setRoutingNumber(v);
+                        }}
+                        placeholder="9-digit routing"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                      />
                     </div>
                     <div className="space-y-1">
                       <Label className="text-xs">Account Number</Label>
-                      <Input value={accountNumber} onChange={e => setAccountNumber(e.target.value)} placeholder="Account number" />
+                      <Input
+                        value={accountNumber}
+                        onChange={e => {
+                          const v = e.target.value.replace(/\D/g, "");
+                          setAccountNumber(v);
+                        }}
+                        placeholder="Account number"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                      />
                     </div>
                   </>
                 )}
