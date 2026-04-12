@@ -587,6 +587,9 @@ export async function registerRoutes(
     if (!username || !password || !displayName) {
       return res.status(400).json({ error: "Username, password, and display name are required" });
     }
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
 
     if (email) {
       const allUsers = await storage.getAllUsers();
@@ -611,7 +614,20 @@ export async function registerRoutes(
       dailyTransactionReport: dailyTransactionReport ? 1 : 0,
       reconciliationReport: reconciliationReport ? 1 : 0,
       homeProperty: homeProperty || null,
+      w9OrW4: "w9",
     } as any);
+
+    // Auto-assign home property if set
+    if (homeProperty) {
+      const allProps = await storage.getAllProperties();
+      const homeProp = allProps.find(p => p.name === homeProperty);
+      if (homeProp) {
+        const existingPropIds = await storage.getUserPropertyIds(user.id);
+        if (!existingPropIds.includes(homeProp.id)) {
+          await storage.setUserProperties(user.id, [...existingPropIds, homeProp.id]);
+        }
+      }
+    }
 
     res.json({ id: user.id, username: user.username, displayName: user.displayName, role: user.role, email: user.email });
   });
@@ -640,7 +656,7 @@ export async function registerRoutes(
       dailyTimeReport, dailyTransactionReport, reconciliationReport,
       firstName, lastName, baseRate, offSiteRate, homeProperty, allowOffSite,
       mileageRate, allowSpecialTerms, specialTermsAmount, w9OrW4, docsComplete,
-      requireFinancialConfirm } = req.body;
+      requireFinancialConfirm, allowPastDates } = req.body;
 
     if (email) {
       const allUsers = await storage.getAllUsers();
@@ -673,6 +689,7 @@ export async function registerRoutes(
     if (w9OrW4 !== undefined) updateData.w9OrW4 = w9OrW4 || null;
     if (docsComplete !== undefined) updateData.docsComplete = docsComplete ? 1 : 0;
     if (requireFinancialConfirm !== undefined) updateData.requireFinancialConfirm = requireFinancialConfirm ? 1 : 0;
+    if (allowPastDates !== undefined) updateData.allowPastDates = allowPastDates ? 1 : 0;
 
     const updated = await storage.updateUser(id, updateData);
     res.json(updated);

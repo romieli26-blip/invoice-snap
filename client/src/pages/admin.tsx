@@ -73,6 +73,7 @@ export default function AdminPage() {
   const [editUserW9OrW4, setEditUserW9OrW4] = useState("");
   const [editUserDocsComplete, setEditUserDocsComplete] = useState(false);
   const [editUserRequireFinancialConfirm, setEditUserRequireFinancialConfirm] = useState(false);
+  const [editUserAllowPastDates, setEditUserAllowPastDates] = useState(false);
   const [editUserSaving, setEditUserSaving] = useState(false);
 
   // Edit properties assignment state
@@ -522,19 +523,27 @@ export default function AdminPage() {
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="new-email">Email (optional)</Label>
+                    <Label htmlFor="new-email">Email</Label>
                     <Input
                       id="new-email"
                       type="email"
                       value={newEmail}
                       onChange={e => setNewEmail(e.target.value)}
                       placeholder="user@example.com"
+                      required
                     />
                   </div>
                   {propertiesList && propertiesList.length > 0 && (
                     <div className="space-y-2">
                       <Label>Home Base Property</Label>
-                      <Select value={newHomeProperty} onValueChange={setNewHomeProperty}>
+                      <Select value={newHomeProperty} onValueChange={(val) => {
+                        setNewHomeProperty(val);
+                        // Auto-include home property in assigned properties
+                        const homeProp = propertiesList?.find(p => p.name === val);
+                        if (homeProp && !newUserPropertyIds.includes(homeProp.id)) {
+                          setNewUserPropertyIds(prev => [...prev, homeProp.id]);
+                        }
+                      }}>
                         <SelectTrigger><SelectValue placeholder="Select home property" /></SelectTrigger>
                         <SelectContent>
                           {propertiesList.map(p => (
@@ -699,6 +708,7 @@ export default function AdminPage() {
                             setEditUserW9OrW4((u as any).w9OrW4 || "");
                             setEditUserDocsComplete((u as any).docsComplete === 1);
                             setEditUserRequireFinancialConfirm((u as any).requireFinancialConfirm === 1);
+                            setEditUserAllowPastDates((u as any).allowPastDates === 1);
                           }}
                         >
                           <Pencil className="w-4 h-4" />
@@ -834,22 +844,17 @@ export default function AdminPage() {
                       <Input type="number" step="0.01" value={editUserSpecialTermsAmount} onChange={e => setEditUserSpecialTermsAmount(e.target.value)} placeholder="0.00" />
                     </div>
                   )}
-                  <div className="space-y-1">
-                    <Label className="text-xs">W-9 Required</Label>
-                    <Select value={editUserW9OrW4} onValueChange={setEditUserW9OrW4}>
-                      <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="w9">W-9</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
                   <div className="flex items-center space-x-2">
                     <Checkbox id="edit-docs" checked={editUserDocsComplete} onCheckedChange={c => setEditUserDocsComplete(c === true)} />
-                    <Label htmlFor="edit-docs" className="text-sm font-normal cursor-pointer">Documents complete</Label>
+                    <Label htmlFor="edit-docs" className="text-sm font-normal cursor-pointer">W-9 / Documents complete</Label>
                   </div>
                   <div className="flex items-center space-x-2">
                     <Checkbox id="edit-financial-confirm" checked={editUserRequireFinancialConfirm} onCheckedChange={c => setEditUserRequireFinancialConfirm(c === true)} />
                     <Label htmlFor="edit-financial-confirm" className="text-sm font-normal cursor-pointer">Require financial review on time reports</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox id="edit-past-dates" checked={editUserAllowPastDates} onCheckedChange={c => setEditUserAllowPastDates(c === true)} />
+                    <Label htmlFor="edit-past-dates" className="text-sm font-normal cursor-pointer">Allow past date reporting (beyond 1 day)</Label>
                   </div>
                 </>
               )}
@@ -876,9 +881,10 @@ export default function AdminPage() {
                     mileageRate: editUserMileageRate || undefined,
                     allowSpecialTerms: editUserAllowSpecialTerms,
                     specialTermsAmount: editUserSpecialTermsAmount || undefined,
-                    w9OrW4: editUserW9OrW4 || undefined,
+                    w9OrW4: "w9",
                     docsComplete: editUserDocsComplete,
                     requireFinancialConfirm: editUserRequireFinancialConfirm,
+                    allowPastDates: editUserAllowPastDates,
                   });
                   queryClient.invalidateQueries({ queryKey: ["/api/users"] });
                   setEditingUser(null);

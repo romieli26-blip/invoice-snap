@@ -47,6 +47,7 @@ export const users = sqliteTable("users", {
   dailyTransactionReport: integer("daily_transaction_report").default(0),
   reconciliationReport: integer("reconciliation_report").default(0),
   requireFinancialConfirm: integer("require_financial_confirm").default(0),
+  allowPastDates: integer("allow_past_dates").default(0),
 });
 
 export const sessions = sqliteTable("sessions", {

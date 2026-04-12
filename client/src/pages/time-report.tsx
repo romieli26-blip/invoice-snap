@@ -41,7 +41,7 @@ export default function TimeReportPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
-  const [property, setProperty] = useState("");
+  const [property, setProperty] = useState(user?.homeProperty || "");
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
   const [timeBlocks, setTimeBlocks] = useState<{ start: string; end: string }[]>([{ start: "", end: "" }]);
   const [accomplishments, setAccomplishments] = useState<string[]>([""]);
@@ -89,6 +89,11 @@ export default function TimeReportPage() {
 
   const mileageAmount = miles ? (parseFloat(miles) * mileageRate).toFixed(2) : "";
   const requireFinancialConfirm = user?.requireFinancialConfirm === 1;
+  const allowPastDates = user?.allowPastDates === 1;
+
+  // Date limits: today is max, min is yesterday unless allowPastDates
+  const today = new Date().toISOString().split("T")[0];
+  const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
 
   // Check if all time blocks are filled
   const allBlocksFilled = timeBlocks.every(b => b.start && b.end);
@@ -309,7 +314,14 @@ export default function TimeReportPage() {
 
             <div className="space-y-2">
               <Label>Date</Label>
-              <Input type="date" value={date} onChange={e => setDate(e.target.value)} required />
+              <Input
+                type="date"
+                value={date}
+                onChange={e => setDate(e.target.value)}
+                max={today}
+                min={allowPastDates ? undefined : yesterday}
+                required
+              />
             </div>
 
             {/* Time blocks */}
