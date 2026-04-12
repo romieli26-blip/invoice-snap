@@ -12,6 +12,8 @@ import InvoiceFormPage from "@/pages/invoice-form";
 import AdminPage from "@/pages/admin";
 import CashTransactionPage from "@/pages/cash-transaction";
 import ReconcilePage from "@/pages/reconcile";
+import TimeReportPage from "@/pages/time-report";
+import DocumentsPage from "@/pages/documents";
 import NotFound from "@/pages/not-found";
 import { Loader2 } from "lucide-react";
 
@@ -38,6 +40,8 @@ function AuthenticatedRouter() {
       <Route path="/admin" component={AdminPage} />
       <Route path="/cash" component={CashTransactionPage} />
       <Route path="/reconcile" component={ReconcilePage} />
+      <Route path="/time-report" component={TimeReportPage} />
+      <Route path="/documents" component={DocumentsPage} />
       <Route component={NotFound} />
     </Switch>
   );

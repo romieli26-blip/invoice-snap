@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
-import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, DollarSign } from "lucide-react";
+import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, DollarSign, Clock } from "lucide-react";
 import { apiRequest, queryClient, getAuthToken } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
@@ -53,6 +53,10 @@ export default function HistoryPage() {
 
   const { data: cashTxs } = useQuery<any[]>({
     queryKey: ["/api/cash-transactions"],
+  });
+
+  const { data: timeReports } = useQuery<any[]>({
+    queryKey: ["/api/time-reports"],
   });
 
   // Cash transaction edit state
@@ -152,25 +156,27 @@ export default function HistoryPage() {
 
       <div className="max-w-lg mx-auto p-4 space-y-4">
         {/* Action Buttons */}
-        <div className="grid grid-cols-2 gap-3">
-          <Button
-            className="h-20 text-sm gap-1.5 flex-col leading-tight"
-            onClick={() => setLocation("/capture")}
-            data-testid="button-new-invoice"
-          >
-            <Camera className="w-6 h-6" />
-            <span className="text-center">New Credit Card<br/>Receipt</span>
-          </Button>
-          <Button
-            className="h-20 text-sm gap-1.5 flex-col leading-tight bg-orange-100 hover:bg-orange-200 text-orange-800 border border-orange-300"
-            variant="outline"
-            onClick={() => setLocation("/cash")}
-            data-testid="button-cash-transaction"
-          >
-            <Camera className="w-6 h-6" />
-            <span className="text-center">New Cash<br/>Transaction</span>
-          </Button>
-        </div>
+        {user?.role !== "contractor" && (
+          <div className="grid grid-cols-2 gap-3">
+            <Button
+              className="h-20 text-sm gap-1.5 flex-col leading-tight"
+              onClick={() => setLocation("/capture")}
+              data-testid="button-new-invoice"
+            >
+              <Camera className="w-6 h-6" />
+              <span className="text-center">New Credit Card<br/>Receipt</span>
+            </Button>
+            <Button
+              className="h-20 text-sm gap-1.5 flex-col leading-tight bg-orange-100 hover:bg-orange-200 text-orange-800 border border-orange-300"
+              variant="outline"
+              onClick={() => setLocation("/cash")}
+              data-testid="button-cash-transaction"
+            >
+              <Camera className="w-6 h-6" />
+              <span className="text-center">New Cash<br/>Transaction</span>
+            </Button>
+          </div>
+        )}
 
         {(user?.role === "admin" || user?.role === "super_admin") && (
           <Button
@@ -182,8 +188,48 @@ export default function HistoryPage() {
           </Button>
         )}
 
+        {user?.role === "contractor" && (
+          <div className="grid grid-cols-2 gap-3">
+            <Button
+              className="h-16 text-sm gap-1.5 flex-col leading-tight bg-blue-600 hover:bg-blue-700 text-white"
+              onClick={() => setLocation("/time-report")}
+            >
+              <Clock className="w-5 h-5" />
+              Work Report
+            </Button>
+            <Button
+              className="h-16 text-sm gap-1.5 flex-col leading-tight"
+              variant="outline"
+              onClick={() => setLocation("/documents")}
+            >
+              <FileText className="w-5 h-5" />
+              My Documents
+            </Button>
+          </div>
+        )}
+
+        {user?.role !== "contractor" && (
+          <div className="grid grid-cols-2 gap-3">
+            <Button
+              className="h-12 text-sm gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
+              onClick={() => setLocation("/time-report")}
+            >
+              <Clock className="w-4 h-4" />
+              Work Report
+            </Button>
+            <Button
+              className="h-12 text-sm gap-1.5"
+              variant="outline"
+              onClick={() => setLocation("/documents")}
+            >
+              <FileText className="w-4 h-4" />
+              My Documents
+            </Button>
+          </div>
+        )}
+
         {/* Cash Balances */}
-        {cashBalances && Object.keys(cashBalances).length > 0 && (
+        {user?.role !== "contractor" && cashBalances && Object.keys(cashBalances).length > 0 && (
           <div className="border rounded-lg p-3 space-y-1.5">
             <h3 className="text-xs font-medium text-muted-foreground mb-2">Cash on Hand</h3>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1">
@@ -199,6 +245,7 @@ export default function HistoryPage() {
           </div>
         )}
 
+        {user?.role !== "contractor" && (<>
         {/* Section header */}
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium text-muted-foreground">Recent Receipts</h2>
@@ -402,6 +449,69 @@ export default function HistoryPage() {
             </div>
           ) : (
             <p className="text-sm text-muted-foreground text-center py-4">No cash transactions yet.</p>
+          )}
+        </div>
+        </>)}
+
+        {/* ---- TIME REPORTS SECTION ---- */}
+        <div className="space-y-2">
+          <h2 className="text-sm font-medium text-muted-foreground">Work Reports</h2>
+          {timeReports && timeReports.length > 0 ? (
+            <div className="space-y-2">
+              {timeReports.map((tr: any) => (
+                <Card key={tr.id}>
+                  <CardContent className="py-3 flex gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center flex-shrink-0">
+                      <Clock className="w-5 h-5 text-blue-600" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-medium">{tr.property} — {tr.date}</p>
+                          <p className="text-xs text-muted-foreground">{tr.startTime} – {tr.endTime}</p>
+                        </div>
+                        <button
+                          className="text-muted-foreground hover:text-destructive p-0.5 flex-shrink-0"
+                          onClick={async () => {
+                            if (!window.confirm("Delete this work report?")) return;
+                            try {
+                              await apiRequest("DELETE", `/api/time-reports/${tr.id}`);
+                              queryClient.invalidateQueries({ queryKey: ["/api/time-reports"] });
+                              toast({ title: "Report deleted" });
+                            } catch {
+                              toast({ title: "Failed to delete", variant: "destructive" });
+                            }
+                          }}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className="mt-1">
+                        {(() => {
+                          try {
+                            const items = JSON.parse(tr.accomplishments);
+                            return items.map((item: string, i: number) => (
+                              <p key={i} className="text-xs text-muted-foreground">• {item}</p>
+                            ));
+                          } catch { return <p className="text-xs text-muted-foreground">{tr.accomplishments}</p>; }
+                        })()}
+                      </div>
+                      {tr.miles && parseFloat(tr.miles) > 0 && (
+                        <p className="text-xs text-blue-600 mt-1">{tr.miles} mi — ${tr.mileageAmount}</p>
+                      )}
+                      {tr.specialTerms === 1 && tr.specialTermsAmount && (
+                        <p className="text-xs text-purple-600">Special: ${tr.specialTermsAmount}</p>
+                      )}
+                      {(user?.role === "admin" || user?.role === "super_admin") && tr.submittedBy && (
+                        <span className="text-xs text-muted-foreground">by {tr.submittedBy}</span>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-4">No work reports yet.</p>
           )}
         </div>
       </div>

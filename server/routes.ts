@@ -547,7 +547,9 @@ export async function registerRoutes(
     const existing = await storage.getUser(id);
     if (!existing) return res.status(404).json({ error: "User not found" });
 
-    const { displayName, email, password, role, dailyReport, statementReports } = req.body;
+    const { displayName, email, password, role, dailyReport, statementReports,
+      firstName, lastName, baseRate, offSiteRate, homeProperty, allowOffSite,
+      mileageRate, allowSpecialTerms, specialTermsAmount, w9OrW4, docsComplete } = req.body;
 
     const updateData: any = {};
     if (displayName !== undefined) updateData.displayName = displayName;
@@ -556,6 +558,17 @@ export async function registerRoutes(
     if (role !== undefined) updateData.role = role;
     if (dailyReport !== undefined) updateData.dailyReport = dailyReport ? 1 : 0;
     if (statementReports !== undefined) updateData.statementReports = statementReports ? 1 : 0;
+    if (firstName !== undefined) updateData.firstName = firstName || null;
+    if (lastName !== undefined) updateData.lastName = lastName || null;
+    if (baseRate !== undefined) updateData.baseRate = baseRate || null;
+    if (offSiteRate !== undefined) updateData.offSiteRate = offSiteRate || null;
+    if (homeProperty !== undefined) updateData.homeProperty = homeProperty || null;
+    if (allowOffSite !== undefined) updateData.allowOffSite = allowOffSite ? 1 : 0;
+    if (mileageRate !== undefined) updateData.mileageRate = mileageRate || null;
+    if (allowSpecialTerms !== undefined) updateData.allowSpecialTerms = allowSpecialTerms ? 1 : 0;
+    if (specialTermsAmount !== undefined) updateData.specialTermsAmount = specialTermsAmount || null;
+    if (w9OrW4 !== undefined) updateData.w9OrW4 = w9OrW4 || null;
+    if (docsComplete !== undefined) updateData.docsComplete = docsComplete ? 1 : 0;
 
     const updated = await storage.updateUser(id, updateData);
     res.json(updated);
@@ -1564,6 +1577,116 @@ export async function registerRoutes(
     if (!session) return;
     const stmts = await storage.getAllCcStatements();
     res.json(stmts);
+  });
+
+  // ---- Time Reports ----
+  app.post("/api/time-reports", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const { property, date, startTime, endTime, accomplishments, miles, mileageAmount, specialTerms, specialTermsAmount, notes } = req.body;
+    if (!property || !date || !startTime || !endTime || !accomplishments) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+    const report = await storage.createTimeReport({
+      userId: session.userId,
+      property,
+      date,
+      startTime,
+      endTime,
+      accomplishments: JSON.stringify(accomplishments),
+      miles: miles || null,
+      mileageAmount: mileageAmount || null,
+      specialTerms: specialTerms ? 1 : 0,
+      specialTermsAmount: specialTermsAmount || null,
+      notes: notes || null,
+      syncedToSheets: 0,
+      createdAt: new Date().toISOString(),
+    });
+    res.json(report);
+  });
+
+  app.get("/api/time-reports", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    let reports;
+    if (isAdminRole(session.role)) {
+      reports = await storage.getAllTimeReports();
+    } else {
+      reports = await storage.getTimeReportsByUser(session.userId);
+    }
+    // Enrich with submittedBy
+    const allUsers = await storage.getAllUsers();
+    const userMap = new Map(allUsers.map(u => [u.id, u.displayName]));
+    const enriched = reports.map(r => ({ ...r, submittedBy: userMap.get(r.userId) || "Unknown" }));
+    res.json(enriched);
+  });
+
+  app.get("/api/time-reports/user/:id", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    const userId = parseInt(req.params.id);
+    const reports = await storage.getTimeReportsByUser(userId);
+    res.json(reports);
+  });
+
+  app.delete("/api/time-reports/:id", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    await storage.deleteTimeReport(parseInt(req.params.id));
+    res.json({ ok: true });
+  });
+
+  // ---- User Documents ----
+  app.post("/api/user-documents", upload.single("file"), async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const { docType, bankName, routingNumber, accountNumber } = req.body;
+    if (!docType) return res.status(400).json({ error: "docType is required" });
+    const filePath = req.file ? `/uploads/${req.file.filename}` : null;
+    const doc = await storage.createUserDocument({
+      userId: session.userId,
+      docType,
+      filePath,
+      bankName: bankName || null,
+      routingNumber: routingNumber || null,
+      accountNumber: accountNumber || null,
+      createdAt: new Date().toISOString(),
+    });
+    res.json(doc);
+  });
+
+  app.get("/api/user-documents", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const docs = await storage.getUserDocuments(session.userId);
+    res.json(docs);
+  });
+
+  app.get("/api/user-documents/:userId", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    const docs = await storage.getUserDocuments(parseInt(req.params.userId));
+    res.json(docs);
+  });
+
+  app.delete("/api/user-documents/:id", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    await storage.deleteUserDocument(parseInt(req.params.id));
+    res.json({ ok: true });
+  });
+
+  // ---- Admin Workforce Report ----
+  app.get("/api/admin/workforce-report", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    const { userId, startDate, endDate } = req.query as any;
+    if (!userId || !startDate || !endDate) {
+      return res.status(400).json({ error: "userId, startDate, endDate required" });
+    }
+    const reports = await storage.getTimeReportsByUserAndDateRange(parseInt(userId), startDate, endDate);
+    const userObj = await storage.getUser(parseInt(userId));
+    res.json({ user: userObj, reports });
   });
 
   return httpServer;

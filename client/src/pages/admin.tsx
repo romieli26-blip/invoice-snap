@@ -57,6 +57,17 @@ export default function AdminPage() {
   const [editUserRole, setEditUserRole] = useState("manager");
   const [editUserDailyReport, setEditUserDailyReport] = useState(false);
   const [editUserStatementReports, setEditUserStatementReports] = useState(false);
+  const [editUserFirstName, setEditUserFirstName] = useState("");
+  const [editUserLastName, setEditUserLastName] = useState("");
+  const [editUserBaseRate, setEditUserBaseRate] = useState("");
+  const [editUserOffSiteRate, setEditUserOffSiteRate] = useState("");
+  const [editUserHomeProperty, setEditUserHomeProperty] = useState("");
+  const [editUserAllowOffSite, setEditUserAllowOffSite] = useState(false);
+  const [editUserMileageRate, setEditUserMileageRate] = useState("0.50");
+  const [editUserAllowSpecialTerms, setEditUserAllowSpecialTerms] = useState(false);
+  const [editUserSpecialTermsAmount, setEditUserSpecialTermsAmount] = useState("");
+  const [editUserW9OrW4, setEditUserW9OrW4] = useState("");
+  const [editUserDocsComplete, setEditUserDocsComplete] = useState(false);
   const [editUserSaving, setEditUserSaving] = useState(false);
 
   // Edit properties assignment state
@@ -395,6 +406,7 @@ export default function AdminPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="manager">Property Manager</SelectItem>
+                        <SelectItem value="contractor">Contractor</SelectItem>
                         <SelectItem value="admin">Admin</SelectItem>
                         {user?.role === "super_admin" && <SelectItem value="super_admin">Super Admin</SelectItem>}
                       </SelectContent>
@@ -490,7 +502,7 @@ export default function AdminPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium">{u.displayName}</p>
-                      <p className="text-xs text-muted-foreground">@{u.username} · {u.role === "super_admin" ? "Super Admin" : u.role === "admin" ? "Admin" : "Manager"}</p>
+                      <p className="text-xs text-muted-foreground">@{u.username} · {u.role === "super_admin" ? "Super Admin" : u.role === "admin" ? "Admin" : u.role === "contractor" ? "Contractor" : "Manager"}</p>
                       {u.email && (
                         <p className="text-xs text-muted-foreground">{u.email}</p>
                       )}
@@ -534,11 +546,22 @@ export default function AdminPage() {
                           onClick={() => {
                             setEditingUser(u);
                             setEditUserName(u.displayName);
-                            setEditUserEmail(u.email || "");
+                            setEditUserEmail((u as any).email || "");
                             setEditUserPassword("");
                             setEditUserRole(u.role);
-                            setEditUserDailyReport(u.dailyReport === 1);
-                            setEditUserStatementReports(u.statementReports === 1);
+                            setEditUserDailyReport((u as any).dailyReport === 1);
+                            setEditUserStatementReports((u as any).statementReports === 1);
+                            setEditUserFirstName((u as any).firstName || "");
+                            setEditUserLastName((u as any).lastName || "");
+                            setEditUserBaseRate((u as any).baseRate || "");
+                            setEditUserOffSiteRate((u as any).offSiteRate || "");
+                            setEditUserHomeProperty((u as any).homeProperty || "");
+                            setEditUserAllowOffSite((u as any).allowOffSite === 1);
+                            setEditUserMileageRate((u as any).mileageRate || "0.50");
+                            setEditUserAllowSpecialTerms((u as any).allowSpecialTerms === 1);
+                            setEditUserSpecialTermsAmount((u as any).specialTermsAmount || "");
+                            setEditUserW9OrW4((u as any).w9OrW4 || "");
+                            setEditUserDocsComplete((u as any).docsComplete === 1);
                           }}
                         >
                           <Pencil className="w-4 h-4" />
@@ -575,7 +598,7 @@ export default function AdminPage() {
 
         {/* ---- EDIT USER DIALOG ---- */}
         <Dialog open={editingUser !== null} onOpenChange={(open) => { if (!open) setEditingUser(null); }}>
-          <DialogContent>
+          <DialogContent className="max-h-[90vh] overflow-y-auto">
             <DialogHeader><DialogTitle>Edit User: {editingUser?.username}</DialogTitle></DialogHeader>
             <div className="space-y-3">
               <div className="space-y-1">
@@ -595,8 +618,9 @@ export default function AdminPage() {
                 <Select value={editUserRole} onValueChange={setEditUserRole}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="admin">Admin</SelectItem>
                     <SelectItem value="manager">Manager</SelectItem>
+                    <SelectItem value="contractor">Contractor</SelectItem>
+                    <SelectItem value="admin">Admin</SelectItem>
                     {user?.role === "super_admin" && <SelectItem value="super_admin">Super Admin</SelectItem>}
                   </SelectContent>
                 </Select>
@@ -613,6 +637,78 @@ export default function AdminPage() {
                   </div>
                 </>
               )}
+
+              {/* Workforce fields for contractors (and optionally managers) */}
+              {(editUserRole === "contractor" || editUserRole === "manager") && (
+                <>
+                  <div className="border-t pt-3 mt-2">
+                    <p className="text-xs font-medium text-muted-foreground mb-2">Workforce Settings</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs">First Name</Label>
+                      <Input value={editUserFirstName} onChange={e => setEditUserFirstName(e.target.value)} placeholder="First" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Last Name</Label>
+                      <Input value={editUserLastName} onChange={e => setEditUserLastName(e.target.value)} placeholder="Last" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Base Rate ($/hr)</Label>
+                      <Input type="number" step="0.01" value={editUserBaseRate} onChange={e => setEditUserBaseRate(e.target.value)} placeholder="0.00" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Off-Site Rate ($/hr)</Label>
+                      <Input type="number" step="0.01" value={editUserOffSiteRate} onChange={e => setEditUserOffSiteRate(e.target.value)} placeholder="0.00" />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Home Property</Label>
+                    <Select value={editUserHomeProperty} onValueChange={setEditUserHomeProperty}>
+                      <SelectTrigger><SelectValue placeholder="Select home property" /></SelectTrigger>
+                      <SelectContent>
+                        {propertiesList?.map(p => (
+                          <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox id="edit-offsite" checked={editUserAllowOffSite} onCheckedChange={c => setEditUserAllowOffSite(c === true)} />
+                    <Label htmlFor="edit-offsite" className="text-sm font-normal cursor-pointer">Allow off-site work</Label>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Mileage Rate ($/mi)</Label>
+                    <Input type="number" step="0.01" value={editUserMileageRate} onChange={e => setEditUserMileageRate(e.target.value)} placeholder="0.50" />
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox id="edit-special" checked={editUserAllowSpecialTerms} onCheckedChange={c => setEditUserAllowSpecialTerms(c === true)} />
+                    <Label htmlFor="edit-special" className="text-sm font-normal cursor-pointer">Allow special terms</Label>
+                  </div>
+                  {editUserAllowSpecialTerms && (
+                    <div className="space-y-1">
+                      <Label className="text-xs">Special Terms Amount ($)</Label>
+                      <Input type="number" step="0.01" value={editUserSpecialTermsAmount} onChange={e => setEditUserSpecialTermsAmount(e.target.value)} placeholder="0.00" />
+                    </div>
+                  )}
+                  <div className="space-y-1">
+                    <Label className="text-xs">W-9 or W-4</Label>
+                    <Select value={editUserW9OrW4} onValueChange={setEditUserW9OrW4}>
+                      <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="w9">W-9</SelectItem>
+                        <SelectItem value="w4">W-4</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox id="edit-docs" checked={editUserDocsComplete} onCheckedChange={c => setEditUserDocsComplete(c === true)} />
+                    <Label htmlFor="edit-docs" className="text-sm font-normal cursor-pointer">Documents complete</Label>
+                  </div>
+                </>
+              )}
             </div>
             <div className="flex gap-2 mt-4">
               <Button variant="outline" className="flex-1" onClick={() => setEditingUser(null)}>Cancel</Button>
@@ -626,6 +722,17 @@ export default function AdminPage() {
                     role: editUserRole,
                     dailyReport: editUserDailyReport,
                     statementReports: editUserStatementReports,
+                    firstName: editUserFirstName || undefined,
+                    lastName: editUserLastName || undefined,
+                    baseRate: editUserBaseRate || undefined,
+                    offSiteRate: editUserOffSiteRate || undefined,
+                    homeProperty: editUserHomeProperty || undefined,
+                    allowOffSite: editUserAllowOffSite,
+                    mileageRate: editUserMileageRate || undefined,
+                    allowSpecialTerms: editUserAllowSpecialTerms,
+                    specialTermsAmount: editUserSpecialTermsAmount || undefined,
+                    w9OrW4: editUserW9OrW4 || undefined,
+                    docsComplete: editUserDocsComplete,
                   });
                   queryClient.invalidateQueries({ queryKey: ["/api/users"] });
                   setEditingUser(null);
