@@ -21,8 +21,9 @@ interface UserItem {
   displayName: string;
   role: string;
   email?: string;
-  dailyReport?: number;
-  statementReports?: number;
+  dailyTimeReport?: number;
+  dailyTransactionReport?: number;
+  reconciliationReport?: number;
   assignedProperties: string[];
 }
 
@@ -44,8 +45,10 @@ export default function AdminPage() {
   const [newDisplayName, setNewDisplayName] = useState("");
   const [newRole, setNewRole] = useState("manager");
   const [newEmail, setNewEmail] = useState("");
-  const [newDailyReport, setNewDailyReport] = useState(false);
-  const [newStatementReports, setNewStatementReports] = useState(false);
+  const [newDailyTimeReport, setNewDailyTimeReport] = useState(false);
+  const [newDailyTxReport, setNewDailyTxReport] = useState(false);
+  const [newReconReport, setNewReconReport] = useState(false);
+  const [newHomeProperty, setNewHomeProperty] = useState("");
 
   const [newUserPropertyIds, setNewUserPropertyIds] = useState<number[]>([]);
 
@@ -55,8 +58,9 @@ export default function AdminPage() {
   const [editUserEmail, setEditUserEmail] = useState("");
   const [editUserPassword, setEditUserPassword] = useState("");
   const [editUserRole, setEditUserRole] = useState("manager");
-  const [editUserDailyReport, setEditUserDailyReport] = useState(false);
-  const [editUserStatementReports, setEditUserStatementReports] = useState(false);
+  const [editUserDailyTimeReport, setEditUserDailyTimeReport] = useState(false);
+  const [editUserDailyTxReport, setEditUserDailyTxReport] = useState(false);
+  const [editUserReconReport, setEditUserReconReport] = useState(false);
   const [editUserFirstName, setEditUserFirstName] = useState("");
   const [editUserLastName, setEditUserLastName] = useState("");
   const [editUserBaseRate, setEditUserBaseRate] = useState("");
@@ -98,8 +102,10 @@ export default function AdminPage() {
         displayName: newDisplayName,
         role: newRole,
         email: newEmail || undefined,
-        dailyReport: newDailyReport,
-        statementReports: newStatementReports,
+        dailyTimeReport: newDailyTimeReport,
+        dailyTransactionReport: newDailyTxReport,
+        reconciliationReport: newReconReport,
+        homeProperty: newHomeProperty || undefined,
       });
       const newUser = await res.json();
       if (newRole === "manager" && newUserPropertyIds.length > 0) {
@@ -113,8 +119,10 @@ export default function AdminPage() {
       setNewDisplayName("");
       setNewRole("manager");
       setNewEmail("");
-      setNewDailyReport(false);
-      setNewStatementReports(false);
+      setNewDailyTimeReport(false);
+      setNewDailyTxReport(false);
+      setNewReconReport(false);
+      setNewHomeProperty("");
       setNewUserPropertyIds([]);
       setUserDialogOpen(false);
       toast({ title: "User created" });
@@ -516,26 +524,49 @@ export default function AdminPage() {
                       placeholder="user@example.com"
                     />
                   </div>
-                  {newRole === "admin" && newEmail && (
+                  {propertiesList && propertiesList.length > 0 && (
+                    <div className="space-y-2">
+                      <Label>Home Base Property</Label>
+                      <Select value={newHomeProperty} onValueChange={setNewHomeProperty}>
+                        <SelectTrigger><SelectValue placeholder="Select home property" /></SelectTrigger>
+                        <SelectContent>
+                          {propertiesList.map(p => (
+                            <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  {(newRole === "admin" || newRole === "super_admin") && newEmail && (
                     <>
                       <div className="flex items-center space-x-2">
                         <Checkbox
-                          id="daily-report"
-                          checked={newDailyReport}
-                          onCheckedChange={(checked) => setNewDailyReport(checked === true)}
+                          id="daily-time-report"
+                          checked={newDailyTimeReport}
+                          onCheckedChange={(checked) => setNewDailyTimeReport(checked === true)}
                         />
-                        <Label htmlFor="daily-report" className="text-sm font-normal cursor-pointer">
-                          Subscribe to daily reports
+                        <Label htmlFor="daily-time-report" className="text-sm font-normal cursor-pointer">
+                          Daily Time Report
                         </Label>
                       </div>
                       <div className="flex items-center space-x-2">
                         <Checkbox
-                          id="statement-reports"
-                          checked={newStatementReports}
-                          onCheckedChange={(checked) => setNewStatementReports(checked === true)}
+                          id="daily-tx-report"
+                          checked={newDailyTxReport}
+                          onCheckedChange={(checked) => setNewDailyTxReport(checked === true)}
                         />
-                        <Label htmlFor="statement-reports" className="text-sm font-normal cursor-pointer">
-                          CC Statement Reports
+                        <Label htmlFor="daily-tx-report" className="text-sm font-normal cursor-pointer">
+                          Daily Transaction Report
+                        </Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="recon-report"
+                          checked={newReconReport}
+                          onCheckedChange={(checked) => setNewReconReport(checked === true)}
+                        />
+                        <Label htmlFor="recon-report" className="text-sm font-normal cursor-pointer">
+                          Reconciliation Report
                         </Label>
                       </div>
                     </>
@@ -600,11 +631,14 @@ export default function AdminPage() {
                       {u.email && (
                         <p className="text-xs text-muted-foreground">{u.email}</p>
                       )}
-                      {u.dailyReport === 1 && (
-                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-green-600 border-green-300">Daily Reports</Badge>
+                      {u.dailyTimeReport === 1 && (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-green-600 border-green-300">Time Reports</Badge>
                       )}
-                      {u.statementReports === 1 && (
-                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-yellow-600 border-yellow-300">Statement Reports</Badge>
+                      {u.dailyTransactionReport === 1 && (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-blue-600 border-blue-300">Transaction Reports</Badge>
+                      )}
+                      {u.reconciliationReport === 1 && (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-yellow-600 border-yellow-300">Reconciliation</Badge>
                       )}
                       {u.role === "manager" && u.assignedProperties && u.assignedProperties.length > 0 && (
                         <p className="text-xs text-primary/70 truncate">
@@ -643,8 +677,9 @@ export default function AdminPage() {
                             setEditUserEmail((u as any).email || "");
                             setEditUserPassword("");
                             setEditUserRole(u.role);
-                            setEditUserDailyReport((u as any).dailyReport === 1);
-                            setEditUserStatementReports((u as any).statementReports === 1);
+                            setEditUserDailyTimeReport((u as any).dailyTimeReport === 1);
+                            setEditUserDailyTxReport((u as any).dailyTransactionReport === 1);
+                            setEditUserReconReport((u as any).reconciliationReport === 1);
                             setEditUserFirstName((u as any).firstName || "");
                             setEditUserLastName((u as any).lastName || "");
                             setEditUserBaseRate((u as any).baseRate || "");
@@ -719,15 +754,19 @@ export default function AdminPage() {
                   </SelectContent>
                 </Select>
               </div>
-              {editUserRole === "admin" && editUserEmail && (
+              {(editUserRole === "admin" || editUserRole === "super_admin") && editUserEmail && (
                 <>
                   <div className="flex items-center space-x-2">
-                    <Checkbox id="edit-daily" checked={editUserDailyReport} onCheckedChange={c => setEditUserDailyReport(c === true)} />
-                    <Label htmlFor="edit-daily" className="text-sm font-normal cursor-pointer">Subscribe to daily reports</Label>
+                    <Checkbox id="edit-daily-time" checked={editUserDailyTimeReport} onCheckedChange={c => setEditUserDailyTimeReport(c === true)} />
+                    <Label htmlFor="edit-daily-time" className="text-sm font-normal cursor-pointer">Daily Time Report</Label>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <Checkbox id="edit-statement" checked={editUserStatementReports} onCheckedChange={c => setEditUserStatementReports(c === true)} />
-                    <Label htmlFor="edit-statement" className="text-sm font-normal cursor-pointer">CC Statement Reports</Label>
+                    <Checkbox id="edit-daily-tx" checked={editUserDailyTxReport} onCheckedChange={c => setEditUserDailyTxReport(c === true)} />
+                    <Label htmlFor="edit-daily-tx" className="text-sm font-normal cursor-pointer">Daily Transaction Report</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox id="edit-recon" checked={editUserReconReport} onCheckedChange={c => setEditUserReconReport(c === true)} />
+                    <Label htmlFor="edit-recon" className="text-sm font-normal cursor-pointer">Reconciliation Report</Label>
                   </div>
                 </>
               )}
@@ -814,8 +853,9 @@ export default function AdminPage() {
                     email: editUserEmail || undefined,
                     password: editUserPassword || undefined,
                     role: editUserRole,
-                    dailyReport: editUserDailyReport,
-                    statementReports: editUserStatementReports,
+                    dailyTimeReport: editUserDailyTimeReport,
+                    dailyTransactionReport: editUserDailyTxReport,
+                    reconciliationReport: editUserReconReport,
                     firstName: editUserFirstName || undefined,
                     lastName: editUserLastName || undefined,
                     baseRate: editUserBaseRate || undefined,

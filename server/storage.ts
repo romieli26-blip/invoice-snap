@@ -80,6 +80,10 @@ try { sqlite.exec("ALTER TABLE users ADD COLUMN allow_special_terms INTEGER DEFA
 try { sqlite.exec("ALTER TABLE users ADD COLUMN special_terms_amount TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN w9_or_w4 TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN docs_complete INTEGER DEFAULT 0"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN daily_time_report INTEGER DEFAULT 0"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN daily_transaction_report INTEGER DEFAULT 0"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN reconciliation_report INTEGER DEFAULT 0"); } catch {}
 
 // Time reports table
 sqlite.exec(`

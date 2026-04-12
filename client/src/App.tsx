@@ -14,6 +14,7 @@ import CashTransactionPage from "@/pages/cash-transaction";
 import ReconcilePage from "@/pages/reconcile";
 import TimeReportPage from "@/pages/time-report";
 import DocumentsPage from "@/pages/documents";
+import ChangePasswordPage from "@/pages/change-password";
 import NotFound from "@/pages/not-found";
 import { Loader2 } from "lucide-react";
 
@@ -30,6 +31,10 @@ function AuthenticatedRouter() {
 
   if (!user) {
     return <LoginPage />;
+  }
+
+  if (user.mustChangePassword === 1) {
+    return <ChangePasswordPage />;
   }
 
   return (

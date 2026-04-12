@@ -42,6 +42,10 @@ export const users = sqliteTable("users", {
   specialTermsAmount: text("special_terms_amount"),
   w9OrW4: text("w9_or_w4"), // "w9" or "w4"
   docsComplete: integer("docs_complete").default(0),
+  mustChangePassword: integer("must_change_password").default(0),
+  dailyTimeReport: integer("daily_time_report").default(0),
+  dailyTransactionReport: integer("daily_transaction_report").default(0),
+  reconciliationReport: integer("reconciliation_report").default(0),
 });
 
 export const sessions = sqliteTable("sessions", {

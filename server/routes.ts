@@ -246,6 +246,15 @@ async function requireAuth(req: Request, res: Response): Promise<{ userId: numbe
   return session;
 }
 
+function validatePassword(password: string): string | null {
+  if (password.length < 6) return "Password must be at least 6 characters.";
+  if (!/[A-Z]/.test(password)) return "Password must contain at least one uppercase letter.";
+  if (!/[a-z]/.test(password)) return "Password must contain at least one lowercase letter.";
+  if (!/[0-9]/.test(password)) return "Password must contain at least one number.";
+  if (!/[!@#$%^&*]/.test(password)) return "Password must contain at least one special character (!@#$%^&*).";
+  return null;
+}
+
 function isAdminRole(role: string): boolean {
   return role === "admin" || role === "super_admin";
 }
@@ -451,6 +460,7 @@ export async function registerRoutes(
       mileageRate: (user as any).mileageRate, allowOffSite: (user as any).allowOffSite,
       allowSpecialTerms: (user as any).allowSpecialTerms, specialTermsAmount: (user as any).specialTermsAmount,
       homeProperty: (user as any).homeProperty, baseRate: (user as any).baseRate, offSiteRate: (user as any).offSiteRate,
+      mustChangePassword: (user as any).mustChangePassword || 0,
     } });
   });
 
@@ -472,6 +482,7 @@ export async function registerRoutes(
       mileageRate: (targetUser as any).mileageRate, allowOffSite: (targetUser as any).allowOffSite,
       allowSpecialTerms: (targetUser as any).allowSpecialTerms, specialTermsAmount: (targetUser as any).specialTermsAmount,
       homeProperty: (targetUser as any).homeProperty, baseRate: (targetUser as any).baseRate, offSiteRate: (targetUser as any).offSiteRate,
+      mustChangePassword: (targetUser as any).mustChangePassword || 0,
     } });
   });
 
@@ -494,7 +505,38 @@ export async function registerRoutes(
       mileageRate: (user as any).mileageRate, allowOffSite: (user as any).allowOffSite,
       allowSpecialTerms: (user as any).allowSpecialTerms, specialTermsAmount: (user as any).specialTermsAmount,
       homeProperty: (user as any).homeProperty, baseRate: (user as any).baseRate, offSiteRate: (user as any).offSiteRate,
+      mustChangePassword: (user as any).mustChangePassword || 0,
     });
+  });
+
+  // ---- Change Password ----
+  app.post("/api/change-password", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+
+    const { currentPassword, newPassword } = req.body;
+    const user = await storage.getUser(session.userId);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    if (user.password !== currentPassword) {
+      return res.status(400).json({ error: "Current password is incorrect." });
+    }
+
+    const pwError = validatePassword(newPassword);
+    if (pwError) return res.status(400).json({ error: pwError });
+
+    await storage.updateUser(session.userId, { password: newPassword, mustChangePassword: 0 } as any);
+    res.json({ ok: true });
+  });
+
+  // ---- Update Profile ----
+  app.post("/api/update-profile", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const { firstName, lastName } = req.body;
+    const displayName = `${firstName} ${lastName}`;
+    await storage.updateUser(session.userId, { firstName, lastName, displayName } as any);
+    res.json({ ok: true });
   });
 
   // ---- USERS (admin only) ----
@@ -515,6 +557,9 @@ export async function registerRoutes(
         email: u.email || "",
         dailyReport: u.dailyReport || 0,
         statementReports: (u as any).statementReports || 0,
+        dailyTimeReport: (u as any).dailyTimeReport || 0,
+        dailyTransactionReport: (u as any).dailyTransactionReport || 0,
+        reconciliationReport: (u as any).reconciliationReport || 0,
         firstName: (u as any).firstName || "",
         lastName: (u as any).lastName || "",
         baseRate: (u as any).baseRate || "",
@@ -536,10 +581,21 @@ export async function registerRoutes(
     const session = await requireAdmin(req, res);
     if (!session) return;
 
-    const { username, password, displayName, role, email, dailyReport, statementReports } = req.body;
+    const { username, password, displayName, role, email,
+      dailyTimeReport, dailyTransactionReport, reconciliationReport,
+      homeProperty } = req.body;
     if (!username || !password || !displayName) {
       return res.status(400).json({ error: "Username, password, and display name are required" });
     }
+
+    if (email) {
+      const allUsers = await storage.getAllUsers();
+      const emailTaken = allUsers.find(u => u.email && u.email.toLowerCase() === email.toLowerCase());
+      if (emailTaken) return res.status(409).json({ error: "This email address is already in use by another user." });
+    }
+
+    const pwError = validatePassword(password);
+    if (pwError) return res.status(400).json({ error: pwError });
 
     const existing = await storage.getUserByUsername(username);
     if (existing) return res.status(409).json({ error: "Username already taken" });
@@ -550,11 +606,14 @@ export async function registerRoutes(
       displayName,
       role: role || "manager",
       email: email || null,
-      dailyReport: dailyReport ? 1 : 0,
-      statementReports: statementReports ? 1 : 0,
-    });
+      mustChangePassword: 1,
+      dailyTimeReport: dailyTimeReport ? 1 : 0,
+      dailyTransactionReport: dailyTransactionReport ? 1 : 0,
+      reconciliationReport: reconciliationReport ? 1 : 0,
+      homeProperty: homeProperty || null,
+    } as any);
 
-    res.json({ id: user.id, username: user.username, displayName: user.displayName, role: user.role, email: user.email, dailyReport: user.dailyReport });
+    res.json({ id: user.id, username: user.username, displayName: user.displayName, role: user.role, email: user.email });
   });
 
   app.delete("/api/users/:id", async (req, res) => {
@@ -577,17 +636,30 @@ export async function registerRoutes(
     const existing = await storage.getUser(id);
     if (!existing) return res.status(404).json({ error: "User not found" });
 
-    const { displayName, email, password, role, dailyReport, statementReports,
+    const { displayName, email, password, role,
+      dailyTimeReport, dailyTransactionReport, reconciliationReport,
       firstName, lastName, baseRate, offSiteRate, homeProperty, allowOffSite,
       mileageRate, allowSpecialTerms, specialTermsAmount, w9OrW4, docsComplete } = req.body;
+
+    if (email) {
+      const allUsers = await storage.getAllUsers();
+      const emailTaken = allUsers.find(u => u.id !== id && u.email && u.email.toLowerCase() === email.toLowerCase());
+      if (emailTaken) return res.status(409).json({ error: "This email address is already in use by another user." });
+    }
+
+    if (password !== undefined && password.trim()) {
+      const pwError = validatePassword(password);
+      if (pwError) return res.status(400).json({ error: pwError });
+    }
 
     const updateData: any = {};
     if (displayName !== undefined) updateData.displayName = displayName;
     if (email !== undefined) updateData.email = email || null;
     if (password !== undefined && password.trim()) updateData.password = password;
     if (role !== undefined) updateData.role = role;
-    if (dailyReport !== undefined) updateData.dailyReport = dailyReport ? 1 : 0;
-    if (statementReports !== undefined) updateData.statementReports = statementReports ? 1 : 0;
+    if (dailyTimeReport !== undefined) updateData.dailyTimeReport = dailyTimeReport ? 1 : 0;
+    if (dailyTransactionReport !== undefined) updateData.dailyTransactionReport = dailyTransactionReport ? 1 : 0;
+    if (reconciliationReport !== undefined) updateData.reconciliationReport = reconciliationReport ? 1 : 0;
     if (firstName !== undefined) updateData.firstName = firstName || null;
     if (lastName !== undefined) updateData.lastName = lastName || null;
     if (baseRate !== undefined) updateData.baseRate = baseRate || null;
@@ -1048,48 +1120,67 @@ export async function registerRoutes(
     }
     html += `</table>`;
 
-    // Work Reports section
-    const todayTimeReports = await storage.getTimeReportsByDate(date);
-    if (todayTimeReports.length > 0) {
-      html += `<h2 style="color:#333;border-bottom:2px solid #3b82f6;padding-bottom:5px;">Work Reports</h2>`;
-      const allUsersMap = new Map(allUsers.map(u => [u.id, u]));
+    // Transaction report HTML complete
+    html += `<p style="color:#888;font-size:12px;margin-top:20px;">- Receipt App Daily Report</p></div>`;
 
+    // Build separate Time Report HTML
+    const todayTimeReports = await storage.getTimeReportsByDate(date);
+    let timeHtml = `<div style="font-family:Arial,sans-serif;max-width:800px;margin:0 auto;">`;
+    timeHtml += `<h1 style="color:#3b82f6;">Daily Work Report - ${date}</h1>`;
+    timeHtml += `<p style="color:#666;">Generated on ${new Date().toISOString().replace("T", " ").slice(0, 19)}</p>`;
+    if (todayTimeReports.length > 0) {
+      const allUsersMap = new Map(allUsers.map(u => [u.id, u]));
       for (const tr of todayTimeReports) {
         const trUser = allUsersMap.get(tr.userId);
         const name = trUser?.displayName || "Unknown";
         let accomplishmentsList: string[] = [];
         try { accomplishmentsList = JSON.parse(tr.accomplishments || "[]"); } catch {}
-
         const [sh, sm] = (tr.startTime || "0:0").split(":").map(Number);
         const [eh, em] = (tr.endTime || "0:0").split(":").map(Number);
         const hours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
-
-        html += `<div style="background:#f0f4ff;padding:10px;border-radius:5px;margin:8px 0;">`;
-        html += `<p><strong>${name}</strong> - ${tr.property} (${tr.startTime} - ${tr.endTime}, ${hours.toFixed(1)}h)</p>`;
+        timeHtml += `<div style="background:#f0f4ff;padding:10px;border-radius:5px;margin:8px 0;">`;
+        timeHtml += `<p><strong>${name}</strong> - ${tr.property} (${tr.startTime} - ${tr.endTime}, ${hours.toFixed(1)}h)</p>`;
         if (accomplishmentsList.length > 0) {
-          html += `<ul style="margin:4px 0;">${accomplishmentsList.map((a: string) => `<li>${a}</li>`).join("")}</ul>`;
+          timeHtml += `<ul style="margin:4px 0;">${accomplishmentsList.map((a: string) => `<li>${a}</li>`).join("")}</ul>`;
         }
-        if (tr.miles) html += `<p>Miles: ${tr.miles} ($${tr.mileageAmount || "0.00"})</p>`;
-        if (tr.specialTerms) html += `<p>Travel Expenses: $${tr.specialTermsAmount || "0.00"}</p>`;
-        if (tr.notes) html += `<p style="color:#666;">Notes: ${tr.notes}</p>`;
-        html += `</div>`;
+        if (tr.miles) timeHtml += `<p>Miles: ${tr.miles} ($${tr.mileageAmount || "0.00"})</p>`;
+        if (tr.specialTerms) timeHtml += `<p>Travel Expenses: $${tr.specialTermsAmount || "0.00"}</p>`;
+        if (tr.notes) timeHtml += `<p style="color:#666;">Notes: ${tr.notes}</p>`;
+        timeHtml += `</div>`;
       }
+    } else {
+      timeHtml += `<p style="color:#888;">No work reports today.</p>`;
     }
+    timeHtml += `<p style="color:#888;font-size:12px;margin-top:20px;">- Receipt App Work Report</p></div>`;
 
-    html += `<p style="color:#888;font-size:12px;margin-top:20px;">- Receipt App Daily Report</p></div>`;
+    // Send transaction report to dailyTransactionReport subscribers
+    const txSubscribers = allUsers.filter((u: any) => u.dailyTransactionReport && u.email);
+    // Fallback: also include old dailyReport subscribers for backward compat
+    const oldSubscribers = allUsers.filter((u: any) => u.dailyReport && u.email && !u.dailyTransactionReport);
+    const txRecipients = [...txSubscribers, ...oldSubscribers].map(u => ({ name: u.displayName, email: u.email! }));
+    const sentTo: string[] = [];
 
-    // Send to subscribed admins
-    const subscribers = await storage.getDailyReportSubscribers();
-    const recipientEmails = subscribers.filter(u => u.email).map(u => ({ name: u.displayName, email: u.email! }));
-
-    if (recipientEmails.length > 0) {
-      const origRecipients = EMAIL_RECIPIENTS;
-      // Temporarily override recipients
+    if (txRecipients.length > 0) {
+      const origRecipients = [...EMAIL_RECIPIENTS];
       (EMAIL_RECIPIENTS as any).length = 0;
-      recipientEmails.forEach(r => (EMAIL_RECIPIENTS as any).push(r));
-      await sendNotificationEmails(`Daily Summary - ${date}`, html);
+      txRecipients.forEach(r => (EMAIL_RECIPIENTS as any).push(r));
+      await sendNotificationEmails(`Daily Transaction Summary - ${date}`, html);
       (EMAIL_RECIPIENTS as any).length = 0;
       origRecipients.forEach(r => (EMAIL_RECIPIENTS as any).push(r));
+      sentTo.push(...txRecipients.map(r => r.email));
+    }
+
+    // Send time report to dailyTimeReport subscribers
+    const timeSubscribers = allUsers.filter((u: any) => u.dailyTimeReport && u.email);
+    const timeRecipients = timeSubscribers.map(u => ({ name: u.displayName, email: u.email! }));
+    if (timeRecipients.length > 0 && todayTimeReports.length > 0) {
+      const origRecipients = [...EMAIL_RECIPIENTS];
+      (EMAIL_RECIPIENTS as any).length = 0;
+      timeRecipients.forEach(r => (EMAIL_RECIPIENTS as any).push(r));
+      await sendNotificationEmails(`Daily Work Report - ${date}`, timeHtml);
+      (EMAIL_RECIPIENTS as any).length = 0;
+      origRecipients.forEach(r => (EMAIL_RECIPIENTS as any).push(r));
+      sentTo.push(...timeRecipients.map(r => r.email));
     }
 
     // Save report to Google Drive "Daily Reports" folder
@@ -1106,7 +1197,7 @@ export async function registerRoutes(
       } catch (e: any) { console.error("[daily-report] Drive save failed:", e.message?.slice(0, 200)); }
     }
 
-    res.json({ ok: true, date, receipts: todayInvoices.length, cashTx: todayCash.length, sentTo: recipientEmails.map(r => r.email) });
+    res.json({ ok: true, date, receipts: todayInvoices.length, cashTx: todayCash.length, timeReports: todayTimeReports.length, sentTo: [...new Set(sentTo)] });
   });
 
   app.get("/api/invoices/export", async (req, res) => {
@@ -1609,7 +1700,7 @@ export async function registerRoutes(
 
     // Email report to subscribed admins
     try {
-      const subscribers = allUsers.filter((u: any) => u.statementReports && u.email);
+      const subscribers = allUsers.filter((u: any) => (u.reconciliationReport || u.statementReports) && u.email);
       if (subscribers.length > 0) {
         const subject = `CC Reconciliation: ${stmt.property} - ••${stmt.ccLastDigits} (${stmt.startDate} to ${stmt.endDate}) - ${matched.length}/${stmtTransactions.length} matched`;
         const origRecipients = [...EMAIL_RECIPIENTS];

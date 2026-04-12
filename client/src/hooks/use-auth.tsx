@@ -17,6 +17,7 @@ interface AuthUser {
   homeProperty?: string;
   baseRate?: string;
   offSiteRate?: string;
+  mustChangePassword?: number;
 }
 
 interface AuthContextType {
