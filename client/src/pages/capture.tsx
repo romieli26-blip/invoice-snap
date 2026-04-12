@@ -20,8 +20,6 @@ export default function CapturePage() {
   const [viewIndex, setViewIndex] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
-  const addMoreFileRef = useRef<HTMLInputElement>(null);
-  const addMoreCameraRef = useRef<HTMLInputElement>(null);
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -126,41 +124,42 @@ export default function CapturePage() {
             )}
 
             {!isDesktop && (
-              <Card
-                className="border-2 border-dashed border-primary/30 cursor-pointer hover:border-primary/50 transition-colors"
-                onClick={() => cameraInputRef.current?.click()}
+              <label
+                className="block cursor-pointer"
                 data-testid="button-camera"
               >
-                <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
-                  <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
-                    <Camera className="w-8 h-8 text-primary" />
-                  </div>
-                  <span className="text-sm font-medium">Take Photo</span>
-                  <span className="text-xs text-muted-foreground">Opens your camera</span>
-                </CardContent>
-              </Card>
+                <Card className="border-2 border-dashed border-primary/30 hover:border-primary/50 transition-colors">
+                  <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
+                    <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
+                      <Camera className="w-8 h-8 text-primary" />
+                    </div>
+                    <span className="text-sm font-medium">Take Photo</span>
+                    <span className="text-xs text-muted-foreground">Opens your camera</span>
+                  </CardContent>
+                </Card>
+                <input ref={cameraInputRef} type="file" accept="image/*,application/pdf" capture="environment" className="hidden" onChange={handleFileChange} />
+              </label>
             )}
 
-            <Card
-              className={`cursor-pointer hover:bg-muted/50 transition-colors ${isDesktop ? "border-2 border-dashed border-primary/30" : ""}`}
-              onClick={() => fileInputRef.current?.click()}
+            <label
+              className="block cursor-pointer"
               data-testid="button-upload"
             >
-              <CardContent className={`flex ${isDesktop ? "flex-col" : ""} items-center gap-4 ${isDesktop ? "py-12" : "py-4"}`}>
-                <div className={`${isDesktop ? "w-16 h-16 rounded-2xl" : "w-10 h-10 rounded-lg"} bg-secondary flex items-center justify-center flex-shrink-0`}>
-                  <Upload className={`${isDesktop ? "w-8 h-8" : "w-5 h-5"} text-muted-foreground`} />
-                </div>
-                <div className={isDesktop ? "text-center" : ""}>
-                  <span className="text-sm font-medium block">{isDesktop ? "Upload or Drag & Drop" : "Upload from Gallery"}</span>
-                  <span className="text-xs text-muted-foreground">PNG, JPG, PDF — max 4MB</span>
-                </div>
-              </CardContent>
-            </Card>
+              <Card className={`hover:bg-muted/50 transition-colors ${isDesktop ? "border-2 border-dashed border-primary/30" : ""}`}>
+                <CardContent className={`flex ${isDesktop ? "flex-col" : ""} items-center gap-4 ${isDesktop ? "py-12" : "py-4"}`}>
+                  <div className={`${isDesktop ? "w-16 h-16 rounded-2xl" : "w-10 h-10 rounded-lg"} bg-secondary flex items-center justify-center flex-shrink-0`}>
+                    <Upload className={`${isDesktop ? "w-8 h-8" : "w-5 h-5"} text-muted-foreground`} />
+                  </div>
+                  <div className={isDesktop ? "text-center" : ""}>
+                    <span className="text-sm font-medium block">{isDesktop ? "Upload or Drag & Drop" : "Upload from Gallery"}</span>
+                    <span className="text-xs text-muted-foreground">PNG, JPG, PDF — max 4MB</span>
+                  </div>
+                </CardContent>
+              </Card>
+              <input ref={fileInputRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={handleFileChange} />
+            </label>
 
             {error && <p className="text-sm text-destructive">{error}</p>}
-
-            <input ref={cameraInputRef} type="file" accept="image/*,application/pdf" capture="environment" className="hidden" onChange={handleFileChange} />
-            <input ref={fileInputRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={handleFileChange} />
           </div>
         ) : (
           <div className="space-y-3">
@@ -217,21 +216,23 @@ export default function CapturePage() {
               </p>
               <div className="flex gap-2 justify-center">
                 {!isDesktop && (
-                  <Button variant="outline" size="sm" className="gap-1" onClick={() => addMoreCameraRef.current?.click()}>
-                    <Camera className="w-3.5 h-3.5" />
-                    Add Photo
-                  </Button>
+                  <label className="cursor-pointer">
+                    <span className="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-3 gap-1">
+                      <Camera className="w-3.5 h-3.5" />
+                      Add Photo
+                    </span>
+                    <input type="file" accept="image/*,application/pdf" capture="environment" className="hidden" onChange={handleFileChange} />
+                  </label>
                 )}
-                <Button variant="outline" size="sm" className="gap-1" onClick={() => addMoreFileRef.current?.click()}>
-                  <Plus className="w-3.5 h-3.5" />
-                  {isDesktop ? "Add Another File" : "Add from Gallery"}
-                </Button>
+                <label className="cursor-pointer">
+                  <span className="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-3 gap-1">
+                    <Plus className="w-3.5 h-3.5" />
+                    {isDesktop ? "Add Another File" : "Add from Gallery"}
+                  </span>
+                  <input type="file" accept="image/*,application/pdf" className="hidden" onChange={handleFileChange} />
+                </label>
               </div>
             </div>
-
-            {/* Hidden inputs for adding more */}
-            <input ref={addMoreCameraRef} type="file" accept="image/*,application/pdf" capture="environment" className="hidden" onChange={handleFileChange} />
-            <input ref={addMoreFileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={handleFileChange} />
 
             <div className="flex gap-2">
               <Button
