@@ -101,8 +101,8 @@ export default function ReconcilePage() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label>Last 5 Digits of Credit Card</Label>
-                  <Input value={ccDigits} onChange={e => setCcDigits(e.target.value.replace(/\D/g, "").slice(0, 5))} placeholder="12345" maxLength={5} />
+                  <Label>Last 4 or 5 Digits of Credit Card</Label>
+                  <Input value={ccDigits} onChange={e => setCcDigits(e.target.value.replace(/\D/g, "").slice(0, 5))} placeholder="1234 or 12345" maxLength={5} />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-2">

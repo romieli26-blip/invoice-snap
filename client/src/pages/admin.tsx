@@ -8,11 +8,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, setAuthToken } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Plus, Trash2, UserCircle, Shield, Loader2, Building2, Settings, Pencil } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, UserCircle, Shield, Loader2, Building2, Settings, Pencil, LogIn } from "lucide-react";
 import { LogoBackground } from "@/components/LogoBackground";
 
 interface UserItem {
@@ -396,6 +396,7 @@ export default function AdminPage() {
                       <SelectContent>
                         <SelectItem value="manager">Property Manager</SelectItem>
                         <SelectItem value="admin">Admin</SelectItem>
+                        {user?.role === "super_admin" && <SelectItem value="super_admin">Super Admin</SelectItem>}
                       </SelectContent>
                     </Select>
                   </div>
@@ -481,7 +482,7 @@ export default function AdminPage() {
                 <Card key={u.id} data-testid={`card-user-${u.id}`}>
                   <CardContent className="py-3 flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
-                      {u.role === "admin" ? (
+                      {(u.role === "admin" || u.role === "super_admin") ? (
                         <Shield className="w-5 h-5 text-primary" />
                       ) : (
                         <UserCircle className="w-5 h-5 text-muted-foreground" />
@@ -489,7 +490,7 @@ export default function AdminPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium">{u.displayName}</p>
-                      <p className="text-xs text-muted-foreground">@{u.username} · {u.role === "admin" ? "Admin" : "Manager"}</p>
+                      <p className="text-xs text-muted-foreground">@{u.username} · {u.role === "super_admin" ? "Super Admin" : u.role === "admin" ? "Admin" : "Manager"}</p>
                       {u.email && (
                         <p className="text-xs text-muted-foreground">{u.email}</p>
                       )}
@@ -507,6 +508,25 @@ export default function AdminPage() {
                     </div>
                     {u.id !== user?.id && (
                       <div className="flex items-center gap-1 flex-shrink-0">
+                        {user?.role === "super_admin" && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-muted-foreground hover:text-blue-600"
+                            title="Login as this user"
+                            onClick={async () => {
+                              if (!window.confirm(`Login as ${u.displayName}? You will be logged out of your current session.`)) return;
+                              try {
+                                const res = await apiRequest("POST", `/api/admin/impersonate/${u.id}`);
+                                const data = await res.json();
+                                setAuthToken(data.token, true);
+                                window.location.reload();
+                              } catch { toast({ title: "Failed to impersonate", variant: "destructive" }); }
+                            }}
+                          >
+                            <LogIn className="w-4 h-4" />
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
                           size="icon"
@@ -523,7 +543,7 @@ export default function AdminPage() {
                         >
                           <Pencil className="w-4 h-4" />
                         </Button>
-                        {u.role !== "admin" && (
+                        {!["admin","super_admin"].includes(u.role) && (
                           <Button
                             variant="ghost"
                             size="icon"
@@ -577,6 +597,7 @@ export default function AdminPage() {
                   <SelectContent>
                     <SelectItem value="admin">Admin</SelectItem>
                     <SelectItem value="manager">Manager</SelectItem>
+                    {user?.role === "super_admin" && <SelectItem value="super_admin">Super Admin</SelectItem>}
                   </SelectContent>
                 </Select>
               </div>

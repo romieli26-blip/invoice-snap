@@ -65,6 +65,8 @@ try { sqlite.exec("ALTER TABLE invoices ADD COLUMN receipt_type TEXT DEFAULT 'ex
 try { sqlite.exec("ALTER TABLE users ADD COLUMN email TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN daily_report INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN statement_reports INTEGER DEFAULT 0"); } catch {}
+// Update ben to super_admin
+try { sqlite.exec("UPDATE users SET role = 'super_admin' WHERE username = 'ben' AND role = 'admin'"); } catch {}
 
 // CC Statements table
 sqlite.exec(`

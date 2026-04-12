@@ -128,7 +128,7 @@ export default function HistoryPage() {
           </div>
           <div className="flex items-center gap-3">
             <LogoHeader />
-            {user?.role === "admin" && (
+            {(user?.role === "admin" || user?.role === "super_admin") && (
               <Button
                 variant="ghost"
                 size="icon"
@@ -172,7 +172,7 @@ export default function HistoryPage() {
           </Button>
         </div>
 
-        {user?.role === "admin" && (
+        {(user?.role === "admin" || user?.role === "super_admin") && (
           <Button
             className="w-full h-12 bg-yellow-400 hover:bg-yellow-500 text-black gap-2"
             onClick={() => setLocation("/reconcile")}
@@ -202,7 +202,7 @@ export default function HistoryPage() {
         {/* Section header */}
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium text-muted-foreground">Recent Receipts</h2>
-          {user?.role === "admin" && invoices && invoices.length > 0 && (
+          {(user?.role === "admin" || user?.role === "super_admin") && invoices && invoices.length > 0 && (
             <Button variant="ghost" size="sm" onClick={handleExport} className="text-xs gap-1" data-testid="button-export">
               <Download className="w-3.5 h-3.5" />
               Export CSV
@@ -306,7 +306,7 @@ export default function HistoryPage() {
                       {inv.boughtBy !== inv.submittedBy && (
                         <span className="text-xs text-muted-foreground">buyer: {inv.boughtBy}</span>
                       )}
-                      {user?.role === "admin" && (
+                      {(user?.role === "admin" || user?.role === "super_admin") && (
                         <span className="text-xs text-muted-foreground">
                           {inv.boughtBy !== inv.submittedBy ? `· ${inv.submittedBy}` : `by ${inv.submittedBy}`}
                         </span>
@@ -331,7 +331,7 @@ export default function HistoryPage() {
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-medium text-muted-foreground">Cash Transactions</h2>
-            {user?.role === "admin" && cashTxs && cashTxs.length > 0 && (
+            {(user?.role === "admin" || user?.role === "super_admin") && cashTxs && cashTxs.length > 0 && (
               <Button variant="ghost" size="sm" onClick={handleCashExport} className="text-xs gap-1">
                 <Download className="w-3.5 h-3.5" /> Export CSV
               </Button>
@@ -372,7 +372,7 @@ export default function HistoryPage() {
                               #{tx.recordNumber}
                             </Badge>
                           )}
-                          {user?.role === "admin" && tx.submittedBy && (
+                          {(user?.role === "admin" || user?.role === "super_admin") && tx.submittedBy && (
                             <span className="text-xs text-muted-foreground">by {tx.submittedBy}</span>
                           )}
                         </div>

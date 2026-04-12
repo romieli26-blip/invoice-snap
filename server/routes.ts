@@ -246,10 +246,14 @@ async function requireAuth(req: Request, res: Response): Promise<{ userId: numbe
   return session;
 }
 
+function isAdminRole(role: string): boolean {
+  return role === "admin" || role === "super_admin";
+}
+
 async function requireAdmin(req: Request, res: Response): Promise<{ userId: number; role: string } | null> {
   const session = await requireAuth(req, res);
   if (!session) return null;
-  if (session.role !== "admin") {
+  if (!isAdminRole(session.role)) {
     res.status(403).json({ error: "Admin access required" });
     return null;
   }
@@ -442,6 +446,21 @@ export async function registerRoutes(
     await storage.createSession(token, user.id, user.role);
 
     res.json({ token, user: { id: user.id, username: user.username, displayName: user.displayName, role: user.role } });
+  });
+
+  // Super admin: impersonate any user
+  app.post("/api/admin/impersonate/:id", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session || session.role !== "super_admin") {
+      return res.status(403).json({ error: "Super admin access required" });
+    }
+    const targetId = parseInt(req.params.id);
+    const targetUser = await storage.getUser(targetId);
+    if (!targetUser) return res.status(404).json({ error: "User not found" });
+
+    const token = generateToken();
+    await storage.createSession(token, targetUser.id, targetUser.role);
+    res.json({ token, user: { id: targetUser.id, username: targetUser.username, displayName: targetUser.displayName, role: targetUser.role } });
   });
 
   app.post("/api/logout", async (req, res) => {
@@ -733,7 +752,7 @@ export async function registerRoutes(
     if (!existing) return res.status(404).json({ error: "Receipt not found" });
 
     // Managers can only edit their own
-    if (session.role !== "admin" && existing.userId !== session.userId) {
+    if (!isAdminRole(session.role) && existing.userId !== session.userId) {
       return res.status(403).json({ error: "Not authorized" });
     }
 
@@ -820,7 +839,7 @@ export async function registerRoutes(
     if (!invoice) return res.status(404).json({ error: "Invoice not found" });
 
     // Managers can only delete their own invoices
-    if (session.role !== "admin" && invoice.userId !== session.userId) {
+    if (!isAdminRole(session.role) && invoice.userId !== session.userId) {
       return res.status(403).json({ error: "Not authorized to delete this invoice" });
     }
 
@@ -1174,7 +1193,7 @@ export async function registerRoutes(
   app.get("/api/cash-transactions/export", async (req, res) => {
     const session = await requireAuth(req, res);
     if (!session) return;
-    if (session.role !== "admin") return res.status(403).json({ error: "Admin only" });
+    if (!isAdminRole(session.role)) return res.status(403).json({ error: "Admin only" });
 
     const txs = await storage.getAllCashTransactions();
     const users = await storage.getAllUsers();
@@ -1215,7 +1234,7 @@ export async function registerRoutes(
     const tx = await storage.getCashTransaction(id);
     if (!tx) return res.status(404).json({ error: "Transaction not found" });
 
-    if (session.role !== "admin" && tx.userId !== session.userId) {
+    if (!isAdminRole(session.role) && tx.userId !== session.userId) {
       return res.status(403).json({ error: "Not authorized" });
     }
 
@@ -1231,7 +1250,7 @@ export async function registerRoutes(
 
     const existing = await storage.getCashTransaction(id);
     if (!existing) return res.status(404).json({ error: "Not found" });
-    if (session.role !== "admin" && existing.userId !== session.userId) {
+    if (!isAdminRole(session.role) && existing.userId !== session.userId) {
       return res.status(403).json({ error: "Not authorized" });
     }
 
@@ -1418,11 +1437,16 @@ export async function registerRoutes(
         const recAmt = parseFloat(receipt.amount);
         const recDate = new Date(receipt.purchaseDate);
 
-        const amtMatch = Math.abs(stmtAmt - recAmt) < 0.01;
+        // Exact match: amount within 1 cent
+        const exactAmtMatch = Math.abs(stmtAmt - recAmt) < 0.01;
+        // Fuzzy match: dollar amount matches but cents may differ (manager didn't enter cents)
+        const dollarMatch = Math.floor(stmtAmt) === Math.floor(recAmt);
+        const centsDiffer = !exactAmtMatch && dollarMatch;
         const dayDiff = Math.abs(stmtDate.getTime() - recDate.getTime()) / (1000 * 60 * 60 * 24);
 
-        if (amtMatch && dayDiff <= 1) {
-          matched.push({ stmt: stmtTx, receipt });
+        if ((exactAmtMatch || dollarMatch) && dayDiff <= 1) {
+          const note = centsDiffer ? `Cents mismatch: statement $${stmtAmt.toFixed(2)} vs receipt $${recAmt.toFixed(2)}` : "";
+          matched.push({ stmt: stmtTx, receipt, note });
           usedReceiptIds.add(receipt.id);
           found = true;
           break;
@@ -1459,7 +1483,8 @@ export async function registerRoutes(
       html += `<h2 style="color:green;">Matched Transactions (${matched.length})</h2>`;
       html += `<table style="border-collapse:collapse;width:100%;"><tr style="background:#e8f5e9;"><th style="padding:6px;border:1px solid #ddd;text-align:left;">Date</th><th style="padding:6px;border:1px solid #ddd;">Statement</th><th style="padding:6px;border:1px solid #ddd;">Receipt</th><th style="padding:6px;border:1px solid #ddd;">Amount</th><th style="padding:6px;border:1px solid #ddd;">Submitted By</th></tr>`;
       for (const m of matched) {
-        html += `<tr><td style="padding:6px;border:1px solid #ddd;">${m.stmt.date}</td><td style="padding:6px;border:1px solid #ddd;">${m.stmt.description}</td><td style="padding:6px;border:1px solid #ddd;">${m.receipt.description}</td><td style="padding:6px;border:1px solid #ddd;text-align:right;">$${m.stmt.amount}</td><td style="padding:6px;border:1px solid #ddd;">${userMap.get(m.receipt.userId) || "Unknown"}</td></tr>`;
+        const noteHtml = m.note ? `<br/><span style="color:orange;font-size:11px;">⚠ ${m.note}</span>` : "";
+        html += `<tr><td style="padding:6px;border:1px solid #ddd;">${m.stmt.date}</td><td style="padding:6px;border:1px solid #ddd;">${m.stmt.description}</td><td style="padding:6px;border:1px solid #ddd;">${m.receipt.description}</td><td style="padding:6px;border:1px solid #ddd;text-align:right;">$${m.stmt.amount}${noteHtml}</td><td style="padding:6px;border:1px solid #ddd;">${userMap.get(m.receipt.userId) || "Unknown"}</td></tr>`;
       }
       html += `</table>`;
     }
