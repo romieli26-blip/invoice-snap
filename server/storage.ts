@@ -1,4 +1,4 @@
-import { type User, type InsertUser, type Invoice, type InsertInvoice, type Property, type InsertProperty, type CashTransaction, type InsertCashTransaction, type CcStatement, users, invoices, properties, sessions, userProperties, cashTransactions, ccStatements } from "@shared/schema";
+import { type User, type InsertUser, type Invoice, type InsertInvoice, type Property, type InsertProperty, type CashTransaction, type InsertCashTransaction, type CcStatement, type TimeReport, type UserDocument, users, invoices, properties, sessions, userProperties, cashTransactions, ccStatements, timeReports, userDocuments } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, desc, inArray } from "drizzle-orm";
@@ -67,6 +67,53 @@ try { sqlite.exec("ALTER TABLE users ADD COLUMN daily_report INTEGER DEFAULT 0")
 try { sqlite.exec("ALTER TABLE users ADD COLUMN statement_reports INTEGER DEFAULT 0"); } catch {}
 // Update ben to super_admin
 try { sqlite.exec("UPDATE users SET role = 'super_admin' WHERE username = 'ben' AND role = 'admin'"); } catch {}
+
+// User profile columns
+try { sqlite.exec("ALTER TABLE users ADD COLUMN first_name TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN last_name TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN base_rate TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN off_site_rate TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN home_property TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN allow_off_site INTEGER DEFAULT 0"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN mileage_rate TEXT DEFAULT '0.50'"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN allow_special_terms INTEGER DEFAULT 0"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN special_terms_amount TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN w9_or_w4 TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN docs_complete INTEGER DEFAULT 0"); } catch {}
+
+// Time reports table
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS time_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    property TEXT NOT NULL,
+    date TEXT NOT NULL,
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    accomplishments TEXT NOT NULL,
+    miles TEXT,
+    mileage_amount TEXT,
+    special_terms INTEGER DEFAULT 0,
+    special_terms_amount TEXT,
+    notes TEXT,
+    synced_to_sheets INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+`);
+
+// User documents table
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS user_documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    doc_type TEXT NOT NULL,
+    file_path TEXT,
+    bank_name TEXT,
+    routing_number TEXT,
+    account_number TEXT,
+    created_at TEXT NOT NULL
+  );
+`);
 
 // CC Statements table
 sqlite.exec(`
@@ -340,6 +387,40 @@ export class DatabaseStorage implements IStorage {
       "SELECT * FROM invoices WHERE property = ? AND purchase_date >= ? AND purchase_date <= ? ORDER BY purchase_date"
     ).all(property, startDate, endDate) as Invoice[];
     return rows;
+  }
+
+  // ---- Time Reports ----
+  async createTimeReport(data: any): Promise<TimeReport> {
+    return db.insert(timeReports).values(data).returning().get();
+  }
+  async getTimeReportsByUser(userId: number): Promise<TimeReport[]> {
+    return db.select().from(timeReports).where(eq(timeReports.userId, userId)).orderBy(desc(timeReports.id)).all();
+  }
+  async getTimeReportsByDate(date: string): Promise<TimeReport[]> {
+    return db.select().from(timeReports).where(eq(timeReports.date, date)).all();
+  }
+  async getAllTimeReports(): Promise<TimeReport[]> {
+    return db.select().from(timeReports).orderBy(desc(timeReports.id)).all();
+  }
+  async getTimeReportsByUserAndDateRange(userId: number, startDate: string, endDate: string): Promise<TimeReport[]> {
+    const rows = sqlite.prepare(
+      "SELECT * FROM time_reports WHERE user_id = ? AND date >= ? AND date <= ? ORDER BY date"
+    ).all(userId, startDate, endDate) as TimeReport[];
+    return rows;
+  }
+  async deleteTimeReport(id: number): Promise<void> {
+    db.delete(timeReports).where(eq(timeReports.id, id)).run();
+  }
+
+  // ---- User Documents ----
+  async createUserDocument(data: any): Promise<UserDocument> {
+    return db.insert(userDocuments).values(data).returning().get();
+  }
+  async getUserDocuments(userId: number): Promise<UserDocument[]> {
+    return db.select().from(userDocuments).where(eq(userDocuments.userId, userId)).all();
+  }
+  async deleteUserDocument(id: number): Promise<void> {
+    db.delete(userDocuments).where(eq(userDocuments.id, id)).run();
   }
 
   async getCashBalanceByProperty(property: string): Promise<number> {

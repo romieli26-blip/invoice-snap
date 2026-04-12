@@ -27,10 +27,21 @@ export const users = sqliteTable("users", {
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
   displayName: text("display_name").notNull(),
-  role: text("role").notNull().default("manager"), // "admin" or "manager"
-  email: text("email"), // optional email for notifications
-  dailyReport: integer("daily_report").default(0), // 1 = subscribed to daily reports
-  statementReports: integer("statement_reports").default(0), // 1 = subscribed to CC statement reports
+  role: text("role").notNull().default("manager"), // super_admin, admin, manager, contractor
+  email: text("email"),
+  dailyReport: integer("daily_report").default(0),
+  statementReports: integer("statement_reports").default(0),
+  firstName: text("first_name"),
+  lastName: text("last_name"),
+  baseRate: text("base_rate"), // hourly rate at home property
+  offSiteRate: text("off_site_rate"),
+  homeProperty: text("home_property"),
+  allowOffSite: integer("allow_off_site").default(0),
+  mileageRate: text("mileage_rate").default("0.50"),
+  allowSpecialTerms: integer("allow_special_terms").default(0),
+  specialTermsAmount: text("special_terms_amount"),
+  w9OrW4: text("w9_or_w4"), // "w9" or "w4"
+  docsComplete: integer("docs_complete").default(0),
 });
 
 export const sessions = sqliteTable("sessions", {
@@ -116,6 +127,40 @@ export const ccStatements = sqliteTable("cc_statements", {
 });
 
 export type CcStatement = typeof ccStatements.$inferSelect;
+
+// ---- Time Reports ----
+export const timeReports = sqliteTable("time_reports", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  property: text("property").notNull(),
+  date: text("date").notNull(), // YYYY-MM-DD
+  startTime: text("start_time").notNull(), // HH:MM
+  endTime: text("end_time").notNull(), // HH:MM
+  accomplishments: text("accomplishments").notNull(), // JSON array of strings
+  miles: text("miles"), // number as string
+  mileageAmount: text("mileage_amount"), // calculated: miles * rate
+  specialTerms: integer("special_terms").default(0),
+  specialTermsAmount: text("special_terms_amount"),
+  notes: text("notes"),
+  syncedToSheets: integer("synced_to_sheets").default(0),
+  createdAt: text("created_at").notNull(),
+});
+
+export type TimeReport = typeof timeReports.$inferSelect;
+
+// ---- User Documents ----
+export const userDocuments = sqliteTable("user_documents", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  docType: text("doc_type").notNull(), // "photo_id", "banking", "w9", "w4"
+  filePath: text("file_path"),
+  bankName: text("bank_name"),
+  routingNumber: text("routing_number"),
+  accountNumber: text("account_number"),
+  createdAt: text("created_at").notNull(),
+});
+
+export type UserDocument = typeof userDocuments.$inferSelect;
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true });
 export const insertInvoiceSchema = createInsertSchema(invoices).omit({ id: true });

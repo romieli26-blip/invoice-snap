@@ -75,7 +75,7 @@ async function sendNotificationEmails(subject: string, htmlBody: string, attachm
         const boundary = "boundary_" + Date.now();
         let mime = [
           `To: ${recipient.name} <${recipient.email}>`,
-          `From: "Receipt App" <jetsetterinvoices1@gmail.com>`,
+          `From: "Jetsetter Reporting" <jetsetterinvoices1@gmail.com>`,
           `Subject: ${subject}`,
           `MIME-Version: 1.0`,
         ];
@@ -407,7 +407,7 @@ export async function registerRoutes(
 
         const mime = [
           `To: ${user.displayName} <${user.email}>`,
-          `From: "Receipt App" <jetsetterinvoices1@gmail.com>`,
+          `From: "Jetsetter Reporting" <jetsetterinvoices1@gmail.com>`,
           `Subject: Receipt App - Your Login Details`,
           `MIME-Version: 1.0`,
           `Content-Type: text/html; charset="UTF-8"`,

@@ -123,7 +123,7 @@ export default function HistoryPage() {
       <div className="border-b bg-card px-4 py-3">
         <div className="max-w-lg mx-auto flex items-center justify-between">
           <div>
-            <h1 className="text-lg font-semibold" data-testid="text-history-title">Receipt App</h1>
+            <h1 className="text-lg font-semibold" data-testid="text-history-title">Jetsetter Reporting</h1>
             <p className="text-xs text-muted-foreground">{user?.displayName}</p>
           </div>
           <div className="flex items-center gap-3">
