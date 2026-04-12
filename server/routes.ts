@@ -220,8 +220,9 @@ const upload = multer({
   }),
   limits: { fileSize: 4 * 1024 * 1024 }, // 4MB max
   fileFilter: (_req, file, cb) => {
-    const allowed = ["image/jpeg", "image/png", "application/pdf"];
-    cb(null, allowed.includes(file.mimetype));
+    const allowed = ["image/jpeg", "image/png", "application/pdf", "image/heic", "image/heif", "image/webp"];
+    // Also allow if mimetype starts with image/ (some phones send non-standard types)
+    cb(null, allowed.includes(file.mimetype) || file.mimetype.startsWith("image/"));
   },
 });
 

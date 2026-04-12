@@ -435,7 +435,7 @@ export default function CashTransactionPage() {
 
                 {/* Hidden file inputs for photo upload (shared by bank_deposit and contractor_pay) */}
                 <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => e.target.files?.[0] && handlePhotoFile(e.target.files[0])} />
-                <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,application/pdf" className="hidden" onChange={e => e.target.files?.[0] && handlePhotoFile(e.target.files[0])} />
+                <input ref={fileInputRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={e => e.target.files?.[0] && handlePhotoFile(e.target.files[0])} />
 
                 <Button
                   type="submit"

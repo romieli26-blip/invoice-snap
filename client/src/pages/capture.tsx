@@ -32,9 +32,12 @@ export default function CapturePage() {
 
   async function processFile(rawFile: File) {
     setError("");
-    const allowedTypes = ["image/jpeg", "image/png", "application/pdf"];
-    if (!allowedTypes.includes(rawFile.type)) {
-      setError("Invalid file type. Only PNG, JPG, and PDF are allowed.");
+    const allowedTypes = ["image/jpeg", "image/png", "application/pdf", "image/heic", "image/heif", "image/webp"];
+    // Some browsers report empty type for HEIC — allow if extension matches
+    const ext = rawFile.name.toLowerCase().split(".").pop() || "";
+    const allowedExts = ["jpg", "jpeg", "png", "pdf", "heic", "heif", "webp"];
+    if (!allowedTypes.includes(rawFile.type) && !allowedExts.includes(ext)) {
+      setError("Invalid file type. Only PNG, JPG, HEIC, and PDF are allowed.");
       return;
     }
 
@@ -156,8 +159,8 @@ export default function CapturePage() {
 
             {error && <p className="text-sm text-destructive">{error}</p>}
 
-            <input ref={cameraInputRef} type="file" accept="image/jpeg,image/png,application/pdf" capture="environment" className="hidden" onChange={handleFileChange} />
-            <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,application/pdf" className="hidden" onChange={handleFileChange} />
+            <input ref={cameraInputRef} type="file" accept="image/*,application/pdf" capture="environment" className="hidden" onChange={handleFileChange} />
+            <input ref={fileInputRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={handleFileChange} />
           </div>
         ) : (
           <div className="space-y-3">
@@ -227,8 +230,8 @@ export default function CapturePage() {
             </div>
 
             {/* Hidden inputs for adding more */}
-            <input ref={addMoreCameraRef} type="file" accept="image/jpeg,image/png,application/pdf" capture="environment" className="hidden" onChange={handleFileChange} />
-            <input ref={addMoreFileRef} type="file" accept="image/jpeg,image/png,application/pdf" className="hidden" onChange={handleFileChange} />
+            <input ref={addMoreCameraRef} type="file" accept="image/*,application/pdf" capture="environment" className="hidden" onChange={handleFileChange} />
+            <input ref={addMoreFileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={handleFileChange} />
 
             <div className="flex gap-2">
               <Button
