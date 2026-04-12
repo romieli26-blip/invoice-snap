@@ -74,6 +74,7 @@ export default function AdminPage() {
   const [editUserDocsComplete, setEditUserDocsComplete] = useState(false);
   const [editUserRequireFinancialConfirm, setEditUserRequireFinancialConfirm] = useState(false);
   const [editUserAllowPastDates, setEditUserAllowPastDates] = useState(false);
+  const [editUserReceiveTransactionEmails, setEditUserReceiveTransactionEmails] = useState(false);
   const [editUserSaving, setEditUserSaving] = useState(false);
 
   // Edit properties assignment state
@@ -709,6 +710,7 @@ export default function AdminPage() {
                             setEditUserDocsComplete((u as any).docsComplete === 1);
                             setEditUserRequireFinancialConfirm((u as any).requireFinancialConfirm === 1);
                             setEditUserAllowPastDates((u as any).allowPastDates === 1);
+                            setEditUserReceiveTransactionEmails((u as any).receiveTransactionEmails === 1);
                           }}
                         >
                           <Pencil className="w-4 h-4" />
@@ -774,6 +776,13 @@ export default function AdminPage() {
               </div>
               {(editUserRole === "admin" || editUserRole === "super_admin") && editUserEmail && (
                 <>
+                  <div className="border-t pt-3 mt-2">
+                    <p className="text-xs font-medium text-muted-foreground mb-2">Email Subscriptions</p>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox id="edit-tx-emails" checked={editUserReceiveTransactionEmails} onCheckedChange={c => setEditUserReceiveTransactionEmails(c === true)} />
+                    <Label htmlFor="edit-tx-emails" className="text-sm font-normal cursor-pointer">Real-time receipt & cash transaction emails</Label>
+                  </div>
                   <div className="flex items-center space-x-2">
                     <Checkbox id="edit-daily-time" checked={editUserDailyTimeReport} onCheckedChange={c => setEditUserDailyTimeReport(c === true)} />
                     <Label htmlFor="edit-daily-time" className="text-sm font-normal cursor-pointer">Daily Time Report</Label>
@@ -885,6 +894,7 @@ export default function AdminPage() {
                     docsComplete: editUserDocsComplete,
                     requireFinancialConfirm: editUserRequireFinancialConfirm,
                     allowPastDates: editUserAllowPastDates,
+                    receiveTransactionEmails: editUserReceiveTransactionEmails,
                   });
                   queryClient.invalidateQueries({ queryKey: ["/api/users"] });
                   setEditingUser(null);

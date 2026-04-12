@@ -47,16 +47,26 @@ function saveSheetsConfig() {
 }
 
 // ---- Email notifications ----
-const EMAIL_RECIPIENTS = [
-  { name: "Ben", email: "Ben@Jetsettercapital.com" },
-  { name: "Jared", email: "Jared@Jetsettercapital.com" },
-  { name: "Dustin", email: "Dustin@Jetsettercapital.com" },
-];
-
 // Email via Gmail API (SMTP is blocked on Railway)
 import { google } from "googleapis";
 
-async function sendNotificationEmails(subject: string, htmlBody: string, attachments?: { filename: string; path: string }[]) {
+// Send to all admins who have receiveTransactionEmails enabled
+async function sendTransactionNotificationEmails(subject: string, htmlBody: string, attachments?: { filename: string; path: string }[]) {
+  const allUsers = await storage.getAllUsers();
+  const recipients = allUsers
+    .filter((u: any) => isAdminRole(u.role) && u.receiveTransactionEmails && u.email)
+    .map((u: any) => ({ name: u.displayName, email: u.email }));
+
+  if (recipients.length === 0) {
+    console.log("[email] No admins subscribed to transaction emails, skipping");
+    return;
+  }
+
+  await sendEmailToRecipients(recipients, subject, htmlBody, attachments);
+}
+
+// Send to specific list of recipients
+async function sendEmailToRecipients(recipients: { name: string; email: string }[], subject: string, htmlBody: string, attachments?: { filename: string; path: string }[]) {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
@@ -70,7 +80,7 @@ async function sendNotificationEmails(subject: string, htmlBody: string, attachm
     oauth2Client.setCredentials({ refresh_token: refreshToken });
     const gmail = google.gmail({ version: "v1", auth: oauth2Client });
 
-    for (const recipient of EMAIL_RECIPIENTS) {
+    for (const recipient of recipients) {
       try {
         // Build MIME message
         const boundary = "boundary_" + Date.now();
@@ -111,6 +121,11 @@ async function sendNotificationEmails(subject: string, htmlBody: string, attachm
   } catch (err: any) {
     console.error("[email] Gmail API error:", err.message?.slice(0, 200));
   }
+}
+
+// Backward compat wrapper — old name still used by some callers
+async function sendNotificationEmails(subject: string, htmlBody: string, attachments?: { filename: string; path: string }[]) {
+  await sendTransactionNotificationEmails(subject, htmlBody, attachments);
 }
 
 function callExternalTool(sourceId: string, toolName: string, args: Record<string, any>) {
@@ -658,7 +673,7 @@ export async function registerRoutes(
       dailyTimeReport, dailyTransactionReport, reconciliationReport,
       firstName, lastName, baseRate, offSiteRate, homeProperty, allowOffSite,
       mileageRate, allowSpecialTerms, specialTermsAmount, w9OrW4, docsComplete,
-      requireFinancialConfirm, allowPastDates } = req.body;
+      requireFinancialConfirm, allowPastDates, receiveTransactionEmails } = req.body;
 
     if (email) {
       const allUsers = await storage.getAllUsers();
@@ -692,6 +707,7 @@ export async function registerRoutes(
     if (docsComplete !== undefined) updateData.docsComplete = docsComplete ? 1 : 0;
     if (requireFinancialConfirm !== undefined) updateData.requireFinancialConfirm = requireFinancialConfirm ? 1 : 0;
     if (allowPastDates !== undefined) updateData.allowPastDates = allowPastDates ? 1 : 0;
+    if (receiveTransactionEmails !== undefined) updateData.receiveTransactionEmails = receiveTransactionEmails ? 1 : 0;
 
     const updated = await storage.updateUser(id, updateData);
     res.json(updated);
@@ -1196,12 +1212,7 @@ export async function registerRoutes(
     const sentTo: string[] = [];
 
     if (txRecipients.length > 0) {
-      const origRecipients = [...EMAIL_RECIPIENTS];
-      (EMAIL_RECIPIENTS as any).length = 0;
-      txRecipients.forEach(r => (EMAIL_RECIPIENTS as any).push(r));
-      await sendNotificationEmails(`Daily Transaction Summary - ${date}`, html);
-      (EMAIL_RECIPIENTS as any).length = 0;
-      origRecipients.forEach(r => (EMAIL_RECIPIENTS as any).push(r));
+      await sendEmailToRecipients(txRecipients, `Daily Transaction Summary - ${date}`, html);
       sentTo.push(...txRecipients.map(r => r.email));
     }
 
@@ -1209,12 +1220,7 @@ export async function registerRoutes(
     const timeSubscribers = allUsers.filter((u: any) => u.dailyTimeReport && u.email);
     const timeRecipients = timeSubscribers.map(u => ({ name: u.displayName, email: u.email! }));
     if (timeRecipients.length > 0 && todayTimeReports.length > 0) {
-      const origRecipients = [...EMAIL_RECIPIENTS];
-      (EMAIL_RECIPIENTS as any).length = 0;
-      timeRecipients.forEach(r => (EMAIL_RECIPIENTS as any).push(r));
-      await sendNotificationEmails(`Daily Work Report - ${date}`, timeHtml);
-      (EMAIL_RECIPIENTS as any).length = 0;
-      origRecipients.forEach(r => (EMAIL_RECIPIENTS as any).push(r));
+      await sendEmailToRecipients(timeRecipients, `Daily Work Report - ${date}`, timeHtml);
       sentTo.push(...timeRecipients.map(r => r.email));
     }
 
@@ -1782,12 +1788,8 @@ export async function registerRoutes(
       const subscribers = allUsers.filter((u: any) => (u.reconciliationReport || u.statementReports) && u.email);
       if (subscribers.length > 0) {
         const subject = `CC Reconciliation: ${stmt.property} - ••${stmt.ccLastDigits} (${stmt.startDate} to ${stmt.endDate}) - ${matched.length}/${stmtTransactions.length} matched`;
-        const origRecipients = [...EMAIL_RECIPIENTS];
-        EMAIL_RECIPIENTS.length = 0;
-        subscribers.forEach((u: any) => EMAIL_RECIPIENTS.push({ name: u.displayName, email: u.email }));
-        await sendNotificationEmails(subject, html);
-        EMAIL_RECIPIENTS.length = 0;
-        origRecipients.forEach(r => EMAIL_RECIPIENTS.push(r));
+        const reconRecipients = subscribers.map((u: any) => ({ name: u.displayName, email: u.email }));
+        await sendEmailToRecipients(reconRecipients, subject, html);
       }
     } catch (e) { console.error("[reconcile] Email failed:", e); }
 
