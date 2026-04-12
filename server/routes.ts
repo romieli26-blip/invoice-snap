@@ -445,7 +445,13 @@ export async function registerRoutes(
     const token = generateToken();
     await storage.createSession(token, user.id, user.role);
 
-    res.json({ token, user: { id: user.id, username: user.username, displayName: user.displayName, role: user.role } });
+    res.json({ token, user: {
+      id: user.id, username: user.username, displayName: user.displayName, role: user.role,
+      firstName: (user as any).firstName, lastName: (user as any).lastName,
+      mileageRate: (user as any).mileageRate, allowOffSite: (user as any).allowOffSite,
+      allowSpecialTerms: (user as any).allowSpecialTerms, specialTermsAmount: (user as any).specialTermsAmount,
+      homeProperty: (user as any).homeProperty, baseRate: (user as any).baseRate, offSiteRate: (user as any).offSiteRate,
+    } });
   });
 
   // Super admin: impersonate any user
@@ -460,7 +466,13 @@ export async function registerRoutes(
 
     const token = generateToken();
     await storage.createSession(token, targetUser.id, targetUser.role);
-    res.json({ token, user: { id: targetUser.id, username: targetUser.username, displayName: targetUser.displayName, role: targetUser.role } });
+    res.json({ token, user: {
+      id: targetUser.id, username: targetUser.username, displayName: targetUser.displayName, role: targetUser.role,
+      firstName: (targetUser as any).firstName, lastName: (targetUser as any).lastName,
+      mileageRate: (targetUser as any).mileageRate, allowOffSite: (targetUser as any).allowOffSite,
+      allowSpecialTerms: (targetUser as any).allowSpecialTerms, specialTermsAmount: (targetUser as any).specialTermsAmount,
+      homeProperty: (targetUser as any).homeProperty, baseRate: (targetUser as any).baseRate, offSiteRate: (targetUser as any).offSiteRate,
+    } });
   });
 
   app.post("/api/logout", async (req, res) => {
@@ -476,7 +488,13 @@ export async function registerRoutes(
     if (!session) return res.status(401).json({ error: "Unauthorized" });
     const user = await storage.getUser(session.userId);
     if (!user) return res.status(401).json({ error: "User not found" });
-    res.json({ id: user.id, username: user.username, displayName: user.displayName, role: user.role });
+    res.json({
+      id: user.id, username: user.username, displayName: user.displayName, role: user.role,
+      firstName: (user as any).firstName, lastName: (user as any).lastName,
+      mileageRate: (user as any).mileageRate, allowOffSite: (user as any).allowOffSite,
+      allowSpecialTerms: (user as any).allowSpecialTerms, specialTermsAmount: (user as any).specialTermsAmount,
+      homeProperty: (user as any).homeProperty, baseRate: (user as any).baseRate, offSiteRate: (user as any).offSiteRate,
+    });
   });
 
   // ---- USERS (admin only) ----
@@ -496,6 +514,18 @@ export async function registerRoutes(
         role: u.role,
         email: u.email || "",
         dailyReport: u.dailyReport || 0,
+        statementReports: (u as any).statementReports || 0,
+        firstName: (u as any).firstName || "",
+        lastName: (u as any).lastName || "",
+        baseRate: (u as any).baseRate || "",
+        offSiteRate: (u as any).offSiteRate || "",
+        homeProperty: (u as any).homeProperty || "",
+        allowOffSite: (u as any).allowOffSite || 0,
+        mileageRate: (u as any).mileageRate || "0.50",
+        allowSpecialTerms: (u as any).allowSpecialTerms || 0,
+        specialTermsAmount: (u as any).specialTermsAmount || "",
+        w9OrW4: (u as any).w9OrW4 || "",
+        docsComplete: (u as any).docsComplete || 0,
         assignedProperties: propIds.map(pid => propMap.get(pid)).filter(Boolean) as string[],
       };
     }));
@@ -1017,6 +1047,34 @@ export async function registerRoutes(
       html += `<tr><td style="padding:6px;border:1px solid #ddd;">${prop.name}</td><td style="padding:6px;border:1px solid #ddd;text-align:right;color:${color};font-weight:bold;">$${balance.toFixed(2)}</td></tr>`;
     }
     html += `</table>`;
+
+    // Work Reports section
+    const todayTimeReports = await storage.getTimeReportsByDate(date);
+    if (todayTimeReports.length > 0) {
+      html += `<h2 style="color:#333;border-bottom:2px solid #3b82f6;padding-bottom:5px;">Work Reports</h2>`;
+      const allUsersMap = new Map(allUsers.map(u => [u.id, u]));
+
+      for (const tr of todayTimeReports) {
+        const trUser = allUsersMap.get(tr.userId);
+        const name = trUser?.displayName || "Unknown";
+        let accomplishmentsList: string[] = [];
+        try { accomplishmentsList = JSON.parse(tr.accomplishments || "[]"); } catch {}
+
+        const [sh, sm] = (tr.startTime || "0:0").split(":").map(Number);
+        const [eh, em] = (tr.endTime || "0:0").split(":").map(Number);
+        const hours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+
+        html += `<div style="background:#f0f4ff;padding:10px;border-radius:5px;margin:8px 0;">`;
+        html += `<p><strong>${name}</strong> - ${tr.property} (${tr.startTime} - ${tr.endTime}, ${hours.toFixed(1)}h)</p>`;
+        if (accomplishmentsList.length > 0) {
+          html += `<ul style="margin:4px 0;">${accomplishmentsList.map((a: string) => `<li>${a}</li>`).join("")}</ul>`;
+        }
+        if (tr.miles) html += `<p>Miles: ${tr.miles} ($${tr.mileageAmount || "0.00"})</p>`;
+        if (tr.specialTerms) html += `<p>Travel Expenses: $${tr.specialTermsAmount || "0.00"}</p>`;
+        if (tr.notes) html += `<p style="color:#666;">Notes: ${tr.notes}</p>`;
+        html += `</div>`;
+      }
+    }
 
     html += `<p style="color:#888;font-size:12px;margin-top:20px;">- Receipt App Daily Report</p></div>`;
 
@@ -1603,6 +1661,45 @@ export async function registerRoutes(
       createdAt: new Date().toISOString(),
     });
     res.json(report);
+
+    // Drive sync in background
+    setImmediate(async () => {
+      try {
+        if (isGoogleEnabled()) {
+          const user = await storage.getUser(session.userId);
+          const userName = (user as any)?.firstName && (user as any)?.lastName
+            ? `${(user as any).firstName}_${(user as any).lastName}`
+            : user?.displayName || "Unknown";
+          const folderName = `${property}_${userName}`;
+
+          const mainFolder = await ensureDriveFolder("Time Reporting");
+          if (mainFolder) {
+            const userFolder = await ensureDriveFolder(folderName, mainFolder);
+            if (userFolder) {
+              const reportsFolder = await ensureDriveFolder("Time Reports", userFolder);
+              if (reportsFolder) {
+                const accList = Array.isArray(accomplishments) ? accomplishments : JSON.parse(accomplishments);
+                const reportHtml = `<html><body style="font-family:Arial;">
+                  <h2>Time Report - ${date}</h2>
+                  <p><strong>Employee:</strong> ${user?.displayName}</p>
+                  <p><strong>Property:</strong> ${property}</p>
+                  <p><strong>Hours:</strong> ${startTime} - ${endTime}</p>
+                  <p><strong>Accomplishments:</strong></p>
+                  <ul>${accList.map((a: string) => `<li>${a}</li>`).join("")}</ul>
+                  ${miles ? `<p><strong>Miles:</strong> ${miles} ($${mileageAmount})</p>` : ""}
+                  ${specialTerms ? `<p><strong>Travel Expenses:</strong> $${specialTermsAmount}</p>` : ""}
+                  ${notes ? `<p><strong>Notes:</strong> ${notes}</p>` : ""}
+                </body></html>`;
+                const reportPath = path.resolve(dataDir, `time-report-${report.id}.html`);
+                fs.writeFileSync(reportPath, reportHtml);
+                await uploadToDrive(reportPath, `Time_Report_${date}.html`, reportsFolder);
+                try { fs.unlinkSync(reportPath); } catch {}
+              }
+            }
+          }
+        }
+      } catch (e) { console.error("[time-report] Drive sync error:", e); }
+    });
   });
 
   app.get("/api/time-reports", async (req, res) => {
@@ -1653,6 +1750,38 @@ export async function registerRoutes(
       createdAt: new Date().toISOString(),
     });
     res.json(doc);
+
+    // Drive sync in background
+    if (req.file) {
+      setImmediate(async () => {
+        try {
+          if (isGoogleEnabled()) {
+            const docUser = await storage.getUser(session.userId);
+            const userName = (docUser as any)?.firstName && (docUser as any)?.lastName
+              ? `${(docUser as any).firstName}_${(docUser as any).lastName}`
+              : docUser?.displayName || "Unknown";
+            const prop = (docUser as any)?.homeProperty || "General";
+            const folderName = `${prop}_${userName}`;
+
+            const mainFolder = await ensureDriveFolder("Time Reporting");
+            if (mainFolder) {
+              const userFolder = await ensureDriveFolder(folderName, mainFolder);
+              if (userFolder) {
+                const docsFolder = await ensureDriveFolder("Documents", userFolder);
+                if (docsFolder) {
+                  const fullPath = path.resolve(dataDir, "uploads", req.file!.filename);
+                  if (fs.existsSync(fullPath)) {
+                    const ext = path.extname(req.file!.filename).slice(1);
+                    const docName = `${docType}_${docUser?.displayName || "user"}_${Date.now()}.${ext}`;
+                    await uploadToDrive(fullPath, docName, docsFolder);
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) { console.error("[docs] Drive sync error:", e); }
+      });
+    }
   });
 
   app.get("/api/user-documents", async (req, res) => {
@@ -1686,7 +1815,42 @@ export async function registerRoutes(
     }
     const reports = await storage.getTimeReportsByUserAndDateRange(parseInt(userId), startDate, endDate);
     const userObj = await storage.getUser(parseInt(userId));
-    res.json({ user: userObj, reports });
+
+    let totalHours = 0;
+    let totalMiles = 0;
+    let totalMileagePay = 0;
+    let totalSpecialTerms = 0;
+    const daysWorked = new Set<string>();
+
+    for (const r of reports) {
+      const [sh, sm] = (r.startTime || "0:0").split(":").map(Number);
+      const [eh, em] = (r.endTime || "0:0").split(":").map(Number);
+      totalHours += ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+      totalMiles += parseFloat(r.miles || "0");
+      totalMileagePay += parseFloat(r.mileageAmount || "0");
+      if (r.specialTerms) totalSpecialTerms += parseFloat(r.specialTermsAmount || "0");
+      daysWorked.add(r.date);
+    }
+
+    res.json({
+      user: {
+        id: userObj?.id,
+        displayName: userObj?.displayName,
+        firstName: (userObj as any)?.firstName,
+        lastName: (userObj as any)?.lastName,
+        baseRate: (userObj as any)?.baseRate,
+        offSiteRate: (userObj as any)?.offSiteRate,
+      },
+      period: { startDate, endDate },
+      summary: {
+        daysWorked: daysWorked.size,
+        totalHours: totalHours.toFixed(1),
+        totalMiles: totalMiles.toFixed(1),
+        totalMileagePay: totalMileagePay.toFixed(2),
+        totalSpecialTerms: totalSpecialTerms.toFixed(2),
+      },
+      reports,
+    });
   });
 
   return httpServer;

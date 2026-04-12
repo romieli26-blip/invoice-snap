@@ -8,6 +8,15 @@ interface AuthUser {
   username: string;
   displayName: string;
   role: string;
+  firstName?: string;
+  lastName?: string;
+  mileageRate?: string;
+  allowOffSite?: number;
+  allowSpecialTerms?: number;
+  specialTermsAmount?: string;
+  homeProperty?: string;
+  baseRate?: string;
+  offSiteRate?: string;
 }
 
 interface AuthContextType {

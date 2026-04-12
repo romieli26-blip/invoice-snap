@@ -12,7 +12,7 @@ import { apiRequest, queryClient, setAuthToken } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Plus, Trash2, UserCircle, Shield, Loader2, Building2, Settings, Pencil, LogIn } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, UserCircle, Shield, Loader2, Building2, Settings, Pencil, LogIn, Clock } from "lucide-react";
 import { LogoBackground } from "@/components/LogoBackground";
 
 interface UserItem {
@@ -73,6 +73,13 @@ export default function AdminPage() {
   // Edit properties assignment state
   const [editPropsUserId, setEditPropsUserId] = useState<number | null>(null);
   const [editPropsSelected, setEditPropsSelected] = useState<number[]>([]);
+
+  // Workforce report state
+  const [wfUserId, setWfUserId] = useState("");
+  const [wfStartDate, setWfStartDate] = useState("");
+  const [wfEndDate, setWfEndDate] = useState("");
+  const [wfLoading, setWfLoading] = useState(false);
+  const [wfResult, setWfResult] = useState<any>(null);
 
   // Property form state
   const [propDialogOpen, setPropDialogOpen] = useState(false);
@@ -248,6 +255,93 @@ export default function AdminPage() {
         >
           Send Daily Report
         </Button>
+
+        {/* ---- WORKFORCE REPORT SECTION ---- */}
+        <section className="space-y-3 border rounded-lg p-3">
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <Clock className="w-4 h-4 text-blue-600" />
+            Workforce Report
+          </h2>
+          <div className="space-y-2">
+            <div className="space-y-1">
+              <Label className="text-xs">Employee</Label>
+              <Select value={wfUserId} onValueChange={setWfUserId}>
+                <SelectTrigger><SelectValue placeholder="Select employee" /></SelectTrigger>
+                <SelectContent>
+                  {users?.filter(u => u.role === "contractor" || u.role === "manager").map(u => (
+                    <SelectItem key={u.id} value={String(u.id)}>{u.displayName}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <Label className="text-xs">Start Date</Label>
+                <Input type="date" value={wfStartDate} onChange={e => setWfStartDate(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">End Date</Label>
+                <Input type="date" value={wfEndDate} onChange={e => setWfEndDate(e.target.value)} />
+              </div>
+            </div>
+            <Button
+              size="sm"
+              className="w-full"
+              disabled={wfLoading || !wfUserId || !wfStartDate || !wfEndDate}
+              onClick={async () => {
+                setWfLoading(true);
+                setWfResult(null);
+                try {
+                  const res = await apiRequest("GET", `/api/admin/workforce-report?userId=${wfUserId}&startDate=${wfStartDate}&endDate=${wfEndDate}`);
+                  const data = await res.json();
+                  setWfResult(data);
+                } catch (e: any) {
+                  toast({ title: "Failed to generate report", description: e.message, variant: "destructive" });
+                } finally {
+                  setWfLoading(false);
+                }
+              }}
+            >
+              {wfLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+              Generate Report
+            </Button>
+          </div>
+          {wfResult && (
+            <div className="border rounded-md p-3 space-y-2 bg-muted/30">
+              <p className="text-sm font-medium">
+                {wfResult.user.firstName && wfResult.user.lastName
+                  ? `${wfResult.user.firstName} ${wfResult.user.lastName}`
+                  : wfResult.user.displayName}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {wfResult.period.startDate} to {wfResult.period.endDate}
+              </p>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div>Days Worked: <span className="font-medium">{wfResult.summary.daysWorked}</span></div>
+                <div>Total Hours: <span className="font-medium">{wfResult.summary.totalHours}</span></div>
+                <div>Total Miles: <span className="font-medium">{wfResult.summary.totalMiles}</span></div>
+                <div>Mileage Pay: <span className="font-medium">${wfResult.summary.totalMileagePay}</span></div>
+                {parseFloat(wfResult.summary.totalSpecialTerms) > 0 && (
+                  <div>Travel Expenses: <span className="font-medium">${wfResult.summary.totalSpecialTerms}</span></div>
+                )}
+                {wfResult.user.baseRate && (
+                  <div>Base Rate: <span className="font-medium">${wfResult.user.baseRate}/hr</span></div>
+                )}
+              </div>
+              {wfResult.reports.length > 0 && (
+                <div className="space-y-1 mt-2">
+                  <p className="text-xs font-medium text-muted-foreground">Details ({wfResult.reports.length} reports)</p>
+                  {wfResult.reports.map((r: any) => (
+                    <div key={r.id} className="text-xs bg-background p-2 rounded border">
+                      <span className="font-medium">{r.date}</span> — {r.property} ({r.startTime}–{r.endTime})
+                      {r.miles && ` · ${r.miles}mi`}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </section>
 
         {/* ---- PROPERTIES SECTION ---- */}
         <section className="space-y-3">

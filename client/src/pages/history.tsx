@@ -128,7 +128,9 @@ export default function HistoryPage() {
         <div className="max-w-lg mx-auto flex items-center justify-between">
           <div>
             <h1 className="text-lg font-semibold" data-testid="text-history-title">Jetsetter Reporting</h1>
-            <p className="text-xs text-muted-foreground">{user?.displayName}</p>
+            <p className="text-xs text-muted-foreground">
+              {user?.firstName && user?.lastName ? `${user.firstName} ${user.lastName}` : user?.displayName}
+            </p>
           </div>
           <div className="flex items-center gap-3">
             <LogoHeader />

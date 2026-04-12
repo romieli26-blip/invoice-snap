@@ -39,12 +39,12 @@ export default function TimeReportPage() {
   });
 
   // Get user's mileage rate for calculation
-  const mileageRate = parseFloat((user as any)?.mileageRate || "0.50");
-  const allowOffSite = (user as any)?.allowOffSite === 1;
-  const allowSpecialTermsUser = (user as any)?.allowSpecialTerms === 1;
-  const homeProperty = (user as any)?.homeProperty || "";
-  const baseRate = (user as any)?.baseRate || "";
-  const offSiteRate = (user as any)?.offSiteRate || "";
+  const mileageRate = parseFloat(user?.mileageRate || "0.50");
+  const allowOffSite = user?.allowOffSite === 1;
+  const allowSpecialTermsUser = user?.allowSpecialTerms === 1;
+  const homeProperty = user?.homeProperty || "";
+  const baseRate = user?.baseRate || "";
+  const offSiteRate = user?.offSiteRate || "";
 
   const isOffSite = property && property !== homeProperty;
   const currentRate = isOffSite && allowOffSite ? offSiteRate : baseRate;
