@@ -40,7 +40,7 @@ export const users = sqliteTable("users", {
   mileageRate: text("mileage_rate").default("0.50"),
   allowSpecialTerms: integer("allow_special_terms").default(0),
   specialTermsAmount: text("special_terms_amount"),
-  w9OrW4: text("w9_or_w4"), // "w9" or "w4"
+  w9OrW4: text("w9_or_w4"), // "w9" only
   docsComplete: integer("docs_complete").default(0),
   mustChangePassword: integer("must_change_password").default(0),
   dailyTimeReport: integer("daily_time_report").default(0),
@@ -156,7 +156,7 @@ export type TimeReport = typeof timeReports.$inferSelect;
 export const userDocuments = sqliteTable("user_documents", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   userId: integer("user_id").notNull(),
-  docType: text("doc_type").notNull(), // "photo_id", "banking", "w9", "w4"
+  docType: text("doc_type").notNull(), // "photo_id", "banking", "w9"
   filePath: text("file_path"),
   bankName: text("bank_name"),
   routingNumber: text("routing_number"),

@@ -9,7 +9,8 @@ import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient, getAuthToken } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, Upload, Trash2, Loader2, FileText, Eye } from "lucide-react";
+import { ArrowLeft, Upload, Trash2, Loader2, FileText, Eye, Camera, X } from "lucide-react";
+import { useRef } from "react";
 import { LogoBackground } from "@/components/LogoBackground";
 import { compressImage } from "@/lib/compress-image";
 
@@ -30,7 +31,6 @@ const DOC_TYPE_LABELS: Record<string, string> = {
   photo_id: "Photo ID",
   banking: "Banking Info",
   w9: "W-9 Form",
-  w4: "W-4 Form",
 };
 
 export default function DocumentsPage() {
@@ -44,6 +44,8 @@ export default function DocumentsPage() {
   const [routingNumber, setRoutingNumber] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const { data: documents, isLoading } = useQuery<UserDocument[]>({
     queryKey: ["/api/user-documents"],
@@ -143,7 +145,6 @@ export default function DocumentsPage() {
                       <SelectItem value="photo_id">Photo ID</SelectItem>
                       <SelectItem value="banking">Banking Info</SelectItem>
                       <SelectItem value="w9">W-9 Form</SelectItem>
-                      <SelectItem value="w4">W-4 Form</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -165,25 +166,29 @@ export default function DocumentsPage() {
                   </>
                 )}
 
-                {docType && docType !== "banking" && (
+                {docType && (
                   <div className="space-y-2">
-                    <Label>Upload File</Label>
-                    <Input
-                      type="file"
-                      accept="image/*,.pdf"
-                      onChange={e => setFile(e.target.files?.[0] || null)}
-                    />
-                  </div>
-                )}
-
-                {docType === "banking" && (
-                  <div className="space-y-2">
-                    <Label>Voided Check / Direct Deposit Form (optional)</Label>
-                    <Input
-                      type="file"
-                      accept="image/*,.pdf"
-                      onChange={e => setFile(e.target.files?.[0] || null)}
-                    />
+                    <Label>{docType === "banking" ? "Voided Check / Direct Deposit Form" : "Upload Photo or Scan"}</Label>
+                    {file ? (
+                      <div className="flex items-center gap-2 bg-muted/50 rounded p-2">
+                        <FileText className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-sm truncate flex-1">{file.name}</span>
+                        <button type="button" onClick={() => setFile(null)} className="text-muted-foreground hover:text-destructive">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <Button type="button" variant="outline" size="sm" className="flex-1 gap-1" onClick={() => cameraRef.current?.click()}>
+                          <Camera className="w-3.5 h-3.5" /> Take Photo
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" className="flex-1 gap-1" onClick={() => fileRef.current?.click()}>
+                          <Upload className="w-3.5 h-3.5" /> Upload File
+                        </Button>
+                      </div>
+                    )}
+                    <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => { setFile(e.target.files?.[0] || null); e.target.value = ""; }} />
+                    <input ref={fileRef} type="file" accept="image/*,.pdf" className="hidden" onChange={e => { setFile(e.target.files?.[0] || null); e.target.value = ""; }} />
                   </div>
                 )}
 

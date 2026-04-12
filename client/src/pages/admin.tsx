@@ -827,12 +827,11 @@ export default function AdminPage() {
                     </div>
                   )}
                   <div className="space-y-1">
-                    <Label className="text-xs">W-9 or W-4</Label>
+                    <Label className="text-xs">W-9 Required</Label>
                     <Select value={editUserW9OrW4} onValueChange={setEditUserW9OrW4}>
                       <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="w9">W-9</SelectItem>
-                        <SelectItem value="w4">W-4</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
