@@ -663,9 +663,8 @@ export default function AdminPage() {
                         </p>
                       )}
                     </div>
-                    {u.id !== user?.id && (
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        {user?.role === "super_admin" && (
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                        {u.id !== user?.id && user?.role === "super_admin" && (
                           <Button
                             variant="ghost"
                             size="icon"
@@ -726,18 +725,19 @@ export default function AdminPage() {
                             <Settings className="w-4 h-4" />
                           </Button>
                         )}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-muted-foreground hover:text-destructive"
-                          onClick={() => deleteUserMutation.mutate(u.id)}
-                          disabled={deleteUserMutation.isPending}
-                          data-testid={`button-delete-user-${u.id}`}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        {u.id !== user?.id && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-muted-foreground hover:text-destructive"
+                            onClick={() => deleteUserMutation.mutate(u.id)}
+                            disabled={deleteUserMutation.isPending}
+                            data-testid={`button-delete-user-${u.id}`}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        )}
                       </div>
-                    )}
                   </CardContent>
                 </Card>
               ))}
