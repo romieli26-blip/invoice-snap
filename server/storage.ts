@@ -94,6 +94,7 @@ sqlite.exec(`
     date TEXT NOT NULL,
     start_time TEXT NOT NULL,
     end_time TEXT NOT NULL,
+    time_blocks TEXT,
     accomplishments TEXT NOT NULL,
     miles TEXT,
     mileage_amount TEXT,
@@ -104,6 +105,13 @@ sqlite.exec(`
     created_at TEXT NOT NULL
   );
 `);
+
+// Migration: add time_blocks column to existing time_reports tables
+try {
+  sqlite.exec(`ALTER TABLE time_reports ADD COLUMN time_blocks TEXT`);
+} catch (e: any) {
+  // Column already exists - ignore
+}
 
 // User documents table
 sqlite.exec(`

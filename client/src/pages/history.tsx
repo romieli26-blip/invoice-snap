@@ -470,7 +470,15 @@ export default function HistoryPage() {
                       <div className="flex items-start justify-between gap-2">
                         <div>
                           <p className="text-sm font-medium">{tr.property} — {tr.date}</p>
-                          <p className="text-xs text-muted-foreground">{tr.startTime} – {tr.endTime}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {(() => {
+                              try {
+                                const blocks = tr.timeBlocks ? JSON.parse(tr.timeBlocks) : [];
+                                if (blocks.length > 1) return blocks.map((b: any) => `${b.start}–${b.end}`).join(", ");
+                              } catch {}
+                              return `${tr.startTime} – ${tr.endTime}`;
+                            })()}
+                          </p>
                         </div>
                         <button
                           className="text-muted-foreground hover:text-destructive p-0.5 flex-shrink-0"

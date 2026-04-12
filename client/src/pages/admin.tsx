@@ -341,7 +341,13 @@ export default function AdminPage() {
                   <p className="text-xs font-medium text-muted-foreground">Details ({wfResult.reports.length} reports)</p>
                   {wfResult.reports.map((r: any) => (
                     <div key={r.id} className="text-xs bg-background p-2 rounded border">
-                      <span className="font-medium">{r.date}</span> — {r.property} ({r.startTime}–{r.endTime})
+                      <span className="font-medium">{r.date}</span> — {r.property} ({(() => {
+                        try {
+                          const blocks = r.timeBlocks ? JSON.parse(r.timeBlocks) : [];
+                          if (blocks.length > 1) return blocks.map((b: any) => `${b.start}–${b.end}`).join(", ");
+                        } catch {}
+                        return `${r.startTime}–${r.endTime}`;
+                      })()})
                       {r.miles && ` · ${r.miles}mi`}
                     </div>
                   ))}

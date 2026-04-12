@@ -138,8 +138,9 @@ export const timeReports = sqliteTable("time_reports", {
   userId: integer("user_id").notNull(),
   property: text("property").notNull(),
   date: text("date").notNull(), // YYYY-MM-DD
-  startTime: text("start_time").notNull(), // HH:MM
-  endTime: text("end_time").notNull(), // HH:MM
+  startTime: text("start_time").notNull(), // HH:MM (first block start, backward compat)
+  endTime: text("end_time").notNull(), // HH:MM (last block end, backward compat)
+  timeBlocks: text("time_blocks"), // JSON array of {start, end} for split shifts
   accomplishments: text("accomplishments").notNull(), // JSON array of strings
   miles: text("miles"), // number as string
   mileageAmount: text("mileage_amount"), // calculated: miles * rate

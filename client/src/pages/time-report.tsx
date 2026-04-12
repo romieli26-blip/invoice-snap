@@ -25,14 +25,33 @@ export default function TimeReportPage() {
 
   const [property, setProperty] = useState("");
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
-  const [startTime, setStartTime] = useState("");
-  const [endTime, setEndTime] = useState("");
+  const [timeBlocks, setTimeBlocks] = useState<{ start: string; end: string }[]>([{ start: "", end: "" }]);
   const [accomplishments, setAccomplishments] = useState<string[]>([""]);
   const [miles, setMiles] = useState("");
   const [specialTerms, setSpecialTerms] = useState(false);
   const [specialTermsAmount, setSpecialTermsAmount] = useState("");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  function addTimeBlock() {
+    setTimeBlocks(prev => [...prev, { start: "", end: "" }]);
+  }
+  function removeTimeBlock(idx: number) {
+    if (timeBlocks.length <= 1) return;
+    setTimeBlocks(prev => prev.filter((_, i) => i !== idx));
+  }
+  function updateTimeBlock(idx: number, field: "start" | "end", value: string) {
+    setTimeBlocks(prev => prev.map((b, i) => i === idx ? { ...b, [field]: value } : b));
+  }
+
+  // Calculate total hours across all blocks
+  const totalMinutes = timeBlocks.reduce((sum, b) => {
+    if (!b.start || !b.end) return sum;
+    const [sh, sm] = b.start.split(":").map(Number);
+    const [eh, em] = b.end.split(":").map(Number);
+    return sum + ((eh * 60 + em) - (sh * 60 + sm));
+  }, 0);
+  const totalHours = (totalMinutes / 60).toFixed(1);
 
   const { data: properties } = useQuery<Property[]>({
     queryKey: ["/api/properties"],
@@ -49,17 +68,10 @@ export default function TimeReportPage() {
   const isOffSite = property && property !== homeProperty;
   const currentRate = isOffSite && allowOffSite ? offSiteRate : baseRate;
 
-  // Calculate hours
-  function calcHours(): number {
-    if (!startTime || !endTime) return 0;
-    const [sh, sm] = startTime.split(":").map(Number);
-    const [eh, em] = endTime.split(":").map(Number);
-    const diff = (eh * 60 + em) - (sh * 60 + sm);
-    return diff > 0 ? diff / 60 : 0;
-  }
-
-  const hours = calcHours();
   const mileageAmount = miles ? (parseFloat(miles) * mileageRate).toFixed(2) : "";
+
+  // Check if all time blocks are filled
+  const allBlocksFilled = timeBlocks.every(b => b.start && b.end);
 
   function addAccomplishment() {
     setAccomplishments([...accomplishments, ""]);
@@ -83,6 +95,13 @@ export default function TimeReportPage() {
       toast({ title: "At least one accomplishment is required", variant: "destructive" });
       return;
     }
+    if (!allBlocksFilled) {
+      toast({ title: "Please fill in all time blocks", variant: "destructive" });
+      return;
+    }
+    // Derive startTime/endTime from first and last block for backward compat
+    const startTime = timeBlocks[0].start;
+    const endTime = timeBlocks[timeBlocks.length - 1].end;
     setSubmitting(true);
     try {
       await apiRequest("POST", "/api/time-reports", {
@@ -90,6 +109,7 @@ export default function TimeReportPage() {
         date,
         startTime,
         endTime,
+        timeBlocks,
         accomplishments: filtered,
         miles: miles || undefined,
         mileageAmount: mileageAmount || undefined,
@@ -147,18 +167,30 @@ export default function TimeReportPage() {
               <Input type="date" value={date} onChange={e => setDate(e.target.value)} required />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Start Time</Label>
-                <Input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} required />
-              </div>
-              <div className="space-y-2">
-                <Label>End Time</Label>
-                <Input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} required />
-              </div>
+            {/* Time blocks */}
+            <div className="space-y-2">
+              <Label>Time Worked</Label>
+              {timeBlocks.map((block, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <Input type="time" value={block.start} onChange={e => updateTimeBlock(idx, "start", e.target.value)} className="flex-1" />
+                  <span className="text-xs text-muted-foreground">to</span>
+                  <Input type="time" value={block.end} onChange={e => updateTimeBlock(idx, "end", e.target.value)} className="flex-1" />
+                  {timeBlocks.length > 1 && (
+                    <button type="button" onClick={() => removeTimeBlock(idx)} className="text-muted-foreground hover:text-destructive">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              ))}
+              <Button type="button" variant="outline" size="sm" className="w-full gap-1 text-xs" onClick={addTimeBlock}>
+                <Plus className="w-3 h-3" /> Add Time Block (e.g. returned after break)
+              </Button>
             </div>
-            {hours > 0 && currentRate && (
-              <p className="text-xs text-muted-foreground">{hours.toFixed(2)} hours × ${currentRate}/hr = ${(hours * parseFloat(currentRate)).toFixed(2)}</p>
+            {totalMinutes > 0 && (
+              <div className="bg-muted/40 rounded p-2 text-xs text-center">
+                Total: <strong>{totalHours} hours</strong>
+                {currentRate && <span> × ${currentRate}/hr = <strong>${(totalMinutes / 60 * parseFloat(currentRate)).toFixed(2)}</strong></span>}
+              </div>
             )}
 
             <div className="space-y-2">
@@ -230,7 +262,7 @@ export default function TimeReportPage() {
               <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Any additional notes" />
             </div>
 
-            <Button type="submit" className="w-full" disabled={submitting || !property || !startTime || !endTime}>
+            <Button type="submit" className="w-full" disabled={submitting || !property || !allBlocksFilled}>
               {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
               Submit Work Report
             </Button>

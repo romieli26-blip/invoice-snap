@@ -1135,11 +1135,25 @@ export async function registerRoutes(
         const name = trUser?.displayName || "Unknown";
         let accomplishmentsList: string[] = [];
         try { accomplishmentsList = JSON.parse(tr.accomplishments || "[]"); } catch {}
-        const [sh, sm] = (tr.startTime || "0:0").split(":").map(Number);
-        const [eh, em] = (tr.endTime || "0:0").split(":").map(Number);
-        const hours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+        // Calculate hours from timeBlocks if available, fallback to startTime/endTime
+        let hours = 0;
+        let timeDisplay = `${tr.startTime} - ${tr.endTime}`;
+        let blocks: { start: string; end: string }[] = [];
+        try { blocks = tr.timeBlocks ? JSON.parse(tr.timeBlocks) : []; } catch {}
+        if (blocks.length > 0) {
+          hours = blocks.reduce((sum, b) => {
+            const [bsh, bsm] = b.start.split(":").map(Number);
+            const [beh, bem] = b.end.split(":").map(Number);
+            return sum + ((beh * 60 + bem) - (bsh * 60 + bsm)) / 60;
+          }, 0);
+          timeDisplay = blocks.map(b => `${b.start}-${b.end}`).join(", ");
+        } else {
+          const [sh, sm] = (tr.startTime || "0:0").split(":").map(Number);
+          const [eh, em] = (tr.endTime || "0:0").split(":").map(Number);
+          hours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+        }
         timeHtml += `<div style="background:#f0f4ff;padding:10px;border-radius:5px;margin:8px 0;">`;
-        timeHtml += `<p><strong>${name}</strong> - ${tr.property} (${tr.startTime} - ${tr.endTime}, ${hours.toFixed(1)}h)</p>`;
+        timeHtml += `<p><strong>${name}</strong> - ${tr.property} (${timeDisplay}, ${hours.toFixed(1)}h)</p>`;
         if (accomplishmentsList.length > 0) {
           timeHtml += `<ul style="margin:4px 0;">${accomplishmentsList.map((a: string) => `<li>${a}</li>`).join("")}</ul>`;
         }
@@ -1732,7 +1746,7 @@ export async function registerRoutes(
   app.post("/api/time-reports", async (req, res) => {
     const session = await requireAuth(req, res);
     if (!session) return;
-    const { property, date, startTime, endTime, accomplishments, miles, mileageAmount, specialTerms, specialTermsAmount, notes } = req.body;
+    const { property, date, startTime, endTime, timeBlocks, accomplishments, miles, mileageAmount, specialTerms, specialTermsAmount, notes } = req.body;
     if (!property || !date || !startTime || !endTime || !accomplishments) {
       return res.status(400).json({ error: "Missing required fields" });
     }
@@ -1742,6 +1756,7 @@ export async function registerRoutes(
       date,
       startTime,
       endTime,
+      timeBlocks: timeBlocks ? JSON.stringify(timeBlocks) : null,
       accomplishments: JSON.stringify(accomplishments),
       miles: miles || null,
       mileageAmount: mileageAmount || null,
@@ -1770,11 +1785,16 @@ export async function registerRoutes(
               const reportsFolder = await ensureDriveFolder("Time Reports", userFolder);
               if (reportsFolder) {
                 const accList = Array.isArray(accomplishments) ? accomplishments : JSON.parse(accomplishments);
+                // Build time display for Drive report
+                let driveTimeDisplay = `${startTime} - ${endTime}`;
+                if (timeBlocks && Array.isArray(timeBlocks) && timeBlocks.length > 1) {
+                  driveTimeDisplay = timeBlocks.map((b: any) => `${b.start} - ${b.end}`).join(", ");
+                }
                 const reportHtml = `<html><body style="font-family:Arial;">
                   <h2>Time Report - ${date}</h2>
                   <p><strong>Employee:</strong> ${user?.displayName}</p>
                   <p><strong>Property:</strong> ${property}</p>
-                  <p><strong>Hours:</strong> ${startTime} - ${endTime}</p>
+                  <p><strong>Hours:</strong> ${driveTimeDisplay}</p>
                   <p><strong>Accomplishments:</strong></p>
                   <ul>${accList.map((a: string) => `<li>${a}</li>`).join("")}</ul>
                   ${miles ? `<p><strong>Miles:</strong> ${miles} ($${mileageAmount})</p>` : ""}
@@ -1914,9 +1934,20 @@ export async function registerRoutes(
     const daysWorked = new Set<string>();
 
     for (const r of reports) {
-      const [sh, sm] = (r.startTime || "0:0").split(":").map(Number);
-      const [eh, em] = (r.endTime || "0:0").split(":").map(Number);
-      totalHours += ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+      // Calculate hours from timeBlocks if available, fallback to startTime/endTime
+      let blocks: { start: string; end: string }[] = [];
+      try { blocks = r.timeBlocks ? JSON.parse(r.timeBlocks) : []; } catch {}
+      if (blocks.length > 0) {
+        totalHours += blocks.reduce((sum, b) => {
+          const [bsh, bsm] = b.start.split(":").map(Number);
+          const [beh, bem] = b.end.split(":").map(Number);
+          return sum + ((beh * 60 + bem) - (bsh * 60 + bsm)) / 60;
+        }, 0);
+      } else {
+        const [sh, sm] = (r.startTime || "0:0").split(":").map(Number);
+        const [eh, em] = (r.endTime || "0:0").split(":").map(Number);
+        totalHours += ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+      }
       totalMiles += parseFloat(r.miles || "0");
       totalMileagePay += parseFloat(r.mileageAmount || "0");
       if (r.specialTerms) totalSpecialTerms += parseFloat(r.specialTermsAmount || "0");
