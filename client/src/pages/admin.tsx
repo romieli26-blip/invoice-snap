@@ -22,6 +22,7 @@ interface UserItem {
   role: string;
   email?: string;
   dailyReport?: number;
+  statementReports?: number;
   assignedProperties: string[];
 }
 
@@ -44,6 +45,7 @@ export default function AdminPage() {
   const [newRole, setNewRole] = useState("manager");
   const [newEmail, setNewEmail] = useState("");
   const [newDailyReport, setNewDailyReport] = useState(false);
+  const [newStatementReports, setNewStatementReports] = useState(false);
 
   const [newUserPropertyIds, setNewUserPropertyIds] = useState<number[]>([]);
 
@@ -54,6 +56,7 @@ export default function AdminPage() {
   const [editUserPassword, setEditUserPassword] = useState("");
   const [editUserRole, setEditUserRole] = useState("manager");
   const [editUserDailyReport, setEditUserDailyReport] = useState(false);
+  const [editUserStatementReports, setEditUserStatementReports] = useState(false);
   const [editUserSaving, setEditUserSaving] = useState(false);
 
   // Edit properties assignment state
@@ -78,6 +81,7 @@ export default function AdminPage() {
         role: newRole,
         email: newEmail || undefined,
         dailyReport: newDailyReport,
+        statementReports: newStatementReports,
       });
       const newUser = await res.json();
       if (newRole === "manager" && newUserPropertyIds.length > 0) {
@@ -92,6 +96,7 @@ export default function AdminPage() {
       setNewRole("manager");
       setNewEmail("");
       setNewDailyReport(false);
+      setNewStatementReports(false);
       setNewUserPropertyIds([]);
       setUserDialogOpen(false);
       toast({ title: "User created" });
@@ -405,16 +410,28 @@ export default function AdminPage() {
                     />
                   </div>
                   {newRole === "admin" && newEmail && (
-                    <div className="flex items-center space-x-2">
-                      <Checkbox
-                        id="daily-report"
-                        checked={newDailyReport}
-                        onCheckedChange={(checked) => setNewDailyReport(checked === true)}
-                      />
-                      <Label htmlFor="daily-report" className="text-sm font-normal cursor-pointer">
-                        Subscribe to daily reports
-                      </Label>
-                    </div>
+                    <>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="daily-report"
+                          checked={newDailyReport}
+                          onCheckedChange={(checked) => setNewDailyReport(checked === true)}
+                        />
+                        <Label htmlFor="daily-report" className="text-sm font-normal cursor-pointer">
+                          Subscribe to daily reports
+                        </Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="statement-reports"
+                          checked={newStatementReports}
+                          onCheckedChange={(checked) => setNewStatementReports(checked === true)}
+                        />
+                        <Label htmlFor="statement-reports" className="text-sm font-normal cursor-pointer">
+                          CC Statement Reports
+                        </Label>
+                      </div>
+                    </>
                   )}
                   {newRole === "manager" && propertiesList && propertiesList.length > 0 && (
                     <div className="space-y-2">
@@ -479,6 +496,9 @@ export default function AdminPage() {
                       {u.dailyReport === 1 && (
                         <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-green-600 border-green-300">Daily Reports</Badge>
                       )}
+                      {u.statementReports === 1 && (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-yellow-600 border-yellow-300">Statement Reports</Badge>
+                      )}
                       {u.role === "manager" && u.assignedProperties && u.assignedProperties.length > 0 && (
                         <p className="text-xs text-primary/70 truncate">
                           {u.assignedProperties.join(", ")}
@@ -498,6 +518,7 @@ export default function AdminPage() {
                             setEditUserPassword("");
                             setEditUserRole(u.role);
                             setEditUserDailyReport(u.dailyReport === 1);
+                            setEditUserStatementReports(u.statementReports === 1);
                           }}
                         >
                           <Pencil className="w-4 h-4" />
@@ -560,10 +581,16 @@ export default function AdminPage() {
                 </Select>
               </div>
               {editUserRole === "admin" && editUserEmail && (
-                <div className="flex items-center space-x-2">
-                  <Checkbox id="edit-daily" checked={editUserDailyReport} onCheckedChange={c => setEditUserDailyReport(c === true)} />
-                  <Label htmlFor="edit-daily" className="text-sm font-normal cursor-pointer">Subscribe to daily reports</Label>
-                </div>
+                <>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox id="edit-daily" checked={editUserDailyReport} onCheckedChange={c => setEditUserDailyReport(c === true)} />
+                    <Label htmlFor="edit-daily" className="text-sm font-normal cursor-pointer">Subscribe to daily reports</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox id="edit-statement" checked={editUserStatementReports} onCheckedChange={c => setEditUserStatementReports(c === true)} />
+                    <Label htmlFor="edit-statement" className="text-sm font-normal cursor-pointer">CC Statement Reports</Label>
+                  </div>
+                </>
               )}
             </div>
             <div className="flex gap-2 mt-4">
@@ -577,6 +604,7 @@ export default function AdminPage() {
                     password: editUserPassword || undefined,
                     role: editUserRole,
                     dailyReport: editUserDailyReport,
+                    statementReports: editUserStatementReports,
                   });
                   queryClient.invalidateQueries({ queryKey: ["/api/users"] });
                   setEditingUser(null);

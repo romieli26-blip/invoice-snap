@@ -1,4 +1,4 @@
-import { type User, type InsertUser, type Invoice, type InsertInvoice, type Property, type InsertProperty, type CashTransaction, type InsertCashTransaction, users, invoices, properties, sessions, userProperties, cashTransactions } from "@shared/schema";
+import { type User, type InsertUser, type Invoice, type InsertInvoice, type Property, type InsertProperty, type CashTransaction, type InsertCashTransaction, type CcStatement, users, invoices, properties, sessions, userProperties, cashTransactions, ccStatements } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, desc, inArray } from "drizzle-orm";
@@ -64,6 +64,26 @@ try { sqlite.exec("ALTER TABLE invoices ADD COLUMN photo_paths TEXT"); } catch {
 try { sqlite.exec("ALTER TABLE invoices ADD COLUMN receipt_type TEXT DEFAULT 'expense'"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN email TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN daily_report INTEGER DEFAULT 0"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN statement_reports INTEGER DEFAULT 0"); } catch {}
+
+// CC Statements table
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS cc_statements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    property TEXT NOT NULL,
+    cc_last_digits TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    parsed_data TEXT,
+    report_html TEXT,
+    matched INTEGER DEFAULT 0,
+    unmatched INTEGER DEFAULT 0,
+    total INTEGER DEFAULT 0,
+    uploaded_by INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+  );
+`);
 try { sqlite.exec("ALTER TABLE invoices ADD COLUMN edit_history TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE cash_transactions ADD COLUMN edit_history TEXT"); } catch {}
 
@@ -297,6 +317,27 @@ export class DatabaseStorage implements IStorage {
 
   async getCashTransactionsByDate(date: string): Promise<CashTransaction[]> {
     return db.select().from(cashTransactions).where(eq(cashTransactions.date, date)).all();
+  }
+
+  // ---- CC Statements ----
+  async createCcStatement(data: any): Promise<CcStatement> {
+    return db.insert(ccStatements).values(data).returning().get();
+  }
+  async getCcStatement(id: number): Promise<CcStatement | undefined> {
+    return db.select().from(ccStatements).where(eq(ccStatements.id, id)).get();
+  }
+  async getAllCcStatements(): Promise<CcStatement[]> {
+    return db.select().from(ccStatements).orderBy(desc(ccStatements.id)).all();
+  }
+  async updateCcStatement(id: number, data: any): Promise<CcStatement | undefined> {
+    return db.update(ccStatements).set(data).where(eq(ccStatements.id, id)).returning().get();
+  }
+  async getInvoicesByPropertyAndDateRange(property: string, startDate: string, endDate: string): Promise<Invoice[]> {
+    // Use raw SQL for BETWEEN query
+    const rows = sqlite.prepare(
+      "SELECT * FROM invoices WHERE property = ? AND purchase_date >= ? AND purchase_date <= ? ORDER BY purchase_date"
+    ).all(property, startDate, endDate) as Invoice[];
+    return rows;
   }
 
   async getCashBalanceByProperty(property: string): Promise<number> {

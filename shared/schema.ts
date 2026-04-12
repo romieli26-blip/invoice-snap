@@ -30,6 +30,7 @@ export const users = sqliteTable("users", {
   role: text("role").notNull().default("manager"), // "admin" or "manager"
   email: text("email"), // optional email for notifications
   dailyReport: integer("daily_report").default(0), // 1 = subscribed to daily reports
+  statementReports: integer("statement_reports").default(0), // 1 = subscribed to CC statement reports
 });
 
 export const sessions = sqliteTable("sessions", {
@@ -96,6 +97,25 @@ export const cashTransactions = sqliteTable("cash_transactions", {
 export const insertCashTransactionSchema = createInsertSchema(cashTransactions).omit({ id: true });
 export type CashTransaction = typeof cashTransactions.$inferSelect;
 export type InsertCashTransaction = z.infer<typeof insertCashTransactionSchema>;
+
+// ---- CC Statement Reconciliation ----
+export const ccStatements = sqliteTable("cc_statements", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  property: text("property").notNull(),
+  ccLastDigits: text("cc_last_digits").notNull(),
+  startDate: text("start_date").notNull(),
+  endDate: text("end_date").notNull(),
+  filePath: text("file_path").notNull(),
+  parsedData: text("parsed_data"), // JSON array of {date, description, amount}
+  reportHtml: text("report_html"),
+  matched: integer("matched").default(0),
+  unmatched: integer("unmatched").default(0),
+  total: integer("total").default(0),
+  uploadedBy: integer("uploaded_by").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+export type CcStatement = typeof ccStatements.$inferSelect;
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true });
 export const insertInvoiceSchema = createInsertSchema(invoices).omit({ id: true });

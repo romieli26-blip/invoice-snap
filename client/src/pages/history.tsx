@@ -172,6 +172,16 @@ export default function HistoryPage() {
           </Button>
         </div>
 
+        {user?.role === "admin" && (
+          <Button
+            className="w-full h-12 bg-yellow-400 hover:bg-yellow-500 text-black gap-2"
+            onClick={() => setLocation("/reconcile")}
+          >
+            <FileText className="w-5 h-5" />
+            CC Statement Reconciliation
+          </Button>
+        )}
+
         {/* Cash Balances */}
         {cashBalances && Object.keys(cashBalances).length > 0 && (
           <div className="border rounded-lg p-3 space-y-1.5">

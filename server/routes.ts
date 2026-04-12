@@ -487,7 +487,7 @@ export async function registerRoutes(
     const session = await requireAdmin(req, res);
     if (!session) return;
 
-    const { username, password, displayName, role, email, dailyReport } = req.body;
+    const { username, password, displayName, role, email, dailyReport, statementReports } = req.body;
     if (!username || !password || !displayName) {
       return res.status(400).json({ error: "Username, password, and display name are required" });
     }
@@ -502,6 +502,7 @@ export async function registerRoutes(
       role: role || "manager",
       email: email || null,
       dailyReport: dailyReport ? 1 : 0,
+      statementReports: statementReports ? 1 : 0,
     });
 
     res.json({ id: user.id, username: user.username, displayName: user.displayName, role: user.role, email: user.email, dailyReport: user.dailyReport });
@@ -527,7 +528,7 @@ export async function registerRoutes(
     const existing = await storage.getUser(id);
     if (!existing) return res.status(404).json({ error: "User not found" });
 
-    const { displayName, email, password, role, dailyReport } = req.body;
+    const { displayName, email, password, role, dailyReport, statementReports } = req.body;
 
     const updateData: any = {};
     if (displayName !== undefined) updateData.displayName = displayName;
@@ -535,6 +536,7 @@ export async function registerRoutes(
     if (password !== undefined && password.trim()) updateData.password = password;
     if (role !== undefined) updateData.role = role;
     if (dailyReport !== undefined) updateData.dailyReport = dailyReport ? 1 : 0;
+    if (statementReports !== undefined) updateData.statementReports = statementReports ? 1 : 0;
 
     const updated = await storage.updateUser(id, updateData);
     res.json(updated);
@@ -1301,6 +1303,242 @@ export async function registerRoutes(
       balances[p.name] = await storage.getCashBalanceByProperty(p.name);
     }
     res.json(balances);
+  });
+
+  // ---- CC STATEMENT RECONCILIATION ----
+
+  function parseStatementCsv(filePath: string): { date: string; description: string; amount: string }[] {
+    const content = fs.readFileSync(filePath, "utf-8");
+    const lines = content.split("\n").map(l => l.trim()).filter(l => l);
+    if (lines.length < 2) return [];
+
+    const rows: { date: string; description: string; amount: string }[] = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].match(/(".*?"|[^,]+)/g)?.map(c => c.replace(/^"|"$/g, "").trim()) || [];
+      if (cols.length < 3) continue;
+
+      let date = "", description = "", amount = "";
+      for (const col of cols) {
+        if (!date && /\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/.test(col)) {
+          const parts = col.split(/[\/\-]/);
+          if (parts[0].length === 4) date = col;
+          else if (parts.length === 3) {
+            const y = parts[2].length === 2 ? "20" + parts[2] : parts[2];
+            date = `${y}-${parts[0].padStart(2,"0")}-${parts[1].padStart(2,"0")}`;
+          }
+        } else if (!amount && /^-?\$?[\d,]+\.?\d*$/.test(col.replace(/[$,\s]/g, ""))) {
+          amount = col.replace(/[$,\s]/g, "");
+          if (amount.startsWith("-")) amount = amount.slice(1);
+        } else if (!description && col.length > 2 && !/^\d+$/.test(col)) {
+          description = col;
+        }
+      }
+      if (date && amount) {
+        rows.push({ date, description: description || "Unknown", amount });
+      }
+    }
+    return rows;
+  }
+
+  app.post("/api/admin/upload-statement", upload.single("statement"), async (req: any, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+    const { property, ccLastDigits, startDate, endDate } = req.body;
+    if (!property || !ccLastDigits || !startDate || !endDate) {
+      return res.status(400).json({ error: "Property, CC digits, start date, and end date are required" });
+    }
+
+    const filePath = `/api/uploads/${req.file.filename}`;
+    const fullPath = path.resolve(dataDir, "uploads", req.file.filename);
+
+    const transactions = parseStatementCsv(fullPath);
+
+    const stmt = await storage.createCcStatement({
+      property,
+      ccLastDigits,
+      startDate,
+      endDate,
+      filePath,
+      parsedData: JSON.stringify(transactions),
+      uploadedBy: session.userId,
+      createdAt: new Date().toISOString(),
+    });
+
+    if (isGoogleEnabled()) {
+      setImmediate(async () => {
+        try {
+          const mainFolder = await ensureDriveFolder("CC Statements and Matches");
+          if (mainFolder) {
+            const statementsFolder = await ensureDriveFolder("CC Statements", mainFolder);
+            if (statementsFolder) {
+              const propFolder = await ensureDriveFolder(property, statementsFolder);
+              if (propFolder) {
+                await uploadToDrive(fullPath, `Statement_${property}_${startDate}_to_${endDate}.csv`, propFolder);
+              }
+            }
+          }
+        } catch (e) { console.error("[statement] Drive upload failed:", e); }
+      });
+    }
+
+    res.json({ id: stmt.id, transactions: transactions.length });
+  });
+
+  app.post("/api/admin/reconcile/:id", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+
+    const id = parseInt(req.params.id);
+    const stmt = await storage.getCcStatement(id);
+    if (!stmt) return res.status(404).json({ error: "Statement not found" });
+
+    const stmtTransactions: { date: string; description: string; amount: string }[] =
+      stmt.parsedData ? JSON.parse(stmt.parsedData) : [];
+
+    const receipts = await storage.getInvoicesByPropertyAndDateRange(stmt.property, stmt.startDate, stmt.endDate);
+    const allUsers = await storage.getAllUsers();
+    const userMap = new Map(allUsers.map(u => [u.id, u.displayName]));
+
+    const matched: { stmt: any; receipt: any }[] = [];
+    const unmatchedStmt: any[] = [];
+    const unmatchedReceipts: any[] = [];
+    const usedReceiptIds = new Set<number>();
+
+    for (const stmtTx of stmtTransactions) {
+      const stmtAmt = parseFloat(stmtTx.amount);
+      const stmtDate = new Date(stmtTx.date);
+
+      let found = false;
+      for (const receipt of receipts) {
+        if (usedReceiptIds.has(receipt.id)) continue;
+        const recAmt = parseFloat(receipt.amount);
+        const recDate = new Date(receipt.purchaseDate);
+
+        const amtMatch = Math.abs(stmtAmt - recAmt) < 0.01;
+        const dayDiff = Math.abs(stmtDate.getTime() - recDate.getTime()) / (1000 * 60 * 60 * 24);
+
+        if (amtMatch && dayDiff <= 1) {
+          matched.push({ stmt: stmtTx, receipt });
+          usedReceiptIds.add(receipt.id);
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        unmatchedStmt.push(stmtTx);
+      }
+    }
+
+    for (const receipt of receipts) {
+      if (!usedReceiptIds.has(receipt.id)) {
+        unmatchedReceipts.push(receipt);
+      }
+    }
+
+    // Generate HTML report
+    let html = `<div style="font-family:Arial,sans-serif;max-width:900px;margin:0 auto;">`;
+    html += `<h1 style="color:#1a5c3a;">CC Statement Reconciliation Report</h1>`;
+    html += `<p><strong>Property:</strong> ${stmt.property}</p>`;
+    html += `<p><strong>Credit Card:</strong> ••••${stmt.ccLastDigits}</p>`;
+    html += `<p><strong>Period:</strong> ${stmt.startDate} to ${stmt.endDate}</p>`;
+    html += `<p><strong>Generated:</strong> ${new Date().toISOString().replace("T", " ").slice(0, 19)}</p>`;
+
+    html += `<div style="background:#f0f8f0;padding:15px;border-radius:8px;margin:15px 0;">`;
+    html += `<h2 style="margin:0;">Summary</h2>`;
+    html += `<p>Statement transactions: <strong>${stmtTransactions.length}</strong></p>`;
+    html += `<p>Matched with receipts: <strong style="color:green;">${matched.length}</strong></p>`;
+    html += `<p>Unmatched on statement: <strong style="color:${unmatchedStmt.length > 0 ? 'red' : 'green'};">${unmatchedStmt.length}</strong></p>`;
+    html += `<p>Extra receipts (not on statement): <strong style="color:${unmatchedReceipts.length > 0 ? 'orange' : 'green'};">${unmatchedReceipts.length}</strong></p>`;
+    html += `</div>`;
+
+    if (matched.length > 0) {
+      html += `<h2 style="color:green;">Matched Transactions (${matched.length})</h2>`;
+      html += `<table style="border-collapse:collapse;width:100%;"><tr style="background:#e8f5e9;"><th style="padding:6px;border:1px solid #ddd;text-align:left;">Date</th><th style="padding:6px;border:1px solid #ddd;">Statement</th><th style="padding:6px;border:1px solid #ddd;">Receipt</th><th style="padding:6px;border:1px solid #ddd;">Amount</th><th style="padding:6px;border:1px solid #ddd;">Submitted By</th></tr>`;
+      for (const m of matched) {
+        html += `<tr><td style="padding:6px;border:1px solid #ddd;">${m.stmt.date}</td><td style="padding:6px;border:1px solid #ddd;">${m.stmt.description}</td><td style="padding:6px;border:1px solid #ddd;">${m.receipt.description}</td><td style="padding:6px;border:1px solid #ddd;text-align:right;">$${m.stmt.amount}</td><td style="padding:6px;border:1px solid #ddd;">${userMap.get(m.receipt.userId) || "Unknown"}</td></tr>`;
+      }
+      html += `</table>`;
+    }
+
+    if (unmatchedStmt.length > 0) {
+      html += `<h2 style="color:red;">Missing from Receipts (${unmatchedStmt.length})</h2>`;
+      html += `<p style="color:red;">These transactions appear on the CC statement but were NOT reported by any property manager.</p>`;
+      html += `<table style="border-collapse:collapse;width:100%;"><tr style="background:#ffebee;"><th style="padding:6px;border:1px solid #ddd;text-align:left;">Date</th><th style="padding:6px;border:1px solid #ddd;">Store/Description</th><th style="padding:6px;border:1px solid #ddd;">Amount</th></tr>`;
+      for (const tx of unmatchedStmt) {
+        html += `<tr><td style="padding:6px;border:1px solid #ddd;">${tx.date}</td><td style="padding:6px;border:1px solid #ddd;">${tx.description}</td><td style="padding:6px;border:1px solid #ddd;text-align:right;">$${tx.amount}</td></tr>`;
+      }
+      html += `</table>`;
+    }
+
+    if (unmatchedReceipts.length > 0) {
+      html += `<h2 style="color:orange;">Extra Receipts Not on Statement (${unmatchedReceipts.length})</h2>`;
+      html += `<table style="border-collapse:collapse;width:100%;"><tr style="background:#fff3e0;"><th style="padding:6px;border:1px solid #ddd;">Date</th><th style="padding:6px;border:1px solid #ddd;">Description</th><th style="padding:6px;border:1px solid #ddd;">Amount</th><th style="padding:6px;border:1px solid #ddd;">By</th></tr>`;
+      for (const r of unmatchedReceipts) {
+        html += `<tr><td style="padding:6px;border:1px solid #ddd;">${r.purchaseDate}</td><td style="padding:6px;border:1px solid #ddd;">${r.description}</td><td style="padding:6px;border:1px solid #ddd;text-align:right;">$${r.amount}</td><td style="padding:6px;border:1px solid #ddd;">${userMap.get(r.userId) || "Unknown"}</td></tr>`;
+      }
+      html += `</table>`;
+    }
+
+    html += `<p style="color:#888;font-size:12px;margin-top:20px;">- Receipt App Reconciliation</p></div>`;
+
+    await storage.updateCcStatement(id, {
+      reportHtml: html,
+      matched: matched.length,
+      unmatched: unmatchedStmt.length,
+      total: stmtTransactions.length,
+    });
+
+    // Save report to Drive
+    if (isGoogleEnabled()) {
+      try {
+        const mainFolder = await ensureDriveFolder("CC Statements and Matches");
+        if (mainFolder) {
+          const reportsFolder = await ensureDriveFolder("Matches Generated Reports", mainFolder);
+          if (reportsFolder) {
+            const propFolder = await ensureDriveFolder(stmt.property, reportsFolder);
+            if (propFolder) {
+              const reportPath = path.resolve(dataDir, `reconcile-${id}.html`);
+              fs.writeFileSync(reportPath, html);
+              await uploadToDrive(reportPath, `Reconciliation_${stmt.property}_${stmt.startDate}_${stmt.endDate}.html`, propFolder);
+              try { fs.unlinkSync(reportPath); } catch {}
+            }
+          }
+        }
+      } catch (e) { console.error("[reconcile] Drive save failed:", e); }
+    }
+
+    // Email report to subscribed admins
+    try {
+      const subscribers = allUsers.filter((u: any) => u.statementReports && u.email);
+      if (subscribers.length > 0) {
+        const subject = `CC Reconciliation: ${stmt.property} - ••${stmt.ccLastDigits} (${stmt.startDate} to ${stmt.endDate}) - ${matched.length}/${stmtTransactions.length} matched`;
+        const origRecipients = [...EMAIL_RECIPIENTS];
+        EMAIL_RECIPIENTS.length = 0;
+        subscribers.forEach((u: any) => EMAIL_RECIPIENTS.push({ name: u.displayName, email: u.email }));
+        await sendNotificationEmails(subject, html);
+        EMAIL_RECIPIENTS.length = 0;
+        origRecipients.forEach(r => EMAIL_RECIPIENTS.push(r));
+      }
+    } catch (e) { console.error("[reconcile] Email failed:", e); }
+
+    res.json({
+      matched: matched.length,
+      unmatched: unmatchedStmt.length,
+      extraReceipts: unmatchedReceipts.length,
+      total: stmtTransactions.length,
+      unmatchedDetails: unmatchedStmt,
+    });
+  });
+
+  app.get("/api/admin/statements", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    const stmts = await storage.getAllCcStatements();
+    res.json(stmts);
   });
 
   return httpServer;
