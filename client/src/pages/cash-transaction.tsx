@@ -129,15 +129,23 @@ export default function CashTransactionPage() {
     if (txType === "spent" && category === "other") {
       if (!description.trim()) return "Please describe what the cash was spent on.";
     }
-    if (txType === "spent" && !photoPath) {
+    if (txType === "spent" && !photoPath && category !== "contractor_pay") {
       return "Please take a photo or upload a receipt/document for this transaction.";
     }
 
     return null;
   }
 
+  const [showNoReceiptConfirm, setShowNoReceiptConfirm] = useState(false);
+
   function handlePreSubmit(e: React.FormEvent) {
     e.preventDefault();
+    // For contractor pay without photo, ask confirmation first
+    if (txType === "spent" && category === "contractor_pay" && !photoPath && !showNoReceiptConfirm) {
+      setShowNoReceiptConfirm(true);
+      return;
+    }
+    setShowNoReceiptConfirm(false);
     const error = validateForm();
     if (error) {
       toast({ title: "Please fix the following", description: error, variant: "destructive" });
@@ -367,10 +375,13 @@ export default function CashTransactionPage() {
                 {/* Photo upload for ALL cash spent categories */}
                 {txType === "spent" && (
                   <div className="space-y-2">
-                    <Label>Photo / Receipt <span className="text-destructive">*</span></Label>
+                    <Label>
+                      Photo / Receipt {category !== "contractor_pay" && <span className="text-destructive">*</span>}
+                      {category === "contractor_pay" && <span className="text-muted-foreground text-xs ml-1">(optional)</span>}
+                    </Label>
                     {photoPreview ? (
                       <div className="relative rounded-lg overflow-hidden bg-muted">
-                        <img src={photoPreview} alt="Deposit slip" className="w-full max-h-32 object-contain" />
+                        <img src={photoPreview} alt="Receipt" className="w-full max-h-32 object-contain" />
                         {uploading && (
                           <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
                             <Loader2 className="w-6 h-6 animate-spin text-white" />
@@ -379,19 +390,39 @@ export default function CashTransactionPage() {
                         <button
                           type="button"
                           className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/50 text-white flex items-center justify-center"
-                          onClick={() => { setPhotoPreview(null); setPhotoPath(""); }}
+                          onClick={() => { setPhotoPreview(null); setPhotoPath(""); setShowNoReceiptConfirm(false); }}
                         >
                           <X className="w-3 h-3" />
                         </button>
                       </div>
                     ) : (
                       <div className="flex gap-2">
-                        <Button type="button" variant="outline" size="sm" className="flex-1 gap-1" onClick={() => cameraInputRef.current?.click()}>
-                          <Camera className="w-3.5 h-3.5" /> Take Photo
-                        </Button>
-                        <Button type="button" variant="outline" size="sm" className="flex-1 gap-1" onClick={() => fileInputRef.current?.click()}>
-                          <Upload className="w-3.5 h-3.5" /> Upload
-                        </Button>
+                        <label className="flex-1 cursor-pointer">
+                          <span className="inline-flex items-center justify-center w-full whitespace-nowrap rounded-md text-sm font-medium border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-3 gap-1">
+                            <Camera className="w-3.5 h-3.5" /> Take Photo
+                          </span>
+                          <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e => { if (e.target.files?.[0]) handlePhotoFile(e.target.files[0]); e.target.value = ""; }} />
+                        </label>
+                        <label className="flex-1 cursor-pointer">
+                          <span className="inline-flex items-center justify-center w-full whitespace-nowrap rounded-md text-sm font-medium border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-3 gap-1">
+                            <Upload className="w-3.5 h-3.5" /> Upload
+                          </span>
+                          <input type="file" accept="image/*,application/pdf" className="hidden" onChange={e => { if (e.target.files?.[0]) handlePhotoFile(e.target.files[0]); e.target.value = ""; }} />
+                        </label>
+                      </div>
+                    )}
+                    {/* Confirmation prompt when contractor pay has no receipt */}
+                    {showNoReceiptConfirm && !photoPath && (
+                      <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-md p-3 space-y-2">
+                        <p className="text-sm text-amber-800 dark:text-amber-300">Are you sure the contractor did not provide a receipt to upload?</p>
+                        <div className="flex gap-2">
+                          <Button type="button" variant="outline" size="sm" className="flex-1" onClick={() => setShowNoReceiptConfirm(false)}>
+                            No, let me add one
+                          </Button>
+                          <Button type="submit" size="sm" className="flex-1">
+                            Yes, continue without receipt
+                          </Button>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -433,9 +464,7 @@ export default function CashTransactionPage() {
                   </div>
                 )}
 
-                {/* Hidden file inputs for photo upload (shared by bank_deposit and contractor_pay) */}
-                <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => e.target.files?.[0] && handlePhotoFile(e.target.files[0])} />
-                <input ref={fileInputRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={e => e.target.files?.[0] && handlePhotoFile(e.target.files[0])} />
+
 
                 <Button
                   type="submit"
