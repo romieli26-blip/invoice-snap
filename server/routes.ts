@@ -1160,19 +1160,24 @@ export async function registerRoutes(
     // Transaction report HTML complete
     html += `<p style="color:#888;font-size:12px;margin-top:20px;">- Receipt App Daily Report</p></div>`;
 
-    // Build separate Time Report HTML
+    // Build separate Time Report HTML with financial summary
     const todayTimeReports = await storage.getTimeReportsByDate(date);
     let timeHtml = `<div style="font-family:Arial,sans-serif;max-width:800px;margin:0 auto;">`;
     timeHtml += `<h1 style="color:#3b82f6;">Daily Work Report - ${date}</h1>`;
     timeHtml += `<p style="color:#666;">Generated on ${new Date().toISOString().replace("T", " ").slice(0, 19)}</p>`;
     if (todayTimeReports.length > 0) {
       const allUsersMap = new Map(allUsers.map(u => [u.id, u]));
+
+      // Track daily totals per worker for the summary
+      const workerTotals = new Map<number, { name: string; hours: number; laborCost: number; mileageVal: number; specialVal: number; entries: number }>();
+
+      // Individual entries
+      timeHtml += `<h2 style="color:#333;border-bottom:1px solid #ddd;padding-bottom:5px;">Entries</h2>`;
       for (const tr of todayTimeReports) {
         const trUser = allUsersMap.get(tr.userId);
         const name = trUser?.displayName || "Unknown";
         let accomplishmentsList: string[] = [];
         try { accomplishmentsList = JSON.parse(tr.accomplishments || "[]"); } catch {}
-        // Calculate hours from timeBlocks if available, fallback to startTime/endTime
         let hours = 0;
         let timeDisplay = `${tr.startTime} - ${tr.endTime}`;
         let blocks: { start: string; end: string }[] = [];
@@ -1189,20 +1194,74 @@ export async function registerRoutes(
           const [eh, em] = (tr.endTime || "0:0").split(":").map(Number);
           hours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
         }
+
+        // Financial calc for this entry
+        const homeProperty = (trUser as any)?.homeProperty || "";
+        const isOffSite = tr.property !== homeProperty && (trUser as any)?.allowOffSite;
+        const rate = isOffSite ? parseFloat((trUser as any)?.offSiteRate || "0") : parseFloat((trUser as any)?.baseRate || "0");
+        const laborCost = hours * rate;
+        const milesVal = parseFloat(tr.miles || "0");
+        const mileageVal = parseFloat(tr.mileageAmount || "0");
+        const specialVal = tr.specialTerms ? parseFloat(tr.specialTermsAmount || "0") : 0;
+        const entryCost = laborCost + mileageVal + specialVal;
+
+        // Accumulate worker totals
+        const existing = workerTotals.get(tr.userId) || { name, hours: 0, laborCost: 0, mileageVal: 0, specialVal: 0, entries: 0 };
+        existing.hours += hours;
+        existing.laborCost += laborCost;
+        existing.mileageVal += mileageVal;
+        existing.specialVal += specialVal;
+        existing.entries += 1;
+        workerTotals.set(tr.userId, existing);
+
         timeHtml += `<div style="background:#f0f4ff;padding:10px;border-radius:5px;margin:8px 0;">`;
-        timeHtml += `<p><strong>${name}</strong> - ${tr.property} (${timeDisplay}, ${hours.toFixed(1)}h)</p>`;
+        timeHtml += `<p><strong>${name}</strong> - ${tr.property}${isOffSite ? " (off-site)" : ""} (${timeDisplay}, ${hours.toFixed(1)}h)</p>`;
         if (accomplishmentsList.length > 0) {
           timeHtml += `<ul style="margin:4px 0;">${accomplishmentsList.map((a: string) => `<li>${a}</li>`).join("")}</ul>`;
         }
-        if (tr.miles) timeHtml += `<p>Miles: ${tr.miles} ($${tr.mileageAmount || "0.00"})</p>`;
-        if (tr.specialTerms) timeHtml += `<p>Travel Expenses: $${tr.specialTermsAmount || "0.00"}</p>`;
-        if (tr.notes) timeHtml += `<p style="color:#666;">Notes: ${tr.notes}</p>`;
+        timeHtml += `<p style="font-size:13px;color:#444;">Labor: ${hours.toFixed(1)}h × $${rate.toFixed(2)} = <strong>$${laborCost.toFixed(2)}</strong>`;
+        timeHtml += ` | Miles: ${milesVal > 0 ? milesVal.toString() : "0"} ($${mileageVal.toFixed(2)})`;
+        timeHtml += ` | Special Terms: $${specialVal.toFixed(2)}`;
+        timeHtml += ` | <strong>Entry Total: $${entryCost.toFixed(2)}</strong></p>`;
+        if (tr.notes) timeHtml += `<p style="color:#666;font-size:12px;">Notes: ${tr.notes}</p>`;
         timeHtml += `</div>`;
       }
+
+      // Daily summary per worker
+      timeHtml += `<h2 style="color:#333;border-bottom:1px solid #ddd;padding-bottom:5px;margin-top:20px;">Daily Summary</h2>`;
+      timeHtml += `<table style="width:100%;border-collapse:collapse;margin:10px 0;">`;
+      timeHtml += `<tr style="background:#f0f0f0;"><th style="text-align:left;padding:8px;border:1px solid #ddd;">Worker</th><th style="padding:8px;border:1px solid #ddd;">Entries</th><th style="padding:8px;border:1px solid #ddd;">Hours</th><th style="padding:8px;border:1px solid #ddd;">Labor</th><th style="padding:8px;border:1px solid #ddd;">Mileage</th><th style="padding:8px;border:1px solid #ddd;">Special</th><th style="padding:8px;border:1px solid #ddd;font-weight:bold;">Total</th></tr>`;
+      let grandTotalHours = 0, grandTotalLabor = 0, grandTotalMileage = 0, grandTotalSpecial = 0;
+      for (const [, wt] of workerTotals) {
+        const workerTotal = wt.laborCost + wt.mileageVal + wt.specialVal;
+        grandTotalHours += wt.hours;
+        grandTotalLabor += wt.laborCost;
+        grandTotalMileage += wt.mileageVal;
+        grandTotalSpecial += wt.specialVal;
+        timeHtml += `<tr>`;
+        timeHtml += `<td style="padding:6px;border:1px solid #ddd;">${wt.name}</td>`;
+        timeHtml += `<td style="padding:6px;border:1px solid #ddd;text-align:center;">${wt.entries}</td>`;
+        timeHtml += `<td style="padding:6px;border:1px solid #ddd;text-align:right;">${wt.hours.toFixed(1)}h</td>`;
+        timeHtml += `<td style="padding:6px;border:1px solid #ddd;text-align:right;">$${wt.laborCost.toFixed(2)}</td>`;
+        timeHtml += `<td style="padding:6px;border:1px solid #ddd;text-align:right;">$${wt.mileageVal.toFixed(2)}</td>`;
+        timeHtml += `<td style="padding:6px;border:1px solid #ddd;text-align:right;">$${wt.specialVal.toFixed(2)}</td>`;
+        timeHtml += `<td style="padding:6px;border:1px solid #ddd;text-align:right;font-weight:bold;">$${workerTotal.toFixed(2)}</td>`;
+        timeHtml += `</tr>`;
+      }
+      const grandTotal = grandTotalLabor + grandTotalMileage + grandTotalSpecial;
+      timeHtml += `<tr style="background:#f8f8f8;font-weight:bold;">`;
+      timeHtml += `<td style="padding:8px;border:1px solid #ddd;">TOTAL</td>`;
+      timeHtml += `<td style="padding:8px;border:1px solid #ddd;text-align:center;">${todayTimeReports.length}</td>`;
+      timeHtml += `<td style="padding:8px;border:1px solid #ddd;text-align:right;">${grandTotalHours.toFixed(1)}h</td>`;
+      timeHtml += `<td style="padding:8px;border:1px solid #ddd;text-align:right;">$${grandTotalLabor.toFixed(2)}</td>`;
+      timeHtml += `<td style="padding:8px;border:1px solid #ddd;text-align:right;">$${grandTotalMileage.toFixed(2)}</td>`;
+      timeHtml += `<td style="padding:8px;border:1px solid #ddd;text-align:right;">$${grandTotalSpecial.toFixed(2)}</td>`;
+      timeHtml += `<td style="padding:8px;border:1px solid #ddd;text-align:right;font-size:16px;">$${grandTotal.toFixed(2)}</td>`;
+      timeHtml += `</tr></table>`;
     } else {
       timeHtml += `<p style="color:#888;">No work reports today.</p>`;
     }
-    timeHtml += `<p style="color:#888;font-size:12px;margin-top:20px;">- Receipt App Work Report</p></div>`;
+    timeHtml += `<p style="color:#888;font-size:12px;margin-top:20px;">- Jetsetter Reporting</p></div>`;
 
     // Send transaction report to dailyTransactionReport subscribers
     const txSubscribers = allUsers.filter((u: any) => u.dailyTransactionReport && u.email);
@@ -1923,48 +1982,113 @@ export async function registerRoutes(
     });
     res.json(report);
 
-    // Drive sync in background
+    // Background: email notification + Drive sync
     setImmediate(async () => {
       try {
-        if (isGoogleEnabled()) {
-          const user = await storage.getUser(session.userId);
-          const userName = (user as any)?.firstName && (user as any)?.lastName
-            ? `${(user as any).firstName}_${(user as any).lastName}`
-            : user?.displayName || "Unknown";
-          const folderName = `${property}_${userName}`;
+        const user = await storage.getUser(session.userId);
+        const displayName = user?.displayName || "Unknown";
+        const userName = (user as any)?.firstName && (user as any)?.lastName
+          ? `${(user as any).firstName}_${(user as any).lastName}`
+          : displayName;
+        const accList = Array.isArray(accomplishments) ? accomplishments : JSON.parse(accomplishments);
 
-          const mainFolder = await ensureDriveFolder("Time Reporting");
-          if (mainFolder) {
-            const userFolder = await ensureDriveFolder(folderName, mainFolder);
-            if (userFolder) {
-              const reportsFolder = await ensureDriveFolder("Time Reports", userFolder);
-              if (reportsFolder) {
-                const accList = Array.isArray(accomplishments) ? accomplishments : JSON.parse(accomplishments);
-                // Build time display for Drive report
-                let driveTimeDisplay = `${startTime} - ${endTime}`;
-                if (timeBlocks && Array.isArray(timeBlocks) && timeBlocks.length > 1) {
-                  driveTimeDisplay = timeBlocks.map((b: any) => `${b.start} - ${b.end}`).join(", ");
+        // Calculate hours from time blocks
+        let totalHours = 0;
+        let timeDisplay = `${startTime} - ${endTime}`;
+        const blocks = timeBlocks && Array.isArray(timeBlocks) ? timeBlocks : [];
+        if (blocks.length > 0) {
+          totalHours = blocks.reduce((sum: number, b: any) => {
+            const [bsh, bsm] = b.start.split(":").map(Number);
+            const [beh, bem] = b.end.split(":").map(Number);
+            return sum + ((beh * 60 + bem) - (bsh * 60 + bsm)) / 60;
+          }, 0);
+          timeDisplay = blocks.map((b: any) => `${b.start} - ${b.end}`).join(", ");
+        } else {
+          const [sh, sm] = (startTime || "0:0").split(":").map(Number);
+          const [eh, em] = (endTime || "0:0").split(":").map(Number);
+          totalHours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+        }
+
+        // Financial calculations
+        const homeProperty = (user as any)?.homeProperty || "";
+        const isOffSite = property !== homeProperty && (user as any)?.allowOffSite;
+        const rate = isOffSite ? parseFloat((user as any)?.offSiteRate || "0") : parseFloat((user as any)?.baseRate || "0");
+        const laborCost = totalHours * rate;
+        const milesVal = parseFloat(miles || "0");
+        const mileageVal = parseFloat(mileageAmount || "0");
+        const specialVal = specialTerms ? parseFloat(specialTermsAmount || "0") : 0;
+        const totalCost = laborCost + mileageVal + specialVal;
+
+        // Build detailed HTML report
+        const reportHtml = `<html><body style="font-family:Arial;max-width:600px;margin:0 auto;">
+          <h2 style="color:#3b82f6;border-bottom:2px solid #3b82f6;padding-bottom:8px;">Work Report - ${date}</h2>
+          <table style="width:100%;border-collapse:collapse;margin:10px 0;">
+            <tr><td style="padding:6px 0;color:#666;">Employee</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${displayName}</td></tr>
+            <tr><td style="padding:6px 0;color:#666;">Property</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${property}${isOffSite ? " (off-site)" : ""}</td></tr>
+            <tr><td style="padding:6px 0;color:#666;">Date</td><td style="padding:6px 0;text-align:right;">${date}</td></tr>
+            <tr><td style="padding:6px 0;color:#666;">Time Blocks</td><td style="padding:6px 0;text-align:right;">${timeDisplay}</td></tr>
+            <tr><td style="padding:6px 0;color:#666;">Total Hours</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${totalHours.toFixed(1)} hrs</td></tr>
+          </table>
+          <h3 style="margin-top:15px;">Accomplishments</h3>
+          <ul style="margin:4px 0;">${accList.map((a: string) => `<li>${a}</li>`).join("")}</ul>
+          ${notes ? `<p style="color:#666;"><em>Notes: ${notes}</em></p>` : ""}
+          <h3 style="margin-top:15px;border-top:1px solid #ddd;padding-top:10px;">Financial Summary</h3>
+          <table style="width:100%;border-collapse:collapse;">
+            <tr><td style="padding:4px 0;">Labor: ${totalHours.toFixed(1)} hrs × $${rate.toFixed(2)}/hr</td><td style="padding:4px 0;text-align:right;font-weight:bold;">$${laborCost.toFixed(2)}</td></tr>
+            <tr><td style="padding:4px 0;">Mileage: ${milesVal > 0 ? milesVal + " miles" : "0 miles"}</td><td style="padding:4px 0;text-align:right;">$${mileageVal.toFixed(2)}</td></tr>
+            <tr><td style="padding:4px 0;">Special Terms / Travel</td><td style="padding:4px 0;text-align:right;">$${specialVal.toFixed(2)}</td></tr>
+            <tr style="border-top:2px solid #333;"><td style="padding:8px 0;font-weight:bold;font-size:16px;">Total</td><td style="padding:8px 0;text-align:right;font-weight:bold;font-size:16px;">$${totalCost.toFixed(2)}</td></tr>
+          </table>
+          <p style="color:#888;font-size:11px;margin-top:20px;">- Jetsetter Reporting</p>
+        </body></html>`;
+
+        // 1. Send immediate email to dailyTimeReport subscribers
+        try {
+          const allUsers = await storage.getAllUsers();
+          const timeEmailRecipients = allUsers
+            .filter((u: any) => u.dailyTimeReport && u.email && isAdminRole(u.role))
+            .map((u: any) => ({ name: u.displayName, email: u.email }));
+          if (timeEmailRecipients.length > 0) {
+            await sendEmailToRecipients(
+              timeEmailRecipients,
+              `Work Report: ${displayName} - ${property} - ${date} (${totalHours.toFixed(1)}h / $${totalCost.toFixed(2)})`,
+              reportHtml
+            );
+          }
+        } catch (e) { console.error("[time-report] Email error:", e); }
+
+        // 2. Drive sync: save to daily folder + user folder
+        if (isGoogleEnabled()) {
+          try {
+            const reportFilePath = path.resolve(dataDir, `time-report-${report.id}.html`);
+            fs.writeFileSync(reportFilePath, reportHtml);
+
+            const mainFolder = await ensureDriveFolder("Time Reporting");
+            if (mainFolder) {
+              // Save to daily shared folder: Time Reporting > Daily Reports > YYYY-MM-DD
+              const dailyReportsFolder = await ensureDriveFolder("Daily Reports", mainFolder);
+              if (dailyReportsFolder) {
+                const dayFolder = await ensureDriveFolder(date, dailyReportsFolder);
+                if (dayFolder) {
+                  await uploadToDrive(reportFilePath, `${displayName}_${property}_${date}.html`, dayFolder);
                 }
-                const reportHtml = `<html><body style="font-family:Arial;">
-                  <h2>Time Report - ${date}</h2>
-                  <p><strong>Employee:</strong> ${user?.displayName}</p>
-                  <p><strong>Property:</strong> ${property}</p>
-                  <p><strong>Hours:</strong> ${driveTimeDisplay}</p>
-                  <p><strong>Accomplishments:</strong></p>
-                  <ul>${accList.map((a: string) => `<li>${a}</li>`).join("")}</ul>
-                  ${miles ? `<p><strong>Miles:</strong> ${miles} ($${mileageAmount})</p>` : ""}
-                  ${specialTerms ? `<p><strong>Travel Expenses:</strong> $${specialTermsAmount}</p>` : ""}
-                  ${notes ? `<p><strong>Notes:</strong> ${notes}</p>` : ""}
-                </body></html>`;
-                const reportPath = path.resolve(dataDir, `time-report-${report.id}.html`);
-                fs.writeFileSync(reportPath, reportHtml);
-                await uploadToDrive(reportPath, `Time_Report_${date}.html`, reportsFolder);
-                try { fs.unlinkSync(reportPath); } catch {}
+              }
+
+              // Also save to user folder: Time Reporting > Property_Name > Time Reports
+              const folderName = `${property}_${userName}`;
+              const userFolder = await ensureDriveFolder(folderName, mainFolder);
+              if (userFolder) {
+                const reportsFolder = await ensureDriveFolder("Time Reports", userFolder);
+                if (reportsFolder) {
+                  await uploadToDrive(reportFilePath, `Time_Report_${date}.html`, reportsFolder);
+                }
               }
             }
-          }
+
+            try { fs.unlinkSync(reportFilePath); } catch {}
+          } catch (e) { console.error("[time-report] Drive sync error:", e); }
         }
-      } catch (e) { console.error("[time-report] Drive sync error:", e); }
+      } catch (e) { console.error("[time-report] Background error:", e); }
     });
   });
 
