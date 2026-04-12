@@ -179,7 +179,7 @@ export default function AdminPage() {
     },
   });
 
-  if (user?.role !== "admin") {
+  if (user?.role !== "admin" && user?.role !== "super_admin") {
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
         <p className="text-muted-foreground">Admin access required.</p>

@@ -585,7 +585,7 @@ export async function registerRoutes(
   app.get("/api/properties", async (req, res) => {
     const session = await requireAuth(req, res);
     if (!session) return;
-    if (session.role === "admin") {
+    if (isAdminRole(session.role)) {
       const props = await storage.getAllProperties();
       res.json(props);
     } else {
@@ -723,7 +723,7 @@ export async function registerRoutes(
     if (!session) return;
 
     let invoicesList;
-    if (session.role === "admin") {
+    if (isAdminRole(session.role)) {
       invoicesList = await storage.getAllInvoices();
     } else {
       invoicesList = await storage.getInvoicesByUser(session.userId);
@@ -1043,7 +1043,7 @@ export async function registerRoutes(
     if (!session) return;
 
     let invoicesList;
-    if (session.role === "admin") {
+    if (isAdminRole(session.role)) {
       invoicesList = await storage.getAllInvoices();
     } else {
       invoicesList = await storage.getInvoicesByUser(session.userId);
@@ -1173,7 +1173,7 @@ export async function registerRoutes(
     if (!session) return;
 
     let txList;
-    if (session.role === "admin") {
+    if (isAdminRole(session.role)) {
       txList = await storage.getAllCashTransactions();
     } else {
       txList = await storage.getCashTransactionsByUser(session.userId);
@@ -1311,7 +1311,7 @@ export async function registerRoutes(
     if (!session) return;
 
     let props;
-    if (session.role === "admin") {
+    if (isAdminRole(session.role)) {
       props = await storage.getAllProperties();
     } else {
       props = await storage.getPropertiesForUser(session.userId);
