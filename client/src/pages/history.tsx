@@ -480,21 +480,58 @@ export default function HistoryPage() {
                             })()}
                           </p>
                         </div>
-                        <button
-                          className="text-muted-foreground hover:text-destructive p-0.5 flex-shrink-0"
-                          onClick={async () => {
-                            if (!window.confirm("Delete this work report?")) return;
-                            try {
-                              await apiRequest("DELETE", `/api/time-reports/${tr.id}`);
-                              queryClient.invalidateQueries({ queryKey: ["/api/time-reports"] });
-                              toast({ title: "Report deleted" });
-                            } catch {
-                              toast({ title: "Failed to delete", variant: "destructive" });
-                            }
-                          }}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center gap-0.5 flex-shrink-0">
+                          <button
+                            className="text-muted-foreground hover:text-blue-600 p-0.5"
+                            title="Download report"
+                            onClick={() => {
+                              // Build a text summary for download
+                              let blocks: any[] = [];
+                              try { blocks = tr.timeBlocks ? JSON.parse(tr.timeBlocks) : []; } catch {}
+                              const timeStr = blocks.length > 0
+                                ? blocks.map((b: any) => `${b.start} - ${b.end}`).join(", ")
+                                : `${tr.startTime} - ${tr.endTime}`;
+                              let accs: string[] = [];
+                              try { accs = JSON.parse(tr.accomplishments); } catch {}
+                              const lines = [
+                                `Work Report - ${tr.date}`,
+                                `Employee: ${tr.submittedBy || user?.displayName || "N/A"}`,
+                                `Property: ${tr.property}`,
+                                `Time: ${timeStr}`,
+                                ``,
+                                `Accomplishments:`,
+                                ...accs.map(a => `  - ${a}`),
+                              ];
+                              if (tr.miles && parseFloat(tr.miles) > 0) lines.push(`Miles: ${tr.miles} ($${tr.mileageAmount})`);
+                              if (tr.specialTerms === 1 && tr.specialTermsAmount) lines.push(`Special Terms: $${tr.specialTermsAmount}`);
+                              if (tr.notes) lines.push(`Notes: ${tr.notes}`);
+                              const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement("a");
+                              a.href = url;
+                              a.download = `Work_Report_${tr.date}_${tr.property.replace(/\s/g, "_")}.txt`;
+                              a.click();
+                              URL.revokeObjectURL(url);
+                            }}
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            className="text-muted-foreground hover:text-destructive p-0.5"
+                            onClick={async () => {
+                              if (!window.confirm("Delete this work report?")) return;
+                              try {
+                                await apiRequest("DELETE", `/api/time-reports/${tr.id}`);
+                                queryClient.invalidateQueries({ queryKey: ["/api/time-reports"] });
+                                toast({ title: "Report deleted" });
+                              } catch {
+                                toast({ title: "Failed to delete", variant: "destructive" });
+                              }
+                            }}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                       <div className="mt-1">
                         {(() => {

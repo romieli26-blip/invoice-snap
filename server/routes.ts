@@ -1964,6 +1964,37 @@ export async function registerRoutes(
     if (!property || !date || !startTime || !endTime || !accomplishments) {
       return res.status(400).json({ error: "Missing required fields" });
     }
+
+    // Check for overlapping time blocks with existing reports by same user on same day
+    const existingReports = await storage.getTimeReportsByUserAndDate(session.userId, date);
+    if (existingReports.length > 0 && timeBlocks && Array.isArray(timeBlocks)) {
+      for (const existing of existingReports) {
+        let existingBlocks: { start: string; end: string }[] = [];
+        try { existingBlocks = existing.timeBlocks ? JSON.parse(existing.timeBlocks) : []; } catch {}
+        if (existingBlocks.length === 0) {
+          existingBlocks = [{ start: existing.startTime, end: existing.endTime }];
+        }
+        for (const newBlock of timeBlocks) {
+          const [nsh, nsm] = newBlock.start.split(":").map(Number);
+          const [neh, nem] = newBlock.end.split(":").map(Number);
+          const newStart = nsh * 60 + nsm;
+          const newEnd = neh * 60 + nem;
+          for (const exBlock of existingBlocks) {
+            const [esh, esm] = exBlock.start.split(":").map(Number);
+            const [eeh, eem] = exBlock.end.split(":").map(Number);
+            const exStart = esh * 60 + esm;
+            const exEnd = eeh * 60 + eem;
+            // Overlap: new starts before existing ends AND new ends after existing starts
+            if (newStart < exEnd && newEnd > exStart) {
+              return res.status(400).json({
+                error: `Time overlap detected: ${newBlock.start}-${newBlock.end} overlaps with an existing report (${exBlock.start}-${exBlock.end}) on ${date}. Please adjust your time blocks or delete the conflicting report.`
+              });
+            }
+          }
+        }
+      }
+    }
+
     const report = await storage.createTimeReport({
       userId: session.userId,
       property,

@@ -419,6 +419,9 @@ export class DatabaseStorage implements IStorage {
   async getTimeReportsByDate(date: string): Promise<TimeReport[]> {
     return db.select().from(timeReports).where(eq(timeReports.date, date)).all();
   }
+  async getTimeReportsByUserAndDate(userId: number, date: string): Promise<TimeReport[]> {
+    return db.select().from(timeReports).where(and(eq(timeReports.userId, userId), eq(timeReports.date, date))).all();
+  }
   async getAllTimeReports(): Promise<TimeReport[]> {
     return db.select().from(timeReports).orderBy(desc(timeReports.id)).all();
   }
