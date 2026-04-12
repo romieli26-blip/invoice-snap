@@ -64,7 +64,13 @@ export default function TimeReportPage() {
   }
 
   // Calculate total hours across all blocks
-  const totalMinutes = timeBlocks.reduce((sum, b) => {
+  const hasInvalidBlock = timeBlocks.some(b => {
+    if (!b.start || !b.end) return false;
+    const [sh, sm] = b.start.split(":").map(Number);
+    const [eh, em] = b.end.split(":").map(Number);
+    return (eh * 60 + em) <= (sh * 60 + sm);
+  });
+  const totalMinutes = hasInvalidBlock ? 0 : timeBlocks.reduce((sum, b) => {
     if (!b.start || !b.end) return sum;
     const [sh, sm] = b.start.split(":").map(Number);
     const [eh, em] = b.end.split(":").map(Number);
@@ -124,6 +130,16 @@ export default function TimeReportPage() {
     if (!allBlocksFilled) {
       toast({ title: "Please fill in all time blocks", variant: "destructive" });
       return;
+    }
+    // Validate end time is after start time for each block
+    for (let i = 0; i < timeBlocks.length; i++) {
+      const b = timeBlocks[i];
+      const [sh, sm] = b.start.split(":").map(Number);
+      const [eh, em] = b.end.split(":").map(Number);
+      if (eh * 60 + em <= sh * 60 + sm) {
+        toast({ title: `Time block ${i + 1}: end time must be after start time`, variant: "destructive" });
+        return;
+      }
     }
     if (requireFinancialConfirm) {
       setShowConfirm(true);
@@ -327,36 +343,48 @@ export default function TimeReportPage() {
             {/* Time blocks */}
             <div className="space-y-2">
               <Label>Time Worked</Label>
-              {timeBlocks.map((block, idx) => (
-                <div key={idx} className="flex items-center gap-2">
-                  <Select value={block.start} onValueChange={v => updateTimeBlock(idx, "start", v)}>
-                    <SelectTrigger className="flex-1">
-                      <SelectValue placeholder="Start" />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-[200px]">
-                      {TIME_OPTIONS.map(t => (
-                        <SelectItem key={`s-${idx}-${t}`} value={t}>{formatTime12(t)}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <span className="text-xs text-muted-foreground">to</span>
-                  <Select value={block.end} onValueChange={v => updateTimeBlock(idx, "end", v)}>
-                    <SelectTrigger className="flex-1">
-                      <SelectValue placeholder="End" />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-[200px]">
-                      {TIME_OPTIONS.map(t => (
-                        <SelectItem key={`e-${idx}-${t}`} value={t}>{formatTime12(t)}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {timeBlocks.length > 1 && (
-                    <button type="button" onClick={() => removeTimeBlock(idx)} className="text-muted-foreground hover:text-destructive">
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-              ))}
+              {timeBlocks.map((block, idx) => {
+                const blockInvalid = block.start && block.end && (() => {
+                  const [sh, sm] = block.start.split(":").map(Number);
+                  const [eh, em] = block.end.split(":").map(Number);
+                  return (eh * 60 + em) <= (sh * 60 + sm);
+                })();
+                return (
+                  <div key={idx}>
+                    <div className="flex items-center gap-2">
+                      <Select value={block.start} onValueChange={v => updateTimeBlock(idx, "start", v)}>
+                        <SelectTrigger className="flex-1">
+                          <SelectValue placeholder="Start" />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-[200px]">
+                          {TIME_OPTIONS.map(t => (
+                            <SelectItem key={`s-${idx}-${t}`} value={t}>{formatTime12(t)}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <span className="text-xs text-muted-foreground">to</span>
+                      <Select value={block.end} onValueChange={v => updateTimeBlock(idx, "end", v)}>
+                        <SelectTrigger className={`flex-1 ${blockInvalid ? "border-destructive" : ""}`}>
+                          <SelectValue placeholder="End" />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-[200px]">
+                          {TIME_OPTIONS.map(t => (
+                            <SelectItem key={`e-${idx}-${t}`} value={t}>{formatTime12(t)}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {timeBlocks.length > 1 && (
+                        <button type="button" onClick={() => removeTimeBlock(idx)} className="text-muted-foreground hover:text-destructive">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    {blockInvalid && (
+                      <p className="text-xs text-destructive mt-1">End time must be after start time</p>
+                    )}
+                  </div>
+                );
+              })}
               <Button type="button" variant="outline" size="sm" className="w-full gap-1 text-xs" onClick={addTimeBlock}>
                 <Plus className="w-3 h-3" /> Add Time Block (e.g. returned after break)
               </Button>
