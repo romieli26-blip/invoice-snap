@@ -1567,15 +1567,30 @@ export async function registerRoutes(
     return rows;
   }
 
-  async function parseStatementPdf(filePath: string): Promise<{ date: string; description: string; amount: string }[]> {
+  async function parseStatementPdf(filePath: string, fallbackYear?: string): Promise<{ date: string; description: string; amount: string }[]> {
     const buffer = fs.readFileSync(filePath);
     const data = await pdfParse(buffer);
     const text = data.text;
     const rows: { date: string; description: string; amount: string }[] = [];
 
-    // Try to infer the statement year from the text (look for "2025" or "2026" etc.)
-    const yearMatch = text.match(/20\d{2}/);
-    const defaultYear = yearMatch ? yearMatch[0] : new Date().getFullYear().toString();
+    // Infer the statement year from billing period or statement date
+    // Look for patterns like "02/17/26" or "03/16/2026" or "2026 totals" or "Billing Period: 02/17/26-03/16/26"
+    // Use the fallback year from the admin-provided date range, or infer from PDF text
+    let defaultYear = fallbackYear || new Date().getFullYear().toString();
+    if (!fallbackYear) {
+      const billingMatch = text.match(/Billing\s*Period[:\s]*(\d{1,2}\/\d{1,2}\/(\d{2,4}))/i);
+      if (billingMatch) {
+        const y = billingMatch[2];
+        defaultYear = y.length === 2 ? "20" + y : y;
+      } else {
+        const stmtYearMatch = text.match(/(?:as of|through|ending|statement)\s+\d{1,2}\/\d{1,2}\/(\d{2,4})/i)
+          || text.match(/(20\d{2})\s+(?:totals|statement)/i);
+        if (stmtYearMatch) {
+          const y = stmtYearMatch[1];
+          defaultYear = y.length === 2 ? "20" + y : y;
+        }
+      }
+    }
 
     const lines = text.split("\n").map(l => l.trim()).filter(l => l);
     for (const line of lines) {
@@ -1583,15 +1598,17 @@ export async function registerRoutes(
       const amountMatch = line.match(/-?\$?([\d,]+\.\d{2})\s*$/);
       if (!amountMatch) continue;
 
-      // Match date at start: MM/DD/YYYY, MM-DD-YYYY, MM/DD, or MM/DD MM/DD (sale+post date)
-      // Pattern: optional sale date + post date, then description, then amount
+      // Match date at start: handles various formats from PDF extraction
+      // PDF text often concatenates columns: "02/1702/17LOWES..." (no spaces)
       const datePatterns = [
         // MM/DD/YYYY or MM-DD-YYYY (full date)
         /^(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/,
-        // MM/DD MM/DD (sale date + post date, no year - common in CC statements)
-        /^(\d{1,2}\/\d{1,2})\s+\d{1,2}\/\d{1,2}\s/,
-        // Single MM/DD (no year)
-        /^(\d{1,2}\/\d{1,2})\s/,
+        // MM/DDMM/DD (no spaces between sale+post date - common in PDF extraction)
+        /^(\d{1,2}\/\d{1,2})\d{1,2}\/\d{1,2}/,
+        // MM/DD MM/DD (with space between sale+post date)
+        /^(\d{1,2}\/\d{1,2})\s+\d{1,2}\/\d{1,2}/,
+        // Single MM/DD
+        /^(\d{1,2}\/\d{1,2})[\s\D]/,
       ];
 
       let date = "";
@@ -1602,16 +1619,22 @@ export async function registerRoutes(
           const raw = m[1];
           const parts = raw.split(/[\/\-]/);
           if (parts.length === 3) {
-            // Has year: MM/DD/YYYY
             const y = parts[2].length === 2 ? "20" + parts[2] : parts[2];
             date = `${y}-${parts[0].padStart(2, "0")}-${parts[1].padStart(2, "0")}`;
           } else if (parts.length === 2) {
-            // No year: MM/DD — use default year from statement
             date = `${defaultYear}-${parts[0].padStart(2, "0")}-${parts[1].padStart(2, "0")}`;
           }
-          // For "MM/DD MM/DD" pattern, skip past both dates
-          const dualDateMatch = line.match(/^\d{1,2}\/\d{1,2}\s+\d{1,2}\/\d{1,2}\s/);
-          descStart = dualDateMatch ? dualDateMatch[0].length : m[0].length;
+          // Skip past all date characters to get to description
+          // Handle: "02/1702/17LOWES" or "02/17 02/17 LOWES"
+          const dualNoSpace = line.match(/^\d{1,2}\/\d{1,2}\d{1,2}\/\d{1,2}/);
+          const dualWithSpace = line.match(/^\d{1,2}\/\d{1,2}\s+\d{1,2}\/\d{1,2}\s*/);
+          if (dualNoSpace) {
+            descStart = dualNoSpace[0].length;
+          } else if (dualWithSpace) {
+            descStart = dualWithSpace[0].length;
+          } else {
+            descStart = m[0].length;
+          }
           break;
         }
       }
@@ -1621,7 +1644,7 @@ export async function registerRoutes(
       let amount = amountMatch[1].replace(/,/g, "");
       // Extract description: everything between date(s) and amount
       let desc = line.slice(descStart, amountMatch.index!).trim();
-      // Clean up extra whitespace and state abbreviations
+      // Clean up extra whitespace
       desc = desc.replace(/\s{2,}/g, " ");
       if (!desc) desc = "Unknown";
 
@@ -1650,7 +1673,9 @@ export async function registerRoutes(
     const ext = path.extname(req.file.originalname || req.file.filename).toLowerCase();
     let transactions: { date: string; description: string; amount: string }[];
     if (ext === ".pdf" || req.file.mimetype === "application/pdf") {
-      transactions = await parseStatementPdf(fullPath);
+      // Pass the year from the admin-provided date range as fallback
+      const stmtYear = startDate ? startDate.split("-")[0] : undefined;
+      transactions = await parseStatementPdf(fullPath, stmtYear);
     } else {
       transactions = parseStatementCsv(fullPath);
     }
