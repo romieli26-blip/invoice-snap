@@ -1593,66 +1593,96 @@ export async function registerRoutes(
     }
 
     const lines = text.split("\n").map(l => l.trim()).filter(l => l);
+
+    // Helper to parse a date string into YYYY-MM-DD
+    function parseDate(raw: string): string {
+      const parts = raw.split(/[\/\-]/);
+      if (parts.length === 3) {
+        const y = parts[2].length === 2 ? "20" + parts[2] : parts[2];
+        return `${y}-${parts[0].padStart(2, "0")}-${parts[1].padStart(2, "0")}`;
+      } else if (parts.length === 2) {
+        return `${defaultYear}-${parts[0].padStart(2, "0")}-${parts[1].padStart(2, "0")}`;
+      }
+      return "";
+    }
+
+    // === Strategy 1: Single-line format (Citi style) ===
+    // Date(s) + description + amount all on one line
     for (const line of lines) {
-      // Match amount at end of line: $65.41 or 65.41 or -$65.41
       const amountMatch = line.match(/-?\$?([\d,]+\.\d{2})\s*$/);
       if (!amountMatch) continue;
 
-      // Match date at start: handles various formats from PDF extraction
-      // PDF text often concatenates columns: "02/1702/17LOWES..." (no spaces)
       const datePatterns = [
-        // MM/DD/YYYY or MM-DD-YYYY (full date)
         /^(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/,
-        // MM/DDMM/DD (no spaces between sale+post date - common in PDF extraction)
         /^(\d{1,2}\/\d{1,2})\d{1,2}\/\d{1,2}/,
-        // MM/DD MM/DD (with space between sale+post date)
         /^(\d{1,2}\/\d{1,2})\s+\d{1,2}\/\d{1,2}/,
-        // Single MM/DD
         /^(\d{1,2}\/\d{1,2})[\s\D]/,
       ];
 
-      let date = "";
-      let descStart = 0;
+      let date = "", descStart = 0;
       for (const pat of datePatterns) {
         const m = line.match(pat);
         if (m) {
-          const raw = m[1];
-          const parts = raw.split(/[\/\-]/);
-          if (parts.length === 3) {
-            const y = parts[2].length === 2 ? "20" + parts[2] : parts[2];
-            date = `${y}-${parts[0].padStart(2, "0")}-${parts[1].padStart(2, "0")}`;
-          } else if (parts.length === 2) {
-            date = `${defaultYear}-${parts[0].padStart(2, "0")}-${parts[1].padStart(2, "0")}`;
-          }
-          // Skip past all date characters to get to description
-          // Handle: "02/1702/17LOWES" or "02/17 02/17 LOWES"
+          date = parseDate(m[1]);
           const dualNoSpace = line.match(/^\d{1,2}\/\d{1,2}\d{1,2}\/\d{1,2}/);
           const dualWithSpace = line.match(/^\d{1,2}\/\d{1,2}\s+\d{1,2}\/\d{1,2}\s*/);
-          if (dualNoSpace) {
-            descStart = dualNoSpace[0].length;
-          } else if (dualWithSpace) {
-            descStart = dualWithSpace[0].length;
-          } else {
-            descStart = m[0].length;
-          }
+          descStart = dualNoSpace ? dualNoSpace[0].length : dualWithSpace ? dualWithSpace[0].length : m[0].length;
           break;
         }
       }
-
       if (!date) continue;
 
       let amount = amountMatch[1].replace(/,/g, "");
-      // Extract description: everything between date(s) and amount
-      let desc = line.slice(descStart, amountMatch.index!).trim();
-      // Clean up extra whitespace
-      desc = desc.replace(/\s{2,}/g, " ");
+      let desc = line.slice(descStart, amountMatch.index!).trim().replace(/\s{2,}/g, " ");
       if (!desc) desc = "Unknown";
 
-      // Skip negative amounts (payments/credits) and zero amounts
       if (parseFloat(amount) > 0 && !line.startsWith("-") && !amountMatch[0].startsWith("-")) {
         rows.push({ date, description: desc, amount });
       }
     }
+
+    // === Strategy 2: Multi-line format (AMEX style) ===
+    // If Strategy 1 found nothing, try multi-line: date on one line, description on next, amount a few lines later
+    if (rows.length === 0) {
+      for (let i = 0; i < lines.length; i++) {
+        // Look for a date-only line: MM/DD/YY or MM/DD/YYYY (nothing else significant on the line)
+        const dateOnlyMatch = lines[i].match(/^(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)$/);
+        if (!dateOnlyMatch) continue;
+
+        const date = parseDate(dateOnlyMatch[1]);
+        if (!date) continue;
+
+        // Next line(s) should be description, then eventually an amount line
+        let desc = "";
+        let amount = "";
+        for (let j = i + 1; j < Math.min(i + 6, lines.length); j++) {
+          const amtMatch = lines[j].match(/^-?\$([\d,]+\.\d{2})$/);
+          if (amtMatch) {
+            amount = amtMatch[1].replace(/,/g, "");
+            break;
+          }
+          // Skip lines that are just numbers (phone, reference) or page markers
+          if (/^p\.\s*\d/.test(lines[j]) || /^Continued/i.test(lines[j]) || /^Amount$/i.test(lines[j])
+              || /^Card Ending/i.test(lines[j]) || /^Total/i.test(lines[j])
+              || /^[A-Z]+\s+[A-Z]+$/i.test(lines[j]) && lines[j].length < 30 && /^\d/.test(lines[j]) === false) {
+            continue;
+          }
+          // First non-date, non-amount line is the description
+          if (!desc && lines[j].length > 3 && !/^\d+$/.test(lines[j])) {
+            desc = lines[j].replace(/\s{2,}/g, " ");
+          }
+        }
+
+        if (date && amount && parseFloat(amount) > 0 && parseFloat(amount) < 50000 && desc) {
+          // Skip summary/header lines that aren't real transactions
+          const descLower = desc.toLowerCase();
+          if (descLower.includes('new balance') || descLower.includes('payment due')
+              || descLower.includes('minimum payment') || descLower.includes('total')) continue;
+          rows.push({ date, description: desc, amount });
+        }
+      }
+    }
+
     return rows;
   }
 
