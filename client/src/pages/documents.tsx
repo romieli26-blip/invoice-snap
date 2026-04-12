@@ -316,7 +316,9 @@ export default function DocumentsPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium">{DOC_TYPE_LABELS[doc.docType] || doc.docType}</p>
-                      {doc.bankName && <p className="text-xs text-muted-foreground">{doc.bankName}</p>}
+                      {doc.bankName && <p className="text-xs text-muted-foreground">Bank: {doc.bankName}</p>}
+                      {doc.routingNumber && <p className="text-xs text-muted-foreground">Routing: ••••{doc.routingNumber.slice(-4)}</p>}
+                      {doc.accountNumber && <p className="text-xs text-muted-foreground">Account: ••••{doc.accountNumber.slice(-4)}</p>}
                       <p className="text-xs text-muted-foreground">{new Date(doc.createdAt).toLocaleDateString()}</p>
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">

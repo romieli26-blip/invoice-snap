@@ -1988,36 +1988,52 @@ export async function registerRoutes(
     res.json(doc);
 
     // Drive sync in background
-    if (req.file) {
-      setImmediate(async () => {
-        try {
-          if (isGoogleEnabled()) {
-            const docUser = await storage.getUser(session.userId);
-            const userName = (docUser as any)?.firstName && (docUser as any)?.lastName
-              ? `${(docUser as any).firstName}_${(docUser as any).lastName}`
-              : docUser?.displayName || "Unknown";
-            const prop = (docUser as any)?.homeProperty || "General";
-            const folderName = `${prop}_${userName}`;
+    setImmediate(async () => {
+      try {
+        if (isGoogleEnabled()) {
+          const docUser = await storage.getUser(session.userId);
+          const userName = (docUser as any)?.firstName && (docUser as any)?.lastName
+            ? `${(docUser as any).firstName}_${(docUser as any).lastName}`
+            : docUser?.displayName || "Unknown";
+          const prop = (docUser as any)?.homeProperty || "General";
+          const folderName = `${prop}_${userName}`;
 
-            const mainFolder = await ensureDriveFolder("Time Reporting");
-            if (mainFolder) {
-              const userFolder = await ensureDriveFolder(folderName, mainFolder);
-              if (userFolder) {
-                const docsFolder = await ensureDriveFolder("Documents", userFolder);
-                if (docsFolder) {
-                  const fullPath = path.resolve(dataDir, "uploads", req.file!.filename);
+          const mainFolder = await ensureDriveFolder("Time Reporting");
+          if (mainFolder) {
+            const userFolder = await ensureDriveFolder(folderName, mainFolder);
+            if (userFolder) {
+              const docsFolder = await ensureDriveFolder("Documents", userFolder);
+              if (docsFolder) {
+                if (req.file) {
+                  // Upload photo/file to Drive
+                  const fullPath = path.resolve(dataDir, "uploads", req.file.filename);
                   if (fs.existsSync(fullPath)) {
-                    const ext = path.extname(req.file!.filename).slice(1);
+                    const ext = path.extname(req.file.filename).slice(1);
                     const docName = `${docType}_${docUser?.displayName || "user"}_${Date.now()}.${ext}`;
                     await uploadToDrive(fullPath, docName, docsFolder);
                   }
+                } else if (docType === "banking" && (bankName || routingNumber || accountNumber)) {
+                  // Create a text file with banking info and upload to Drive
+                  const txtContent = [
+                    `Banking Information for ${docUser?.displayName || "User"}`,
+                    `Date: ${new Date().toLocaleDateString()}`,
+                    ``,
+                    `Bank Name: ${bankName || "N/A"}`,
+                    `Routing Number: ${routingNumber || "N/A"}`,
+                    `Account Number: ${accountNumber || "N/A"}`,
+                  ].join("\n");
+                  const txtPath = path.resolve(dataDir, "uploads", `banking_${session.userId}_${Date.now()}.txt`);
+                  fs.writeFileSync(txtPath, txtContent);
+                  await uploadToDrive(txtPath, `Banking_Info_${docUser?.displayName || "user"}_${Date.now()}.txt`, docsFolder);
+                  // Clean up temp file
+                  try { fs.unlinkSync(txtPath); } catch {}
                 }
               }
             }
           }
-        } catch (e) { console.error("[docs] Drive sync error:", e); }
-      });
-    }
+        }
+      } catch (e) { console.error("[docs] Drive sync error:", e); }
+    });
   });
 
   app.get("/api/user-documents", async (req, res) => {
