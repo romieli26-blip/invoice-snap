@@ -10,12 +10,30 @@ import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, Plus, Trash2, Loader2, Clock } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Loader2, Clock, AlertTriangle, Pencil, Check } from "lucide-react";
 import { LogoBackground } from "@/components/LogoBackground";
 
 interface Property {
   id: number;
   name: string;
+}
+
+// Generate 5-minute interval time options (00:00 to 23:55)
+const TIME_OPTIONS: string[] = [];
+for (let h = 0; h < 24; h++) {
+  for (let m = 0; m < 60; m += 5) {
+    const hh = h.toString().padStart(2, "0");
+    const mm = m.toString().padStart(2, "0");
+    TIME_OPTIONS.push(`${hh}:${mm}`);
+  }
+}
+
+function formatTime12(t: string): string {
+  if (!t) return "";
+  const [h, m] = t.split(":").map(Number);
+  const ampm = h >= 12 ? "PM" : "AM";
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${h12}:${m.toString().padStart(2, "0")} ${ampm}`;
 }
 
 export default function TimeReportPage() {
@@ -32,6 +50,7 @@ export default function TimeReportPage() {
   const [specialTermsAmount, setSpecialTermsAmount] = useState("");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   function addTimeBlock() {
     setTimeBlocks(prev => [...prev, { start: "", end: "" }]);
@@ -88,7 +107,8 @@ export default function TimeReportPage() {
     setAccomplishments(accomplishments.filter((_, i) => i !== idx));
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  // Show confirmation screen instead of submitting directly
+  function handleFormSubmit(e: React.FormEvent) {
     e.preventDefault();
     const filtered = accomplishments.filter(a => a.trim());
     if (filtered.length === 0) {
@@ -99,7 +119,11 @@ export default function TimeReportPage() {
       toast({ title: "Please fill in all time blocks", variant: "destructive" });
       return;
     }
-    // Derive startTime/endTime from first and last block for backward compat
+    setShowConfirm(true);
+  }
+
+  async function handleConfirmedSubmit() {
+    const filtered = accomplishments.filter(a => a.trim());
     const startTime = timeBlocks[0].start;
     const endTime = timeBlocks[timeBlocks.length - 1].end;
     setSubmitting(true);
@@ -127,6 +151,121 @@ export default function TimeReportPage() {
     }
   }
 
+  const filteredAccomplishments = accomplishments.filter(a => a.trim());
+  const totalPay = currentRate ? (totalMinutes / 60 * parseFloat(currentRate)).toFixed(2) : "";
+
+  // ---- CONFIRMATION SCREEN ----
+  if (showConfirm) {
+    return (
+      <LogoBackground>
+        <div className="bg-background min-h-screen p-4 pt-6 pb-12">
+          <div className="max-w-lg mx-auto space-y-4">
+            <div className="flex items-center gap-2 text-amber-600">
+              <AlertTriangle className="w-5 h-5" />
+              <h1 className="text-lg font-semibold">Review Before Submitting</h1>
+            </div>
+
+            <Card className="border-amber-200 bg-amber-50/50 dark:bg-amber-950/20 dark:border-amber-800">
+              <CardContent className="py-3 px-4">
+                <p className="text-sm text-amber-800 dark:text-amber-300">
+                  This report has financial implications. Please review all details carefully before confirming.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="py-4 space-y-3">
+                <div className="grid grid-cols-2 gap-y-2 text-sm">
+                  <span className="text-muted-foreground">Property</span>
+                  <span className="font-medium text-right">{property}</span>
+
+                  <span className="text-muted-foreground">Date</span>
+                  <span className="font-medium text-right">{date}</span>
+                </div>
+
+                <div className="border-t pt-2">
+                  <p className="text-xs text-muted-foreground mb-1">Time Blocks</p>
+                  {timeBlocks.map((b, idx) => (
+                    <div key={idx} className="text-sm font-medium">
+                      {formatTime12(b.start)} – {formatTime12(b.end)}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="border-t pt-2 grid grid-cols-2 gap-y-1 text-sm">
+                  <span className="text-muted-foreground">Total Hours</span>
+                  <span className="font-medium text-right">{totalHours} hrs</span>
+
+                  {currentRate && (
+                    <>
+                      <span className="text-muted-foreground">Rate</span>
+                      <span className="font-medium text-right">${currentRate}/hr{isOffSite && allowOffSite ? " (off-site)" : ""}</span>
+
+                      <span className="text-muted-foreground">Subtotal</span>
+                      <span className="font-semibold text-right">${totalPay}</span>
+                    </>
+                  )}
+
+                  {miles && parseFloat(miles) > 0 && (
+                    <>
+                      <span className="text-muted-foreground">Mileage</span>
+                      <span className="font-medium text-right">{miles} mi × ${mileageRate.toFixed(2)} = ${mileageAmount}</span>
+                    </>
+                  )}
+
+                  {specialTerms && specialTermsAmount && (
+                    <>
+                      <span className="text-muted-foreground">Travel Expenses</span>
+                      <span className="font-medium text-right">${specialTermsAmount}</span>
+                    </>
+                  )}
+                </div>
+
+                {filteredAccomplishments.length > 0 && (
+                  <div className="border-t pt-2">
+                    <p className="text-xs text-muted-foreground mb-1">Accomplishments</p>
+                    <ul className="list-disc list-inside text-sm space-y-0.5">
+                      {filteredAccomplishments.map((a, i) => (
+                        <li key={i}>{a}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {notes && (
+                  <div className="border-t pt-2">
+                    <p className="text-xs text-muted-foreground mb-1">Notes</p>
+                    <p className="text-sm">{notes}</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                className="flex-1 gap-1"
+                onClick={() => setShowConfirm(false)}
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                Edit
+              </Button>
+              <Button
+                className="flex-1 gap-1"
+                disabled={submitting}
+                onClick={handleConfirmedSubmit}
+              >
+                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                Confirm & Submit
+              </Button>
+            </div>
+          </div>
+        </div>
+      </LogoBackground>
+    );
+  }
+
+  // ---- FORM SCREEN ----
   return (
     <LogoBackground>
       <div className="bg-background min-h-screen p-4 pt-6 pb-12">
@@ -144,7 +283,7 @@ export default function TimeReportPage() {
             <h1 className="text-xl font-semibold">Work Report</h1>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleFormSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label>Property</Label>
               <Select value={property} onValueChange={setProperty} required>
@@ -172,9 +311,27 @@ export default function TimeReportPage() {
               <Label>Time Worked</Label>
               {timeBlocks.map((block, idx) => (
                 <div key={idx} className="flex items-center gap-2">
-                  <Input type="time" value={block.start} onChange={e => updateTimeBlock(idx, "start", e.target.value)} className="flex-1" />
+                  <Select value={block.start} onValueChange={v => updateTimeBlock(idx, "start", v)}>
+                    <SelectTrigger className="flex-1">
+                      <SelectValue placeholder="Start" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[200px]">
+                      {TIME_OPTIONS.map(t => (
+                        <SelectItem key={`s-${idx}-${t}`} value={t}>{formatTime12(t)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <span className="text-xs text-muted-foreground">to</span>
-                  <Input type="time" value={block.end} onChange={e => updateTimeBlock(idx, "end", e.target.value)} className="flex-1" />
+                  <Select value={block.end} onValueChange={v => updateTimeBlock(idx, "end", v)}>
+                    <SelectTrigger className="flex-1">
+                      <SelectValue placeholder="End" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[200px]">
+                      {TIME_OPTIONS.map(t => (
+                        <SelectItem key={`e-${idx}-${t}`} value={t}>{formatTime12(t)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   {timeBlocks.length > 1 && (
                     <button type="button" onClick={() => removeTimeBlock(idx)} className="text-muted-foreground hover:text-destructive">
                       <Trash2 className="w-3.5 h-3.5" />
@@ -263,8 +420,7 @@ export default function TimeReportPage() {
             </div>
 
             <Button type="submit" className="w-full" disabled={submitting || !property || !allBlocksFilled}>
-              {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-              Submit Work Report
+              Review & Submit
             </Button>
           </form>
         </div>
