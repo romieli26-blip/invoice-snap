@@ -88,6 +88,7 @@ export default function TimeReportPage() {
   const currentRate = isOffSite && allowOffSite ? offSiteRate : baseRate;
 
   const mileageAmount = miles ? (parseFloat(miles) * mileageRate).toFixed(2) : "";
+  const requireFinancialConfirm = user?.requireFinancialConfirm === 1;
 
   // Check if all time blocks are filled
   const allBlocksFilled = timeBlocks.every(b => b.start && b.end);
@@ -107,7 +108,7 @@ export default function TimeReportPage() {
     setAccomplishments(accomplishments.filter((_, i) => i !== idx));
   }
 
-  // Show confirmation screen instead of submitting directly
+  // Show confirmation screen or submit directly based on user setting
   function handleFormSubmit(e: React.FormEvent) {
     e.preventDefault();
     const filtered = accomplishments.filter(a => a.trim());
@@ -119,7 +120,12 @@ export default function TimeReportPage() {
       toast({ title: "Please fill in all time blocks", variant: "destructive" });
       return;
     }
-    setShowConfirm(true);
+    if (requireFinancialConfirm) {
+      setShowConfirm(true);
+    } else {
+      // No financial review needed — submit directly
+      handleConfirmedSubmit();
+    }
   }
 
   async function handleConfirmedSubmit() {
@@ -420,7 +426,8 @@ export default function TimeReportPage() {
             </div>
 
             <Button type="submit" className="w-full" disabled={submitting || !property || !allBlocksFilled}>
-              Review & Submit
+              {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+              {requireFinancialConfirm ? "Review & Submit" : "Submit Work Report"}
             </Button>
           </form>
         </div>

@@ -72,6 +72,7 @@ export default function AdminPage() {
   const [editUserSpecialTermsAmount, setEditUserSpecialTermsAmount] = useState("");
   const [editUserW9OrW4, setEditUserW9OrW4] = useState("");
   const [editUserDocsComplete, setEditUserDocsComplete] = useState(false);
+  const [editUserRequireFinancialConfirm, setEditUserRequireFinancialConfirm] = useState(false);
   const [editUserSaving, setEditUserSaving] = useState(false);
 
   // Edit properties assignment state
@@ -697,6 +698,7 @@ export default function AdminPage() {
                             setEditUserSpecialTermsAmount((u as any).specialTermsAmount || "");
                             setEditUserW9OrW4((u as any).w9OrW4 || "");
                             setEditUserDocsComplete((u as any).docsComplete === 1);
+                            setEditUserRequireFinancialConfirm((u as any).requireFinancialConfirm === 1);
                           }}
                         >
                           <Pencil className="w-4 h-4" />
@@ -845,6 +847,10 @@ export default function AdminPage() {
                     <Checkbox id="edit-docs" checked={editUserDocsComplete} onCheckedChange={c => setEditUserDocsComplete(c === true)} />
                     <Label htmlFor="edit-docs" className="text-sm font-normal cursor-pointer">Documents complete</Label>
                   </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox id="edit-financial-confirm" checked={editUserRequireFinancialConfirm} onCheckedChange={c => setEditUserRequireFinancialConfirm(c === true)} />
+                    <Label htmlFor="edit-financial-confirm" className="text-sm font-normal cursor-pointer">Require financial review on time reports</Label>
+                  </div>
                 </>
               )}
             </div>
@@ -872,6 +878,7 @@ export default function AdminPage() {
                     specialTermsAmount: editUserSpecialTermsAmount || undefined,
                     w9OrW4: editUserW9OrW4 || undefined,
                     docsComplete: editUserDocsComplete,
+                    requireFinancialConfirm: editUserRequireFinancialConfirm,
                   });
                   queryClient.invalidateQueries({ queryKey: ["/api/users"] });
                   setEditingUser(null);

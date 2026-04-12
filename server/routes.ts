@@ -639,7 +639,8 @@ export async function registerRoutes(
     const { displayName, email, password, role,
       dailyTimeReport, dailyTransactionReport, reconciliationReport,
       firstName, lastName, baseRate, offSiteRate, homeProperty, allowOffSite,
-      mileageRate, allowSpecialTerms, specialTermsAmount, w9OrW4, docsComplete } = req.body;
+      mileageRate, allowSpecialTerms, specialTermsAmount, w9OrW4, docsComplete,
+      requireFinancialConfirm } = req.body;
 
     if (email) {
       const allUsers = await storage.getAllUsers();
@@ -671,6 +672,7 @@ export async function registerRoutes(
     if (specialTermsAmount !== undefined) updateData.specialTermsAmount = specialTermsAmount || null;
     if (w9OrW4 !== undefined) updateData.w9OrW4 = w9OrW4 || null;
     if (docsComplete !== undefined) updateData.docsComplete = docsComplete ? 1 : 0;
+    if (requireFinancialConfirm !== undefined) updateData.requireFinancialConfirm = requireFinancialConfirm ? 1 : 0;
 
     const updated = await storage.updateUser(id, updateData);
     res.json(updated);

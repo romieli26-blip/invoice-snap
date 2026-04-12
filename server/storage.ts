@@ -84,6 +84,7 @@ try { sqlite.exec("ALTER TABLE users ADD COLUMN must_change_password INTEGER DEF
 try { sqlite.exec("ALTER TABLE users ADD COLUMN daily_time_report INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN daily_transaction_report INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN reconciliation_report INTEGER DEFAULT 0"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN require_financial_confirm INTEGER DEFAULT 0"); } catch {}
 
 // Time reports table
 sqlite.exec(`
