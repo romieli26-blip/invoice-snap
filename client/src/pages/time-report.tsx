@@ -94,8 +94,8 @@ export default function TimeReportPage() {
   const currentRate = isOffSite && allowOffSite ? offSiteRate : baseRate;
 
   const mileageAmount = miles ? (parseFloat(miles) * mileageRate).toFixed(2) : "";
-  const requireFinancialConfirm = user?.requireFinancialConfirm === 1;
-  const allowPastDates = user?.allowPastDates === 1;
+  const requireFinancialConfirm = (user as any)?.requireFinancialConfirm === 1 || (user as any)?.requireFinancialConfirm === true;
+  const allowPastDates = (user as any)?.allowPastDates === 1 || (user as any)?.allowPastDates === true;
 
   // Date limits: today is max, min is yesterday unless allowPastDates
   const today = new Date().toISOString().split("T")[0];

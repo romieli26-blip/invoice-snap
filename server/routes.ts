@@ -523,6 +523,9 @@ export async function registerRoutes(
       allowSpecialTerms: (user as any).allowSpecialTerms, specialTermsAmount: (user as any).specialTermsAmount,
       homeProperty: (user as any).homeProperty, baseRate: (user as any).baseRate, offSiteRate: (user as any).offSiteRate,
       mustChangePassword: (user as any).mustChangePassword || 0,
+      requireFinancialConfirm: (user as any).requireFinancialConfirm || 0,
+      allowPastDates: (user as any).allowPastDates || 0,
+      docsComplete: (user as any).docsComplete || 0,
     });
   });
 
@@ -2161,6 +2164,13 @@ export async function registerRoutes(
     const { docType, bankName, routingNumber, accountNumber } = req.body;
     if (!docType) return res.status(400).json({ error: "docType is required" });
     const filePath = req.file ? `/api/uploads/${req.file.filename}` : null;
+
+    // Reset docsComplete if user had docs approved (admin needs to re-review)
+    const currentUser = await storage.getUser(session.userId);
+    if ((currentUser as any)?.docsComplete === 1) {
+      await storage.updateUser(session.userId, { docsComplete: 0 } as any);
+    }
+
     const doc = await storage.createUserDocument({
       userId: session.userId,
       docType,

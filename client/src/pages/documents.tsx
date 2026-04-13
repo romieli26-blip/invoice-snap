@@ -71,8 +71,14 @@ export default function DocumentsPage() {
     queryKey: ["/api/user-documents"],
   });
 
-  // Check if a photo_id document already exists
+  // Check if documents already exist by type
   const hasPhotoId = documents?.some(d => d.docType === "photo_id");
+  const hasBanking = documents?.some(d => d.docType === "banking");
+  const hasW9 = documents?.some(d => d.docType === "w9");
+  const docsComplete = (user as any)?.docsComplete === 1;
+
+  const [showReplaceConfirm, setShowReplaceConfirm] = useState<string | null>(null);
+  const [showDocsCompleteWarning, setShowDocsCompleteWarning] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -83,6 +89,27 @@ export default function DocumentsPage() {
       toast({ title: "Photo ID already uploaded", description: "Delete the existing one before adding a new one.", variant: "destructive" });
       return;
     }
+
+    // Banking: one per user — warn before replacing
+    if (docType === "banking" && hasBanking && showReplaceConfirm !== "banking") {
+      setShowReplaceConfirm("banking");
+      return;
+    }
+
+    // W-9: one per user — warn before replacing
+    if (docType === "w9" && hasW9 && showReplaceConfirm !== "w9") {
+      setShowReplaceConfirm("w9");
+      return;
+    }
+
+    // If docs are marked complete by admin, warn user
+    if (docsComplete && !showDocsCompleteWarning) {
+      setShowDocsCompleteWarning(true);
+      return;
+    }
+
+    setShowReplaceConfirm(null);
+    setShowDocsCompleteWarning(false);
 
     // Photo required for photo_id and w9, optional for banking
     if (files.length === 0 && docType !== "banking") {
@@ -104,6 +131,13 @@ export default function DocumentsPage() {
 
     setSubmitting(true);
     try {
+      // If replacing banking or w9, delete old entries first
+      if ((docType === "banking" || docType === "w9") && documents) {
+        const oldDocs = documents.filter(d => d.docType === docType);
+        for (const old of oldDocs) {
+          try { await apiRequest("DELETE", `/api/user-documents/${old.id}`); } catch {}
+        }
+      }
       // Upload each file as a separate document entry
       for (const f of (files.length > 0 ? files : [null])) {
         const formData = new FormData();
@@ -290,10 +324,44 @@ export default function DocumentsPage() {
                   </div>
                 )}
 
-                <Button type="submit" className="w-full gap-2" disabled={submitting || !docType}>
-                  {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                  Upload Document
-                </Button>
+                {/* Replace confirmation for banking/w9 */}
+                {showReplaceConfirm && (
+                  <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-md p-3 space-y-2">
+                    <p className="text-sm text-amber-800 dark:text-amber-300 font-medium">
+                      You already have {showReplaceConfirm === "banking" ? "banking info" : "a W-9"} on file.
+                    </p>
+                    <p className="text-xs text-amber-700 dark:text-amber-400">
+                      Continuing will erase your previous record and replace it. Are you sure?
+                    </p>
+                    <div className="flex gap-2">
+                      <Button type="button" variant="outline" size="sm" className="flex-1" onClick={() => setShowReplaceConfirm(null)}>Cancel</Button>
+                      <Button type="submit" size="sm" className="flex-1">Yes, replace it</Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Docs complete warning */}
+                {showDocsCompleteWarning && !showReplaceConfirm && (
+                  <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-md p-3 space-y-2">
+                    <p className="text-sm text-amber-800 dark:text-amber-300 font-medium">
+                      Your documents have been reviewed and approved by admin.
+                    </p>
+                    <p className="text-xs text-amber-700 dark:text-amber-400">
+                      Uploading a new document will require admin re-approval. Are you sure you want to proceed?
+                    </p>
+                    <div className="flex gap-2">
+                      <Button type="button" variant="outline" size="sm" className="flex-1" onClick={() => setShowDocsCompleteWarning(false)}>Cancel</Button>
+                      <Button type="submit" size="sm" className="flex-1">Yes, proceed</Button>
+                    </div>
+                  </div>
+                )}
+
+                {!showReplaceConfirm && !showDocsCompleteWarning && (
+                  <Button type="submit" className="w-full gap-2" disabled={submitting || !docType}>
+                    {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                    Upload Document
+                  </Button>
+                )}
               </form>
             </CardContent>
           </Card>

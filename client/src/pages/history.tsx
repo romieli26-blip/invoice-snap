@@ -200,12 +200,13 @@ export default function HistoryPage() {
               Work Report
             </Button>
             <Button
-              className="h-16 text-sm gap-1.5 flex-col leading-tight"
+              className={`h-16 text-sm gap-1.5 flex-col leading-tight ${(user as any)?.docsComplete ? "bg-green-100 hover:bg-green-200 text-green-800 border-green-300" : "bg-orange-100 hover:bg-orange-200 text-orange-800 border-orange-300"}`}
               variant="outline"
               onClick={() => setLocation("/documents")}
             >
               <FileText className="w-5 h-5" />
               My Documents
+              {(user as any)?.docsComplete ? <span className="text-[10px]">Complete</span> : <span className="text-[10px]">Action needed</span>}
             </Button>
           </div>
         )}
@@ -220,7 +221,7 @@ export default function HistoryPage() {
               Work Report
             </Button>
             <Button
-              className="h-12 text-sm gap-1.5"
+              className={`h-12 text-sm gap-1.5 ${(user as any)?.docsComplete ? "bg-green-100 hover:bg-green-200 text-green-800 border-green-300" : ""}`}
               variant="outline"
               onClick={() => setLocation("/documents")}
             >
