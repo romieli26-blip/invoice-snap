@@ -8,7 +8,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
 import pdfParse from "pdf-parse";
-import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, deleteSheetRow, deleteFromDrive, highlightLastRow } from "./google-api";
+import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab } from "./google-api";
 // nodemailer removed — using Gmail API instead (SMTP blocked on Railway)
 
 // Ensure uploads directory exists
@@ -297,11 +297,14 @@ async function syncToDrive(invoice: any): Promise<boolean> {
   // Try Google API first (works on Railway)
   if (isGoogleEnabled()) {
     try {
-      // Folder structure: Credit Card Receipts > Property
+      // Folder structure: Credit Card and Cash Receipts > Credit Card Receipts > Property
       let ccReceiptsFolder = propertyFolderCache.get("__cc_receipts_root") || null;
       if (!ccReceiptsFolder) {
-        ccReceiptsFolder = await ensureDriveFolder("Credit Card Receipts");
-        if (ccReceiptsFolder) propertyFolderCache.set("__cc_receipts_root", ccReceiptsFolder);
+        const mainReceiptsFolder = await ensureDriveFolder("Credit Card and Cash Receipts");
+        if (mainReceiptsFolder) {
+          ccReceiptsFolder = await ensureDriveFolder("Credit Card Receipts", mainReceiptsFolder);
+          if (ccReceiptsFolder) propertyFolderCache.set("__cc_receipts_root", ccReceiptsFolder);
+        }
       }
       let propertyFolderId = propertyFolderCache.get("cc_" + invoice.property) || null;
       if (!propertyFolderId && ccReceiptsFolder) {
@@ -777,8 +780,43 @@ export async function registerRoutes(
     const id = parseInt(req.params.id);
     if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
 
+    // Get the property name before deleting
+    const allProps = await storage.getAllProperties();
+    const prop = allProps.find(p => p.id === id);
+    const propName = prop?.name || "Unknown";
+
     await storage.deleteProperty(id);
     res.json({ ok: true });
+
+    // Rename sheet tabs instead of deleting (preserve history)
+    setImmediate(async () => {
+      try {
+        if (isGoogleEnabled()) {
+          const deactivatedName = `${propName} (DEACTIVATED)`;
+          const dateStr = new Date().toISOString().split("T")[0];
+          const note = `⚠️ PROPERTY DEACTIVATED on ${dateStr} - DO NOT USE THIS TAB FOR NEW ENTRIES`;
+
+          // Rename in CC receipts spreadsheet
+          const sheetsConfig = JSON.parse(fs.readFileSync(path.resolve(dataDir, "sheets-config.json"), "utf-8"));
+          if (sheetsConfig?.spreadsheetId) {
+            await renameSheetTab(sheetsConfig.spreadsheetId, propName, deactivatedName);
+            await prependNoteToTab(sheetsConfig.spreadsheetId, deactivatedName, note);
+          }
+
+          // Rename in Cash transactions spreadsheet
+          const cashConfigPath = path.resolve(dataDir, "cash-sheets-config.json");
+          if (fs.existsSync(cashConfigPath)) {
+            const cashConfig = JSON.parse(fs.readFileSync(cashConfigPath, "utf-8"));
+            if (cashConfig?.spreadsheetId) {
+              await renameSheetTab(cashConfig.spreadsheetId, propName, deactivatedName);
+              await prependNoteToTab(cashConfig.spreadsheetId, deactivatedName, note);
+            }
+          }
+
+          console.log(`[property] Deactivated sheet tabs for "${propName}"`);
+        }
+      } catch (e) { console.error("[property] Failed to deactivate sheet tabs:", e); }
+    });
   });
 
   // ---- PHOTO UPLOAD ----
@@ -1393,11 +1431,14 @@ export async function registerRoutes(
           const typeLabel = type === "income" ? "Income" : "Spent";
           const filePath = path.resolve(dataDir, "uploads", photoPath.replace(/^\/api\/uploads\//, ""));
           if (fs.existsSync(filePath)) {
-            // Folder structure: Cash Transactions > Property
+            // Folder structure: Credit Card and Cash Receipts > Cash Receipts > Property
             let cashFolder = propertyFolderCache.get("__cash_root") || null;
             if (!cashFolder) {
-              cashFolder = await ensureDriveFolder("Cash Transactions");
-              if (cashFolder) propertyFolderCache.set("__cash_root", cashFolder);
+              const mainReceiptsFolder = await ensureDriveFolder("Credit Card and Cash Receipts");
+              if (mainReceiptsFolder) {
+                cashFolder = await ensureDriveFolder("Cash Receipts", mainReceiptsFolder);
+                if (cashFolder) propertyFolderCache.set("__cash_root", cashFolder);
+              }
             }
             let propFolder = propertyFolderCache.get("cash_" + property) || null;
             if (!propFolder && cashFolder) {

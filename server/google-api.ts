@@ -83,6 +83,66 @@ export async function createSheetTab(spreadsheetId: string, title: string): Prom
   }
 }
 
+export async function renameSheetTab(spreadsheetId: string, oldTitle: string, newTitle: string): Promise<boolean> {
+  if (!sheetsApi) return false;
+  try {
+    // First find the sheet ID by title
+    const spreadsheet = await sheetsApi.spreadsheets.get({ spreadsheetId });
+    const sheet = spreadsheet.data.sheets?.find(s => s.properties?.title === oldTitle);
+    if (!sheet?.properties?.sheetId) {
+      console.log(`[google-api] Sheet tab "${oldTitle}" not found, skipping rename`);
+      return false;
+    }
+    await sheetsApi.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          updateSheetProperties: {
+            properties: { sheetId: sheet.properties.sheetId, title: newTitle },
+            fields: "title",
+          },
+        }],
+      },
+    });
+    console.log(`[google-api] Renamed sheet tab "${oldTitle}" to "${newTitle}"`);
+    return true;
+  } catch (err: any) {
+    console.error(`[google-api] Failed to rename sheet tab:`, err.message?.slice(0, 200));
+    return false;
+  }
+}
+
+export async function prependNoteToTab(spreadsheetId: string, tabTitle: string, note: string): Promise<boolean> {
+  if (!sheetsApi) return false;
+  try {
+    // Insert a row at the top with the note
+    const spreadsheet = await sheetsApi.spreadsheets.get({ spreadsheetId });
+    const sheet = spreadsheet.data.sheets?.find(s => s.properties?.title === tabTitle);
+    if (!sheet?.properties?.sheetId) return false;
+    // Insert row at position 0
+    await sheetsApi.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          insertDimension: {
+            range: { sheetId: sheet.properties.sheetId, dimension: "ROWS", startIndex: 0, endIndex: 1 },
+          },
+        }],
+      },
+    });
+    await sheetsApi.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${tabTitle}'!A1`,
+      valueInputOption: "RAW",
+      requestBody: { values: [[note]] },
+    });
+    return true;
+  } catch (err: any) {
+    console.error(`[google-api] Failed to prepend note:`, err.message?.slice(0, 200));
+    return false;
+  }
+}
+
 export async function appendSheetRow(
   spreadsheetId: string,
   tabName: string,
