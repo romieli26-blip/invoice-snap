@@ -75,6 +75,8 @@ export default function AdminPage() {
   const [editUserRequireFinancialConfirm, setEditUserRequireFinancialConfirm] = useState(false);
   const [editUserAllowPastDates, setEditUserAllowPastDates] = useState(false);
   const [editUserReceiveTransactionEmails, setEditUserReceiveTransactionEmails] = useState(false);
+  const [editUserAllowWorkCredits, setEditUserAllowWorkCredits] = useState(false);
+  const [editUserWorkCreditReport, setEditUserWorkCreditReport] = useState(false);
   const [editUserSaving, setEditUserSaving] = useState(false);
 
   // Edit properties assignment state
@@ -710,6 +712,8 @@ export default function AdminPage() {
                             setEditUserRequireFinancialConfirm((u as any).requireFinancialConfirm === 1);
                             setEditUserAllowPastDates((u as any).allowPastDates === 1);
                             setEditUserReceiveTransactionEmails((u as any).receiveTransactionEmails === 1);
+                            setEditUserAllowWorkCredits((u as any).allowWorkCredits === 1);
+                            setEditUserWorkCreditReport((u as any).workCreditReport === 1);
                           }}
                         >
                           <Pencil className="w-4 h-4" />
@@ -795,6 +799,10 @@ export default function AdminPage() {
                     <Checkbox id="edit-recon" checked={editUserReconReport} onCheckedChange={c => setEditUserReconReport(c === true)} />
                     <Label htmlFor="edit-recon" className="text-sm font-normal cursor-pointer">Reconciliation Report</Label>
                   </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox id="edit-wc-report" checked={editUserWorkCreditReport} onCheckedChange={c => setEditUserWorkCreditReport(c === true)} />
+                    <Label htmlFor="edit-wc-report" className="text-sm font-normal cursor-pointer">Work Credit Report</Label>
+                  </div>
                 </>
               )}
 
@@ -865,6 +873,10 @@ export default function AdminPage() {
                     <Checkbox id="edit-past-dates" checked={editUserAllowPastDates} onCheckedChange={c => setEditUserAllowPastDates(c === true)} />
                     <Label htmlFor="edit-past-dates" className="text-sm font-normal cursor-pointer">Allow past date reporting (beyond 1 day)</Label>
                   </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox id="edit-work-credits" checked={editUserAllowWorkCredits} onCheckedChange={c => setEditUserAllowWorkCredits(c === true)} />
+                    <Label htmlFor="edit-work-credits" className="text-sm font-normal cursor-pointer">Allow Work Credits</Label>
+                  </div>
                 </>
               )}
             </div>
@@ -895,6 +907,8 @@ export default function AdminPage() {
                     requireFinancialConfirm: editUserRequireFinancialConfirm,
                     allowPastDates: editUserAllowPastDates,
                     receiveTransactionEmails: editUserReceiveTransactionEmails,
+                    allowWorkCredits: editUserAllowWorkCredits,
+                    workCreditReport: editUserWorkCreditReport,
                   });
                   queryClient.invalidateQueries({ queryKey: ["/api/users"] });
                   setEditingUser(null);

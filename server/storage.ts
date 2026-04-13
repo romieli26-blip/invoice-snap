@@ -1,4 +1,4 @@
-import { type User, type InsertUser, type Invoice, type InsertInvoice, type Property, type InsertProperty, type CashTransaction, type InsertCashTransaction, type CcStatement, type TimeReport, type UserDocument, users, invoices, properties, sessions, userProperties, cashTransactions, ccStatements, timeReports, userDocuments } from "@shared/schema";
+import { type User, type InsertUser, type Invoice, type InsertInvoice, type Property, type InsertProperty, type CashTransaction, type InsertCashTransaction, type CcStatement, type TimeReport, type UserDocument, type WorkCredit, users, invoices, properties, sessions, userProperties, cashTransactions, ccStatements, timeReports, userDocuments, workCredits } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, desc, inArray, and, gte, lte } from "drizzle-orm";
@@ -87,6 +87,8 @@ try { sqlite.exec("ALTER TABLE users ADD COLUMN reconciliation_report INTEGER DE
 try { sqlite.exec("ALTER TABLE users ADD COLUMN require_financial_confirm INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN allow_past_dates INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN receive_transaction_emails INTEGER DEFAULT 0"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN allow_work_credits INTEGER DEFAULT 0"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN work_credit_report INTEGER DEFAULT 0"); } catch {}
 
 // Time reports table
 sqlite.exec(`
@@ -104,6 +106,28 @@ sqlite.exec(`
     special_terms INTEGER DEFAULT 0,
     special_terms_amount TEXT,
     notes TEXT,
+    synced_to_sheets INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+`);
+
+// Work Credits table
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS work_credits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    property TEXT NOT NULL,
+    date TEXT NOT NULL,
+    tenant_first_name TEXT NOT NULL,
+    tenant_last_name TEXT NOT NULL,
+    lot_or_unit TEXT NOT NULL,
+    work_descriptions TEXT NOT NULL,
+    credit_type TEXT NOT NULL,
+    fixed_amount TEXT,
+    hours_worked TEXT,
+    hourly_rate TEXT,
+    time_blocks TEXT,
+    total_amount TEXT NOT NULL,
     synced_to_sheets INTEGER DEFAULT 0,
     created_at TEXT NOT NULL
   );
@@ -419,6 +443,26 @@ export class DatabaseStorage implements IStorage {
   async getTimeReportsByDate(date: string): Promise<TimeReport[]> {
     return db.select().from(timeReports).where(eq(timeReports.date, date)).all();
   }
+  // ---- Work Credits ----
+  async createWorkCredit(data: any): Promise<WorkCredit> {
+    return db.insert(workCredits).values(data).returning().get();
+  }
+  async getWorkCreditsByUser(userId: number): Promise<WorkCredit[]> {
+    return db.select().from(workCredits).where(eq(workCredits.userId, userId)).orderBy(desc(workCredits.id)).all();
+  }
+  async getWorkCreditsByDate(date: string): Promise<WorkCredit[]> {
+    return db.select().from(workCredits).where(eq(workCredits.date, date)).all();
+  }
+  async getWorkCreditsByProperty(property: string): Promise<WorkCredit[]> {
+    return db.select().from(workCredits).where(eq(workCredits.property, property)).orderBy(desc(workCredits.id)).all();
+  }
+  async getAllWorkCredits(): Promise<WorkCredit[]> {
+    return db.select().from(workCredits).orderBy(desc(workCredits.id)).all();
+  }
+  async deleteWorkCredit(id: number): Promise<void> {
+    db.delete(workCredits).where(eq(workCredits.id, id)).run();
+  }
+
   async getTimeReportsByUserAndDate(userId: number, date: string): Promise<TimeReport[]> {
     return db.select().from(timeReports).where(and(eq(timeReports.userId, userId), eq(timeReports.date, date))).all();
   }

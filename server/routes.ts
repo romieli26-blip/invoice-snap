@@ -529,6 +529,8 @@ export async function registerRoutes(
       requireFinancialConfirm: (user as any).requireFinancialConfirm || 0,
       allowPastDates: (user as any).allowPastDates || 0,
       docsComplete: (user as any).docsComplete || 0,
+      allowWorkCredits: (user as any).allowWorkCredits || 0,
+      workCreditReport: (user as any).workCreditReport || 0,
     });
   });
 
@@ -679,7 +681,8 @@ export async function registerRoutes(
       dailyTimeReport, dailyTransactionReport, reconciliationReport,
       firstName, lastName, baseRate, offSiteRate, homeProperty, allowOffSite,
       mileageRate, allowSpecialTerms, specialTermsAmount, w9OrW4, docsComplete,
-      requireFinancialConfirm, allowPastDates, receiveTransactionEmails } = req.body;
+      requireFinancialConfirm, allowPastDates, receiveTransactionEmails,
+      allowWorkCredits, workCreditReport } = req.body;
 
     if (email) {
       const allUsers = await storage.getAllUsers();
@@ -714,6 +717,8 @@ export async function registerRoutes(
     if (requireFinancialConfirm !== undefined) updateData.requireFinancialConfirm = requireFinancialConfirm ? 1 : 0;
     if (allowPastDates !== undefined) updateData.allowPastDates = allowPastDates ? 1 : 0;
     if (receiveTransactionEmails !== undefined) updateData.receiveTransactionEmails = receiveTransactionEmails ? 1 : 0;
+    if (allowWorkCredits !== undefined) updateData.allowWorkCredits = allowWorkCredits ? 1 : 0;
+    if (workCreditReport !== undefined) updateData.workCreditReport = workCreditReport ? 1 : 0;
 
     const updated = await storage.updateUser(id, updateData);
     res.json(updated);
@@ -1309,6 +1314,38 @@ export async function registerRoutes(
     }
     timeHtml += `<p style="color:#888;font-size:12px;margin-top:20px;">- Jetsetter Reporting</p></div>`;
 
+    // Build Work Credits daily report
+    const todayWorkCredits = await storage.getWorkCreditsByDate(date);
+    let wcHtml = `<div style="font-family:Arial,sans-serif;max-width:800px;margin:0 auto;">`;
+    wcHtml += `<h1 style="color:#8b5cf6;">Daily Work Credits Report - ${date}</h1>`;
+    wcHtml += `<p style="color:#666;">Generated on ${new Date().toISOString().replace("T", " ").slice(0, 19)}</p>`;
+    if (todayWorkCredits.length > 0) {
+      let dailyTotal = 0;
+      for (const wc of todayWorkCredits) {
+        const wcUser = allUsers.find(u => u.id === wc.userId);
+        const wcName = wcUser?.displayName || "Unknown";
+        let descList: string[] = [];
+        try { descList = JSON.parse(wc.workDescriptions); } catch {}
+        const amt = parseFloat(wc.totalAmount || "0");
+        dailyTotal += amt;
+        wcHtml += `<div style="background:#f5f0ff;padding:10px;border-radius:5px;margin:8px 0;">`;
+        wcHtml += `<p><strong>${wc.tenantFirstName} ${wc.tenantLastName}</strong> - Lot/Unit: ${wc.lotOrUnit} - ${wc.property}</p>`;
+        wcHtml += `<p>Submitted by: ${wcName}</p>`;
+        wcHtml += `<p>Type: ${wc.creditType === "fixed" ? "Fixed" : `Hourly (${wc.hoursWorked}h × $${wc.hourlyRate})`}</p>`;
+        if (descList.length > 0) {
+          wcHtml += `<ul style="margin:4px 0;">${descList.map((d: string) => `<li>${d}</li>`).join("")}</ul>`;
+        }
+        wcHtml += `<p style="font-weight:bold;font-size:16px;">Credit: $${amt.toFixed(2)}</p>`;
+        wcHtml += `</div>`;
+      }
+      wcHtml += `<div style="border-top:2px solid #333;padding-top:10px;margin-top:15px;">`;
+      wcHtml += `<p style="font-size:18px;font-weight:bold;">Daily Total: ${todayWorkCredits.length} credits = $${dailyTotal.toFixed(2)}</p>`;
+      wcHtml += `</div>`;
+    } else {
+      wcHtml += `<p style="color:#888;">No work credits today.</p>`;
+    }
+    wcHtml += `<p style="color:#888;font-size:12px;margin-top:20px;">- Jetsetter Reporting</p></div>`;
+
     // Send transaction report to dailyTransactionReport subscribers
     const txSubscribers = allUsers.filter((u: any) => u.dailyTransactionReport && u.email);
     // Fallback: also include old dailyReport subscribers for backward compat
@@ -1329,6 +1366,14 @@ export async function registerRoutes(
       sentTo.push(...timeRecipients.map(r => r.email));
     }
 
+    // Send work credits report to workCreditReport subscribers
+    const wcSubscribers = allUsers.filter((u: any) => u.workCreditReport && u.email);
+    const wcRecipients = wcSubscribers.map(u => ({ name: u.displayName, email: u.email! }));
+    if (wcRecipients.length > 0 && todayWorkCredits.length > 0) {
+      await sendEmailToRecipients(wcRecipients, `Daily Work Credits Report - ${date}`, wcHtml);
+      sentTo.push(...wcRecipients.map(r => r.email));
+    }
+
     // Save report to Google Drive "Daily Reports" folder
     if (isGoogleEnabled()) {
       try {
@@ -1343,7 +1388,7 @@ export async function registerRoutes(
       } catch (e: any) { console.error("[daily-report] Drive save failed:", e.message?.slice(0, 200)); }
     }
 
-    res.json({ ok: true, date, receipts: todayInvoices.length, cashTx: todayCash.length, timeReports: todayTimeReports.length, sentTo: [...new Set(sentTo)] });
+    res.json({ ok: true, date, receipts: todayInvoices.length, cashTx: todayCash.length, timeReports: todayTimeReports.length, workCredits: todayWorkCredits.length, sentTo: [...new Set(sentTo)] });
   });
 
   app.get("/api/invoices/export", async (req, res) => {
@@ -2200,6 +2245,157 @@ export async function registerRoutes(
     const session = await requireAuth(req, res);
     if (!session) return;
     await storage.deleteTimeReport(parseInt(req.params.id));
+    res.json({ ok: true });
+  });
+
+  // ---- Work Credits ----
+  app.post("/api/work-credits", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+
+    // Check if user has allowWorkCredits
+    const sessionUser = await storage.getUser(session.userId);
+    if (!isAdminRole(session.role) && !(sessionUser as any)?.allowWorkCredits) {
+      return res.status(403).json({ error: "Work credits not enabled for your account" });
+    }
+
+    const { property, date, tenantFirstName, tenantLastName, lotOrUnit, workDescriptions, creditType, fixedAmount, hoursWorked, hourlyRate, timeBlocks, totalAmount } = req.body;
+
+    if (!property || !date || !tenantFirstName || !tenantLastName || !lotOrUnit || !workDescriptions || !creditType || !totalAmount) {
+      return res.status(400).json({ error: "All fields are required" });
+    }
+
+    if (creditType === "hourly" && (!hoursWorked || !hourlyRate)) {
+      return res.status(400).json({ error: "Hours and rate are required for hourly credits" });
+    }
+
+    if (creditType === "fixed" && !fixedAmount) {
+      return res.status(400).json({ error: "Amount is required for fixed credits" });
+    }
+
+    const credit = await storage.createWorkCredit({
+      userId: session.userId,
+      property,
+      date,
+      tenantFirstName,
+      tenantLastName,
+      lotOrUnit,
+      workDescriptions: JSON.stringify(workDescriptions),
+      creditType,
+      fixedAmount: fixedAmount || null,
+      hoursWorked: hoursWorked || null,
+      hourlyRate: hourlyRate || null,
+      timeBlocks: timeBlocks ? JSON.stringify(timeBlocks) : null,
+      totalAmount,
+      syncedToSheets: 0,
+      createdAt: new Date().toISOString(),
+    });
+
+    res.json(credit);
+
+    // Background: email + Drive + Sheets sync
+    setImmediate(async () => {
+      try {
+        const user = await storage.getUser(session.userId);
+        const displayName = user?.displayName || "Unknown";
+        const descList = Array.isArray(workDescriptions) ? workDescriptions : JSON.parse(workDescriptions);
+
+        // Build email HTML
+        const emailHtml = `<html><body style="font-family:Arial;max-width:600px;margin:0 auto;">
+          <h2 style="color:#8b5cf6;border-bottom:2px solid #8b5cf6;padding-bottom:8px;">Work Credit - ${date}</h2>
+          <table style="width:100%;border-collapse:collapse;margin:10px 0;">
+            <tr><td style="padding:6px 0;color:#666;">Submitted by</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${displayName}</td></tr>
+            <tr><td style="padding:6px 0;color:#666;">Property</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${property}</td></tr>
+            <tr><td style="padding:6px 0;color:#666;">Date</td><td style="padding:6px 0;text-align:right;">${date}</td></tr>
+            <tr><td style="padding:6px 0;color:#666;">Tenant</td><td style="padding:6px 0;text-align:right;">${tenantFirstName} ${tenantLastName}</td></tr>
+            <tr><td style="padding:6px 0;color:#666;">Lot/Unit</td><td style="padding:6px 0;text-align:right;">${lotOrUnit}</td></tr>
+            <tr><td style="padding:6px 0;color:#666;">Type</td><td style="padding:6px 0;text-align:right;">${creditType === "fixed" ? "Fixed Amount" : "Hourly"}</td></tr>
+            ${creditType === "hourly" ? `<tr><td style="padding:6px 0;color:#666;">Hours × Rate</td><td style="padding:6px 0;text-align:right;">${hoursWorked}h × $${hourlyRate}/hr</td></tr>` : ""}
+          </table>
+          <h3>Work Description</h3>
+          <ul>${descList.map((d: string) => `<li>${d}</li>`).join("")}</ul>
+          <div style="border-top:2px solid #333;margin-top:15px;padding-top:10px;">
+            <p style="font-size:18px;font-weight:bold;">Credit Amount: $${totalAmount}</p>
+          </div>
+          <p style="color:#888;font-size:11px;margin-top:20px;">- Jetsetter Reporting</p>
+        </body></html>`;
+
+        // Send email to work credit report subscribers
+        const allUsers = await storage.getAllUsers();
+        const recipients = allUsers
+          .filter((u: any) => (u.workCreditReport || u.dailyTransactionReport) && u.email && isAdminRole(u.role))
+          .map((u: any) => ({ name: u.displayName, email: u.email }));
+        if (recipients.length > 0) {
+          await sendEmailToRecipients(
+            recipients,
+            `Work Credit: ${tenantFirstName} ${tenantLastName} - ${property} - $${totalAmount} (${date})`,
+            emailHtml
+          );
+        }
+
+        // Google Sheets sync
+        if (isGoogleEnabled()) {
+          try {
+            const wcConfigPath = path.resolve(dataDir, "work-credits-config.json");
+            let wcConfig: any = null;
+            if (fs.existsSync(wcConfigPath)) {
+              wcConfig = JSON.parse(fs.readFileSync(wcConfigPath, "utf-8"));
+            }
+            if (!wcConfig?.spreadsheetId) {
+              console.log("[work-credit] No spreadsheet config yet, skipping Sheets sync");
+            } else {
+              await createSheetTab(wcConfig.spreadsheetId, property);
+              await appendSheetRow(wcConfig.spreadsheetId, property, [
+                date,
+                displayName,
+                `${tenantFirstName} ${tenantLastName}`,
+                lotOrUnit,
+                descList.join("; "),
+                creditType,
+                creditType === "hourly" ? `${hoursWorked}h × $${hourlyRate}` : "Fixed",
+                `$${totalAmount}`,
+                new Date().toISOString(),
+              ]);
+            }
+          } catch (e) { console.error("[work-credit] Sheets sync error:", e); }
+
+          // Drive sync: Work Credits > Property > file
+          try {
+            const wcFolder = await ensureDriveFolder("Work Credits");
+            if (wcFolder) {
+              const propFolder = await ensureDriveFolder(property, wcFolder);
+              if (propFolder) {
+                const reportHtml = emailHtml;
+                const filePath = path.resolve(dataDir, `work-credit-${credit.id}.html`);
+                fs.writeFileSync(filePath, reportHtml);
+                await uploadToDrive(filePath, `WorkCredit_${tenantFirstName}_${tenantLastName}_${date}.html`, propFolder);
+                try { fs.unlinkSync(filePath); } catch {}
+              }
+            }
+          } catch (e) { console.error("[work-credit] Drive sync error:", e); }
+        }
+      } catch (e) { console.error("[work-credit] Background error:", e); }
+    });
+  });
+
+  app.get("/api/work-credits", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    if (isAdminRole(session.role)) {
+      const credits = await storage.getAllWorkCredits();
+      res.json(credits);
+    } else {
+      const credits = await storage.getWorkCreditsByUser(session.userId);
+      res.json(credits);
+    }
+  });
+
+  app.delete("/api/work-credits/:id", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+    await storage.deleteWorkCredit(id);
     res.json({ ok: true });
   });
 

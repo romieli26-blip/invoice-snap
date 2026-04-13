@@ -59,6 +59,10 @@ export default function HistoryPage() {
     queryKey: ["/api/time-reports"],
   });
 
+  const { data: workCredits } = useQuery<any[]>({
+    queryKey: ["/api/work-credits"],
+  });
+
   // Cash transaction edit state
   const [editingCashTx, setEditingCashTx] = useState<any | null>(null);
   const [editCashAmount, setEditCashAmount] = useState("");
@@ -211,6 +215,16 @@ export default function HistoryPage() {
           </div>
         )}
 
+        {user?.role === "contractor" && ((user as any)?.allowWorkCredits || false) && (
+          <Button
+            className="w-full h-12 text-sm gap-1.5 bg-purple-600 hover:bg-purple-700 text-white"
+            onClick={() => setLocation("/work-credit")}
+          >
+            <CreditCard className="w-4 h-4" />
+            Work Credit
+          </Button>
+        )}
+
         {user?.role !== "contractor" && (
           <div className="grid grid-cols-2 gap-3">
             <Button
@@ -229,6 +243,16 @@ export default function HistoryPage() {
               My Documents
             </Button>
           </div>
+        )}
+
+        {user?.role !== "contractor" && ((user as any)?.allowWorkCredits || user?.role === "admin" || user?.role === "super_admin") && (
+          <Button
+            className="w-full h-12 text-sm gap-1.5 bg-purple-600 hover:bg-purple-700 text-white"
+            onClick={() => setLocation("/work-credit")}
+          >
+            <CreditCard className="w-4 h-4" />
+            Work Credit
+          </Button>
         )}
 
         {/* Cash Balances */}
@@ -562,6 +586,66 @@ export default function HistoryPage() {
             <p className="text-sm text-muted-foreground text-center py-4">No work reports yet.</p>
           )}
         </div>
+
+        {/* ---- WORK CREDITS SECTION ---- */}
+        {workCredits && workCredits.length > 0 && (
+          <div className="space-y-2">
+            <h2 className="text-sm font-medium text-muted-foreground">Work Credits</h2>
+            <div className="space-y-2">
+              {workCredits.map((wc: any) => {
+                let descList: string[] = [];
+                try { descList = JSON.parse(wc.workDescriptions); } catch {}
+                return (
+                  <Card key={wc.id}>
+                    <CardContent className="py-3 flex gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-purple-50 flex items-center justify-center flex-shrink-0">
+                        <CreditCard className="w-5 h-5 text-purple-600" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-medium">{wc.tenantFirstName} {wc.tenantLastName} — {wc.property}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {wc.date} · Lot/Unit: {wc.lotOrUnit} · {wc.creditType === "fixed" ? "Fixed" : `${wc.hoursWorked}h × $${wc.hourlyRate}`}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <span className="text-sm font-semibold text-purple-600">${wc.totalAmount}</span>
+                            <button
+                              className="text-muted-foreground hover:text-destructive p-0.5"
+                              onClick={async () => {
+                                if (!window.confirm("Delete this work credit?")) return;
+                                try {
+                                  await apiRequest("DELETE", `/api/work-credits/${wc.id}`);
+                                  queryClient.invalidateQueries({ queryKey: ["/api/work-credits"] });
+                                  toast({ title: "Work credit deleted" });
+                                } catch {
+                                  toast({ title: "Failed to delete", variant: "destructive" });
+                                }
+                              }}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                        {descList.length > 0 && (
+                          <div className="mt-1">
+                            {descList.map((item: string, i: number) => (
+                              <p key={i} className="text-xs text-muted-foreground">• {item}</p>
+                            ))}
+                          </div>
+                        )}
+                        {(user?.role === "admin" || user?.role === "super_admin") && wc.submittedBy && (
+                          <span className="text-xs text-muted-foreground">by {wc.submittedBy}</span>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Footer */}

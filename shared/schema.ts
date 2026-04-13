@@ -49,6 +49,27 @@ export const users = sqliteTable("users", {
   requireFinancialConfirm: integer("require_financial_confirm").default(0),
   allowPastDates: integer("allow_past_dates").default(0),
   receiveTransactionEmails: integer("receive_transaction_emails").default(0),
+  allowWorkCredits: integer("allow_work_credits").default(0),
+  workCreditReport: integer("work_credit_report").default(0),
+});
+
+export const workCredits = sqliteTable("work_credits", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  property: text("property").notNull(),
+  date: text("date").notNull(),
+  tenantFirstName: text("tenant_first_name").notNull(),
+  tenantLastName: text("tenant_last_name").notNull(),
+  lotOrUnit: text("lot_or_unit").notNull(),
+  workDescriptions: text("work_descriptions").notNull(), // JSON array of strings
+  creditType: text("credit_type").notNull(), // 'fixed' or 'hourly'
+  fixedAmount: text("fixed_amount"), // for fixed type
+  hoursWorked: text("hours_worked"), // for hourly type (decimal)
+  hourlyRate: text("hourly_rate"), // for hourly type
+  timeBlocks: text("time_blocks"), // JSON array of {start, end} for hourly
+  totalAmount: text("total_amount").notNull(),
+  syncedToSheets: integer("synced_to_sheets").default(0),
+  createdAt: text("created_at").notNull(),
 });
 
 export const sessions = sqliteTable("sessions", {
@@ -197,3 +218,4 @@ export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
 export type Invoice = typeof invoices.$inferSelect;
 export type Property = typeof properties.$inferSelect;
 export type InsertProperty = z.infer<typeof insertPropertySchema>;
+export type WorkCredit = typeof workCredits.$inferSelect;
