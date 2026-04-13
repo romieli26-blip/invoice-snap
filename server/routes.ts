@@ -1110,8 +1110,13 @@ export async function registerRoutes(
 
   // ---- DAILY REPORT ----
   app.post("/api/admin/daily-report", async (req, res) => {
-    const session = await requireAdmin(req, res);
-    if (!session) return;
+    // Allow internal cron calls (from built-in scheduler)
+    const authHeader = req.headers.authorization || "";
+    const isInternalCron = authHeader === "Bearer internal-cron";
+    if (!isInternalCron) {
+      const session = await requireAdmin(req, res);
+      if (!session) return;
+    }
 
     const date = req.body.date || new Date().toISOString().split("T")[0];
     const allProps = await storage.getAllProperties();

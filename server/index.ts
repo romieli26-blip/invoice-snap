@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import cron from "node-cron";
 
 const app = express();
 const httpServer = createServer(app);
@@ -98,6 +99,34 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+
+      // Built-in daily report scheduler — midnight US Eastern (4:00 or 5:00 UTC)
+      // Runs at both 4:00 and 5:00 UTC to cover EST and EDT
+      cron.schedule("0 4 * * *", async () => {
+        log("Daily report cron triggered (4:00 UTC)", "cron");
+        try {
+          const res = await fetch(`http://localhost:${port}/api/admin/daily-report`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json",
+              "Authorization": "Bearer internal-cron" },
+            body: JSON.stringify({ date: getYesterdayET() }),
+          });
+          const data = await res.json();
+          log(`Daily report result: ${JSON.stringify(data)}`, "cron");
+        } catch (err: any) {
+          log(`Daily report error: ${err.message}`, "cron");
+        }
+      }, { timezone: "UTC" });
+
+      function getYesterdayET(): string {
+        // Get yesterday's date in US Eastern timezone
+        const now = new Date();
+        const et = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
+        et.setDate(et.getDate() - 1);
+        return et.toISOString().split("T")[0];
+      }
+
+      log("Daily report scheduler active (midnight ET)", "cron");
     },
   );
 })();
