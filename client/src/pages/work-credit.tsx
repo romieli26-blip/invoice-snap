@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,6 +11,8 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, Plus, Trash2, Loader2, CreditCard, AlertTriangle, Pencil, Check } from "lucide-react";
 import { LogoBackground } from "@/components/LogoBackground";
+
+interface Property { id: number; name: string; }
 
 // Generate 5-minute interval time options (00:00 to 23:55)
 const TIME_OPTIONS: string[] = [];
@@ -35,8 +38,12 @@ export default function WorkCreditPage() {
   const { toast } = useToast();
 
   const homeProperty = user?.homeProperty || "";
+  const isAdmin = user?.role === "admin" || user?.role === "super_admin";
   const today = new Date().toISOString().split("T")[0];
 
+  const { data: properties } = useQuery<Property[]>({ queryKey: ["/api/properties"] });
+
+  const [property, setProperty] = useState(homeProperty);
   const [date, setDate] = useState(today);
   const [tenantFirstName, setTenantFirstName] = useState("");
   const [tenantLastName, setTenantLastName] = useState("");
@@ -99,8 +106,8 @@ export default function WorkCreditPage() {
   function handleFormSubmit(e: React.FormEvent) {
     e.preventDefault();
     const filtered = workDescriptions.filter(d => d.trim());
-    if (!homeProperty) {
-      toast({ title: "No home property assigned to your account", variant: "destructive" });
+    if (!property) {
+      toast({ title: "Please select a property", variant: "destructive" });
       return;
     }
     if (!tenantFirstName.trim() || !tenantLastName.trim()) {
@@ -147,7 +154,7 @@ export default function WorkCreditPage() {
     setSubmitting(true);
     try {
       await apiRequest("POST", "/api/work-credits", {
-        property: homeProperty,
+        property,
         date,
         tenantFirstName: tenantFirstName.trim(),
         tenantLastName: tenantLastName.trim(),
@@ -195,7 +202,7 @@ export default function WorkCreditPage() {
               <CardContent className="py-4 space-y-3">
                 <div className="grid grid-cols-2 gap-y-2 text-sm">
                   <span className="text-muted-foreground">Property</span>
-                  <span className="font-medium text-right">{homeProperty}</span>
+                  <span className="font-medium text-right">{property}</span>
 
                   <span className="text-muted-foreground">Date</span>
                   <span className="font-medium text-right">{date}</span>
@@ -295,7 +302,7 @@ export default function WorkCreditPage() {
                   <span className="text-muted-foreground">Tenant</span>
                   <span className="font-medium text-right">{tenantFirstName} {tenantLastName}</span>
                   <span className="text-muted-foreground">Property</span>
-                  <span className="font-medium text-right">{homeProperty}</span>
+                  <span className="font-medium text-right">{property}</span>
                   <span className="text-muted-foreground">Amount</span>
                   <span className="font-semibold text-right">${computedTotal}</span>
                 </div>
@@ -344,10 +351,21 @@ export default function WorkCreditPage() {
           </div>
 
           <form onSubmit={handleFormSubmit} className="space-y-4">
-            {/* Property (read-only from homeProperty) */}
+            {/* Property: selector for admin, read-only for managers */}
             <div className="space-y-2">
               <Label>Property</Label>
-              <Input value={homeProperty} readOnly className="bg-muted/40" />
+              {isAdmin ? (
+                <Select value={property} onValueChange={setProperty}>
+                  <SelectTrigger><SelectValue placeholder="Select property" /></SelectTrigger>
+                  <SelectContent>
+                    {properties?.map(p => (
+                      <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input value={property} readOnly className="bg-muted/40" />
+              )}
             </div>
 
             <div className="space-y-2">
@@ -536,7 +554,7 @@ export default function WorkCreditPage() {
             <Button
               type="submit"
               className="w-full bg-purple-600 hover:bg-purple-700"
-              disabled={submitting || !homeProperty}
+              disabled={submitting || !property}
             >
               Review & Submit
             </Button>

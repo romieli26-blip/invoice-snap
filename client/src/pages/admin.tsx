@@ -781,27 +781,30 @@ export default function AdminPage() {
               {(editUserRole === "admin" || editUserRole === "super_admin") && editUserEmail && (
                 <>
                   <div className="border-t pt-3 mt-2">
-                    <p className="text-xs font-medium text-muted-foreground mb-2">Email Subscriptions</p>
+                    <p className="text-xs font-medium text-muted-foreground mb-2">Real-Time Email Notifications</p>
                   </div>
                   <div className="flex items-center space-x-2">
                     <Checkbox id="edit-tx-emails" checked={editUserReceiveTransactionEmails} onCheckedChange={c => setEditUserReceiveTransactionEmails(c === true)} />
-                    <Label htmlFor="edit-tx-emails" className="text-sm font-normal cursor-pointer">Real-time receipt & cash transaction emails</Label>
+                    <Label htmlFor="edit-tx-emails" className="text-sm font-normal cursor-pointer">CC Receipts & Cash Transactions (per entry)</Label>
                   </div>
                   <div className="flex items-center space-x-2">
                     <Checkbox id="edit-daily-time" checked={editUserDailyTimeReport} onCheckedChange={c => setEditUserDailyTimeReport(c === true)} />
-                    <Label htmlFor="edit-daily-time" className="text-sm font-normal cursor-pointer">Daily Time Report</Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Checkbox id="edit-daily-tx" checked={editUserDailyTxReport} onCheckedChange={c => setEditUserDailyTxReport(c === true)} />
-                    <Label htmlFor="edit-daily-tx" className="text-sm font-normal cursor-pointer">Daily Transaction Report</Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Checkbox id="edit-recon" checked={editUserReconReport} onCheckedChange={c => setEditUserReconReport(c === true)} />
-                    <Label htmlFor="edit-recon" className="text-sm font-normal cursor-pointer">Reconciliation Report</Label>
+                    <Label htmlFor="edit-daily-time" className="text-sm font-normal cursor-pointer">Work Reports / Time Reporting (per entry + daily)</Label>
                   </div>
                   <div className="flex items-center space-x-2">
                     <Checkbox id="edit-wc-report" checked={editUserWorkCreditReport} onCheckedChange={c => setEditUserWorkCreditReport(c === true)} />
-                    <Label htmlFor="edit-wc-report" className="text-sm font-normal cursor-pointer">Work Credit Report</Label>
+                    <Label htmlFor="edit-wc-report" className="text-sm font-normal cursor-pointer">Work Credits (per entry + daily)</Label>
+                  </div>
+                  <div className="border-t pt-2 mt-2">
+                    <p className="text-xs font-medium text-muted-foreground mb-2">Daily Summary Reports</p>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox id="edit-daily-tx" checked={editUserDailyTxReport} onCheckedChange={c => setEditUserDailyTxReport(c === true)} />
+                    <Label htmlFor="edit-daily-tx" className="text-sm font-normal cursor-pointer">Daily Transaction Summary (CC + Cash)</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox id="edit-recon" checked={editUserReconReport} onCheckedChange={c => setEditUserReconReport(c === true)} />
+                    <Label htmlFor="edit-recon" className="text-sm font-normal cursor-pointer">Reconciliation Reports</Label>
                   </div>
                 </>
               )}
