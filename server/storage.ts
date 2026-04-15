@@ -89,6 +89,8 @@ try { sqlite.exec("ALTER TABLE users ADD COLUMN allow_past_dates INTEGER DEFAULT
 try { sqlite.exec("ALTER TABLE users ADD COLUMN receive_transaction_emails INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN allow_work_credits INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN work_credit_report INTEGER DEFAULT 0"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN doc_reminder_enabled INTEGER DEFAULT 0"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN doc_reminder_days INTEGER DEFAULT 3"); } catch {}
 
 // Time reports table
 sqlite.exec(`

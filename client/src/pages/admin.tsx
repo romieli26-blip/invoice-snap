@@ -77,6 +77,8 @@ export default function AdminPage() {
   const [editUserReceiveTransactionEmails, setEditUserReceiveTransactionEmails] = useState(false);
   const [editUserAllowWorkCredits, setEditUserAllowWorkCredits] = useState(false);
   const [editUserWorkCreditReport, setEditUserWorkCreditReport] = useState(false);
+  const [editUserDocReminderEnabled, setEditUserDocReminderEnabled] = useState(false);
+  const [editUserDocReminderDays, setEditUserDocReminderDays] = useState(3);
   const [editUserSaving, setEditUserSaving] = useState(false);
 
   // Edit properties assignment state
@@ -714,6 +716,8 @@ export default function AdminPage() {
                             setEditUserReceiveTransactionEmails((u as any).receiveTransactionEmails === 1);
                             setEditUserAllowWorkCredits((u as any).allowWorkCredits === 1);
                             setEditUserWorkCreditReport((u as any).workCreditReport === 1);
+                            setEditUserDocReminderEnabled((u as any).docReminderEnabled === 1);
+                            setEditUserDocReminderDays((u as any).docReminderDays || 3);
                           }}
                         >
                           <Pencil className="w-4 h-4" />
@@ -880,6 +884,27 @@ export default function AdminPage() {
                     <Checkbox id="edit-work-credits" checked={editUserAllowWorkCredits} onCheckedChange={c => setEditUserAllowWorkCredits(c === true)} />
                     <Label htmlFor="edit-work-credits" className="text-sm font-normal cursor-pointer">Allow Work Credits</Label>
                   </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox id="edit-doc-reminder" checked={editUserDocReminderEnabled} onCheckedChange={c => setEditUserDocReminderEnabled(c === true)} />
+                    <Label htmlFor="edit-doc-reminder" className="text-sm font-normal cursor-pointer">Send document upload reminders</Label>
+                  </div>
+                  {editUserDocReminderEnabled && (
+                    <div className="space-y-1 ml-6">
+                      <Label className="text-xs">Reminder frequency (days)</Label>
+                      <div className="flex items-center gap-2">
+                        <Button type="button" variant="outline" size="icon" className="h-8 w-8"
+                          onClick={() => setEditUserDocReminderDays(Math.max(1, editUserDocReminderDays - 1))}>
+                          <span className="text-lg">&minus;</span>
+                        </Button>
+                        <span className="text-sm font-medium w-8 text-center">{editUserDocReminderDays}</span>
+                        <Button type="button" variant="outline" size="icon" className="h-8 w-8"
+                          onClick={() => setEditUserDocReminderDays(Math.min(30, editUserDocReminderDays + 1))}>
+                          <span className="text-lg">+</span>
+                        </Button>
+                        <span className="text-xs text-muted-foreground">days between reminders</span>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -912,6 +937,8 @@ export default function AdminPage() {
                     receiveTransactionEmails: editUserReceiveTransactionEmails,
                     allowWorkCredits: editUserAllowWorkCredits,
                     workCreditReport: editUserWorkCreditReport,
+                    docReminderEnabled: editUserDocReminderEnabled,
+                    docReminderDays: editUserDocReminderDays,
                   });
                   queryClient.invalidateQueries({ queryKey: ["/api/users"] });
                   setEditingUser(null);

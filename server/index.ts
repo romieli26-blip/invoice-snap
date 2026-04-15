@@ -15,13 +15,14 @@ declare module "http" {
 
 app.use(
   express.json({
+    limit: '10mb',
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
   }),
 );
 
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -102,20 +103,22 @@ app.use((req, res, next) => {
 
       // Built-in daily report scheduler — midnight US Eastern (4:00 or 5:00 UTC)
       // Runs at both 4:00 and 5:00 UTC to cover EST and EDT
-      cron.schedule("0 4 * * *", async () => {
+      cron.schedule("0 4 * * *", () => {
         log("Daily report cron triggered (4:00 UTC)", "cron");
-        try {
-          const res = await fetch(`http://localhost:${port}/api/admin/daily-report`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json",
-              "Authorization": "Bearer internal-cron" },
-            body: JSON.stringify({ date: getYesterdayET() }),
-          });
-          const data = await res.json();
-          log(`Daily report result: ${JSON.stringify(data)}`, "cron");
-        } catch (err: any) {
-          log(`Daily report error: ${err.message}`, "cron");
-        }
+        const postData = JSON.stringify({ date: getYesterdayET() });
+        const http = require("http");
+        const req = http.request({
+          hostname: "localhost", port, path: "/api/admin/daily-report",
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer internal-cron", "Content-Length": Buffer.byteLength(postData) },
+        }, (res: any) => {
+          let body = "";
+          res.on("data", (c: any) => body += c);
+          res.on("end", () => log(`Daily report result: ${body}`, "cron"));
+        });
+        req.on("error", (err: any) => log(`Daily report error: ${err.message}`, "cron"));
+        req.write(postData);
+        req.end();
       }, { timezone: "UTC" });
 
       function getYesterdayET(): string {
@@ -127,6 +130,26 @@ app.use((req, res, next) => {
       }
 
       log("Daily report scheduler active (midnight ET)", "cron");
+
+      // Document reminder scheduler - runs at 9:00 AM ET (14:00 UTC)
+      cron.schedule("0 14 * * *", () => {
+        log("Document reminder cron triggered", "cron");
+        const http = require("http");
+        const req = http.request({
+          hostname: "localhost", port, path: "/api/admin/doc-reminders",
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer internal-cron", "Content-Length": "2" },
+        }, (res: any) => {
+          let body = "";
+          res.on("data", (c: any) => body += c);
+          res.on("end", () => log(`Document reminders result: ${body}`, "cron"));
+        });
+        req.on("error", (err: any) => log(`Document reminders error: ${err.message}`, "cron"));
+        req.write("{}");
+        req.end();
+      }, { timezone: "UTC" });
+
+      log("Document reminder scheduler active (9 AM ET)", "cron");
     },
   );
 })();

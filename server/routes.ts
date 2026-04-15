@@ -531,6 +531,8 @@ export async function registerRoutes(
       docsComplete: (user as any).docsComplete || 0,
       allowWorkCredits: (user as any).allowWorkCredits || 0,
       workCreditReport: (user as any).workCreditReport || 0,
+      docReminderEnabled: (user as any).docReminderEnabled || 0,
+      docReminderDays: (user as any).docReminderDays || 3,
     });
   });
 
@@ -596,6 +598,13 @@ export async function registerRoutes(
         specialTermsAmount: (u as any).specialTermsAmount || "",
         w9OrW4: (u as any).w9OrW4 || "",
         docsComplete: (u as any).docsComplete || 0,
+        requireFinancialConfirm: (u as any).requireFinancialConfirm || 0,
+        allowPastDates: (u as any).allowPastDates || 0,
+        receiveTransactionEmails: (u as any).receiveTransactionEmails || 0,
+        allowWorkCredits: (u as any).allowWorkCredits || 0,
+        workCreditReport: (u as any).workCreditReport || 0,
+        docReminderEnabled: (u as any).docReminderEnabled || 0,
+        docReminderDays: (u as any).docReminderDays || 3,
         assignedProperties: propIds.map(pid => propMap.get(pid)).filter(Boolean) as string[],
       };
     }));
@@ -682,7 +691,7 @@ export async function registerRoutes(
       firstName, lastName, baseRate, offSiteRate, homeProperty, allowOffSite,
       mileageRate, allowSpecialTerms, specialTermsAmount, w9OrW4, docsComplete,
       requireFinancialConfirm, allowPastDates, receiveTransactionEmails,
-      allowWorkCredits, workCreditReport } = req.body;
+      allowWorkCredits, workCreditReport, docReminderEnabled, docReminderDays } = req.body;
 
     if (email) {
       const allUsers = await storage.getAllUsers();
@@ -719,6 +728,8 @@ export async function registerRoutes(
     if (receiveTransactionEmails !== undefined) updateData.receiveTransactionEmails = receiveTransactionEmails ? 1 : 0;
     if (allowWorkCredits !== undefined) updateData.allowWorkCredits = allowWorkCredits ? 1 : 0;
     if (workCreditReport !== undefined) updateData.workCreditReport = workCreditReport ? 1 : 0;
+    if (docReminderEnabled !== undefined) updateData.docReminderEnabled = docReminderEnabled ? 1 : 0;
+    if (docReminderDays !== undefined) updateData.docReminderDays = parseInt(docReminderDays) || 3;
 
     const updated = await storage.updateUser(id, updateData);
     res.json(updated);
@@ -907,6 +918,7 @@ export async function registerRoutes(
            <p><strong>Description:</strong> ${invoice.description}</p>
            <p><strong>Purpose:</strong> ${invoice.purpose}</p>
            <p><strong>Bought By:</strong> ${invoice.boughtBy}</p>
+           <p><strong>CC Last Digits:</strong> ••${invoice.lastFourDigits || "N/A"}</p>
            <p><strong>Submitted By:</strong> ${submittedByName}</p>
            <p><strong>Date:</strong> ${invoice.purchaseDate}</p>
            <p><strong>Record #:</strong> ${invoice.recordNumber || "N/A"}</p>`,
@@ -1345,6 +1357,35 @@ export async function registerRoutes(
       wcHtml += `<p style="color:#888;">No work credits today.</p>`;
     }
     wcHtml += `<p style="color:#888;font-size:12px;margin-top:20px;">- Jetsetter Reporting</p></div>`;
+
+    // Document upload status for daily summary
+    let docStatusHtml = '<h2 style="color:#333;margin-top:20px;">Document Upload Status</h2>';
+    const allDocs = await Promise.all(allUsers.map(async (u: any) => {
+      const docs = await storage.getUserDocuments(u.id);
+      const hasPhotoId = docs.some((d: any) => d.docType === "photo_id");
+      const hasBanking = docs.some((d: any) => d.docType === "banking");
+      const hasW9 = docs.some((d: any) => d.docType === "w9");
+      const isComplete = hasPhotoId && hasBanking && hasW9;
+      return { name: u.displayName, role: u.role, hasPhotoId, hasBanking, hasW9, isComplete, docsComplete: u.docsComplete };
+    }));
+    const incomplete = allDocs.filter(d => !d.isComplete && (d.role === "manager" || d.role === "contractor"));
+    if (incomplete.length > 0) {
+      docStatusHtml += '<table style="width:100%;border-collapse:collapse;margin:8px 0;">';
+      docStatusHtml += '<tr style="background:#f0f0f0;"><th style="text-align:left;padding:6px;border:1px solid #ddd;">User</th><th style="padding:6px;border:1px solid #ddd;">Photo ID</th><th style="padding:6px;border:1px solid #ddd;">Banking</th><th style="padding:6px;border:1px solid #ddd;">W-9</th></tr>';
+      for (const d of incomplete) {
+        const check = '\u2705';
+        const miss = '\u274C';
+        docStatusHtml += `<tr><td style="padding:6px;border:1px solid #ddd;">${d.name}</td>`;
+        docStatusHtml += `<td style="padding:6px;border:1px solid #ddd;text-align:center;">${d.hasPhotoId ? check : miss}</td>`;
+        docStatusHtml += `<td style="padding:6px;border:1px solid #ddd;text-align:center;">${d.hasBanking ? check : miss}</td>`;
+        docStatusHtml += `<td style="padding:6px;border:1px solid #ddd;text-align:center;">${d.hasW9 ? check : miss}</td></tr>`;
+      }
+      docStatusHtml += '</table>';
+    } else {
+      docStatusHtml += '<p style="color:#437a22;">All users have completed their document uploads.</p>';
+    }
+    // Append doc status to transaction report HTML
+    html = html.replace('</div>', docStatusHtml + '</div>');
 
     // Send transaction report to dailyTransactionReport subscribers
     const txSubscribers = allUsers.filter((u: any) => u.dailyTransactionReport && u.email);
@@ -2399,6 +2440,60 @@ export async function registerRoutes(
     res.json({ ok: true });
   });
 
+  // ---- Document Reminders ----
+  app.post("/api/admin/doc-reminders", async (req, res) => {
+    const authHeader = req.headers.authorization || "";
+    const isInternalCron = authHeader === "Bearer internal-cron";
+    if (!isInternalCron) {
+      const session = await requireAdmin(req, res);
+      if (!session) return;
+    }
+
+    const allUsers = await storage.getAllUsers();
+    let sent = 0;
+
+    for (const u of allUsers) {
+      if (!(u as any).docReminderEnabled || !(u as any).email) continue;
+      if ((u as any).docsComplete === 1) continue;
+
+      const docs = await storage.getUserDocuments(u.id);
+      const hasPhotoId = docs.some((d: any) => d.docType === "photo_id");
+      const hasBanking = docs.some((d: any) => d.docType === "banking");
+      const hasW9 = docs.some((d: any) => d.docType === "w9");
+
+      if (hasPhotoId && hasBanking && hasW9) continue;
+
+      const reminderDays = (u as any).docReminderDays || 3;
+      const daysSinceEpoch = Math.floor(Date.now() / (1000 * 60 * 60 * 24));
+      if (daysSinceEpoch % reminderDays !== 0) continue;
+
+      const missing: string[] = [];
+      if (!hasPhotoId) missing.push("Photo ID");
+      if (!hasBanking) missing.push("Banking Information");
+      if (!hasW9) missing.push("W-9 Form");
+
+      const emailHtml = `<html><body style="font-family:Arial;">
+        <h2 style="color:#01696F;">Document Upload Reminder</h2>
+        <p>Hi ${u.displayName},</p>
+        <p>This is a friendly reminder that the following documents are still needed:</p>
+        <ul>${missing.map(m => `<li style="color:#A12C7B;font-weight:bold;">${m}</li>`).join("")}</ul>
+        <p>Please log in to <b>Jetsetter Reporting</b> and upload your documents under <b>My Documents</b>.</p>
+        <p style="color:#888;font-size:11px;">- Jetsetter Reporting</p>
+      </body></html>`;
+
+      try {
+        await sendEmailToRecipients(
+          [{ name: u.displayName, email: (u as any).email }],
+          `Reminder: Documents needed - ${missing.join(", ")}`,
+          emailHtml
+        );
+        sent++;
+      } catch (e) { console.error(`[doc-reminder] Failed for ${u.displayName}:`, e); }
+    }
+
+    res.json({ sent });
+  });
+
   // ---- User Documents ----
   app.post("/api/user-documents", upload.single("document"), async (req, res) => {
     const session = await requireAuth(req, res);
@@ -2468,6 +2563,22 @@ export async function registerRoutes(
               }
             }
           }
+          // Also sync to shared User Documents folder
+          try {
+            const sharedDocsFolder = await ensureDriveFolder("User Documents");
+            if (sharedDocsFolder) {
+              const displayName = docUser?.displayName || "Unknown";
+              const userDocsFolder = await ensureDriveFolder(displayName, sharedDocsFolder);
+              if (userDocsFolder && req.file) {
+                const fullPath = path.resolve(dataDir, "uploads", req.file.filename);
+                if (fs.existsSync(fullPath)) {
+                  const ext = path.extname(req.file.filename).slice(1);
+                  const docName = `${docType}_${Date.now()}.${ext}`;
+                  await uploadToDrive(fullPath, docName, userDocsFolder);
+                }
+              }
+            }
+          } catch (e) { console.error("[docs] Shared folder sync error:", e); }
         }
       } catch (e) { console.error("[docs] Drive sync error:", e); }
     });
