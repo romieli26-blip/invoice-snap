@@ -8,7 +8,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
 import pdfParse from "pdf-parse";
-import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab } from "./google-api";
+import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet } from "./google-api";
 // nodemailer removed — using Gmail API instead (SMTP blocked on Railway)
 
 // Ensure uploads directory exists
@@ -270,6 +270,69 @@ function validatePassword(password: string): string | null {
   if (!/[0-9]/.test(password)) return "Password must contain at least one number.";
   if (!/[!@#$%^&*]/.test(password)) return "Password must contain at least one special character (!@#$%^&*).";
   return null;
+}
+
+// Update the Document Tracking spreadsheet in User Documents folder
+async function updateDocTrackingSheet() {
+  if (!isGoogleEnabled()) return;
+  try {
+    const configPath = path.resolve(dataDir, "doc-tracking-config.json");
+    let config: { spreadsheetId: string; folderId: string } | null = null;
+    if (fs.existsSync(configPath)) {
+      config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    }
+
+    // Ensure the User Documents folder exists
+    const userDocsFolder = await ensureDriveFolder("User Documents");
+    if (!userDocsFolder) return;
+
+    // Create spreadsheet if it doesn't exist
+    if (!config?.spreadsheetId) {
+      const ssId = await createSpreadsheetInFolder("Document Tracking", userDocsFolder);
+      if (!ssId) return;
+      config = { spreadsheetId: ssId, folderId: userDocsFolder };
+      fs.writeFileSync(configPath, JSON.stringify(config));
+    }
+
+    // Get all users and their documents
+    const allUsers = await storage.getAllUsers();
+    const rows: string[][] = [
+      ["User", "Role", "Email", "Photo ID", "Photo ID Date", "Banking", "Banking Date", "W-9", "W-9 Date", "All Complete", "Admin Approved", "Reminder Enabled", "Reminder Frequency", "Last Updated"],
+    ];
+
+    for (const u of allUsers) {
+      if (u.role === "admin" || u.role === "super_admin") continue; // Skip admins
+      const docs = await storage.getUserDocuments(u.id);
+      const photoId = docs.find((d: any) => d.docType === "photo_id");
+      const banking = docs.find((d: any) => d.docType === "banking");
+      const w9 = docs.find((d: any) => d.docType === "w9");
+      const allUploaded = !!(photoId && banking && w9);
+
+      rows.push([
+        u.displayName,
+        u.role,
+        (u as any).email || "N/A",
+        photoId ? "\u2705 Uploaded" : "\u274c Missing",
+        photoId ? new Date(photoId.createdAt).toLocaleDateString() : "",
+        banking ? "\u2705 Uploaded" : "\u274c Missing",
+        banking ? new Date(banking.createdAt).toLocaleDateString() : "",
+        w9 ? "\u2705 Uploaded" : "\u274c Missing",
+        w9 ? new Date(w9.createdAt).toLocaleDateString() : "",
+        allUploaded ? "\u2705 Yes" : "\u274c No",
+        (u as any).docsComplete ? "\u2705 Approved" : "Pending",
+        (u as any).docReminderEnabled ? `Every ${(u as any).docReminderDays || 3} days` : "Disabled",
+        (u as any).docReminderDays ? `${(u as any).docReminderDays} days` : "3 days",
+        new Date().toLocaleString(),
+      ]);
+    }
+
+    // Clear and rewrite the sheet
+    await clearSheet(config.spreadsheetId, "Sheet1!A:Z");
+    await updateSheetRange(config.spreadsheetId, "Sheet1!A1", rows);
+    console.log(`[doc-tracking] Updated spreadsheet with ${rows.length - 1} users`);
+  } catch (e) {
+    console.error("[doc-tracking] Failed to update:", e);
+  }
 }
 
 function isAdminRole(role: string): boolean {
@@ -1414,6 +1477,9 @@ export async function registerRoutes(
       await sendEmailToRecipients(wcRecipients, `Daily Work Credits Report - ${date}`, wcHtml);
       sentTo.push(...wcRecipients.map(r => r.email));
     }
+
+    // Update document tracking spreadsheet
+    try { await updateDocTrackingSheet(); } catch (e) { console.error("[doc-tracking] Daily update failed:", e); }
 
     // Save report to Google Drive "Daily Reports" folder
     if (isGoogleEnabled()) {
@@ -2581,6 +2647,9 @@ export async function registerRoutes(
           } catch (e) { console.error("[docs] Shared folder sync error:", e); }
         }
       } catch (e) { console.error("[docs] Drive sync error:", e); }
+
+      // Update document tracking spreadsheet
+      try { await updateDocTrackingSheet(); } catch (e) { console.error("[doc-tracking] Update failed:", e); }
     });
   });
 
@@ -2603,6 +2672,10 @@ export async function registerRoutes(
     if (!session) return;
     await storage.deleteUserDocument(parseInt(req.params.id));
     res.json({ ok: true });
+    // Update tracking sheet in background
+    setImmediate(async () => {
+      try { await updateDocTrackingSheet(); } catch (e) { console.error("[doc-tracking] Update failed:", e); }
+    });
   });
 
   // ---- Admin Workforce Report ----

@@ -143,6 +143,61 @@ export async function prependNoteToTab(spreadsheetId: string, tabTitle: string, 
   }
 }
 
+export async function createSpreadsheetInFolder(title: string, folderId: string): Promise<string | null> {
+  if (!sheetsApi || !driveApi) return null;
+  try {
+    const res = await sheetsApi.spreadsheets.create({
+      requestBody: { properties: { title } },
+    });
+    const spreadsheetId = res.data.spreadsheetId!;
+    // Move to the specified folder
+    const file = await driveApi.files.get({ fileId: spreadsheetId, fields: "parents" });
+    const prevParents = (file.data.parents || []).join(",");
+    await driveApi.files.update({
+      fileId: spreadsheetId,
+      addParents: folderId,
+      removeParents: prevParents,
+      fields: "id, parents",
+    });
+    console.log(`[google-api] Created spreadsheet "${title}" in folder ${folderId}`);
+    return spreadsheetId;
+  } catch (err: any) {
+    console.error(`[google-api] Failed to create spreadsheet:`, err.message?.slice(0, 200));
+    return null;
+  }
+}
+
+export async function updateSheetRange(spreadsheetId: string, range: string, values: string[][]): Promise<boolean> {
+  if (!sheetsApi) return false;
+  try {
+    await sheetsApi.spreadsheets.values.update({
+      spreadsheetId,
+      range,
+      valueInputOption: "RAW",
+      requestBody: { values },
+    });
+    return true;
+  } catch (err: any) {
+    console.error(`[google-api] Failed to update range:`, err.message?.slice(0, 200));
+    return false;
+  }
+}
+
+export async function clearSheet(spreadsheetId: string, range: string): Promise<boolean> {
+  if (!sheetsApi) return false;
+  try {
+    await sheetsApi.spreadsheets.values.clear({
+      spreadsheetId,
+      range,
+      requestBody: {},
+    });
+    return true;
+  } catch (err: any) {
+    console.error(`[google-api] Failed to clear range:`, err.message?.slice(0, 200));
+    return false;
+  }
+}
+
 export async function appendSheetRow(
   spreadsheetId: string,
   tabName: string,
