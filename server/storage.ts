@@ -472,10 +472,16 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(timeReports).orderBy(desc(timeReports.id)).all();
   }
   async getTimeReportsByUserAndDateRange(userId: number, startDate: string, endDate: string): Promise<TimeReport[]> {
-    const rows = sqlite.prepare(
-      "SELECT * FROM time_reports WHERE user_id = ? AND date >= ? AND date <= ? ORDER BY date"
-    ).all(userId, startDate, endDate) as TimeReport[];
-    return rows;
+    return db.select().from(timeReports)
+      .where(
+        and(
+          eq(timeReports.userId, userId),
+          gte(timeReports.date, startDate),
+          lte(timeReports.date, endDate)
+        )
+      )
+      .orderBy(timeReports.date)
+      .all();
   }
   async deleteTimeReport(id: number): Promise<void> {
     db.delete(timeReports).where(eq(timeReports.id, id)).run();

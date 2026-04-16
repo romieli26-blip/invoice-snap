@@ -2337,22 +2337,52 @@ export async function registerRoutes(
             }
             if (trConfig?.spreadsheetId) {
               const tabName = displayName;
-              await createSheetTab(trConfig.spreadsheetId, tabName);
-              await appendSheetRow(trConfig.spreadsheetId, tabName, [
-                date,
-                property,
-                timeDisplay,
-                totalHours.toFixed(1),
-                `$${rate.toFixed(2)}`,
-                `$${laborCost.toFixed(2)}`,
-                `${milesVal}`,
-                `$${mileageVal.toFixed(2)}`,
-                `$${specialVal.toFixed(2)}`,
-                `$${totalCost.toFixed(2)}`,
-                accList.join("; "),
-                notes || "",
-                new Date().toISOString(),
+              await createSheetTab(trConfig.spreadsheetId, tabName, [
+                "Date", "Property", "Time Blocks", "Total Hours", "Rate",
+                "Labor", "Miles", "Mileage Pay", "Special Terms",
+                "Total", "Accomplishments", "Notes", "Submitted At",
               ]);
+              // Write one row per time block (split shifts get separate rows)
+              if (blocks.length > 1) {
+                for (let bi = 0; bi < blocks.length; bi++) {
+                  const blk = blocks[bi];
+                  const [bsh, bsm] = blk.start.split(":").map(Number);
+                  const [beh, bem] = blk.end.split(":").map(Number);
+                  const blockHours = ((beh * 60 + bem) - (bsh * 60 + bsm)) / 60;
+                  const blockLabor = blockHours * rate;
+                  await appendSheetRow(trConfig.spreadsheetId, tabName, [
+                    date,
+                    property,
+                    `${blk.start} - ${blk.end}`,
+                    blockHours.toFixed(1),
+                    `$${rate.toFixed(2)}`,
+                    `$${blockLabor.toFixed(2)}`,
+                    bi === 0 ? `${milesVal}` : "0",
+                    bi === 0 ? `$${mileageVal.toFixed(2)}` : "$0.00",
+                    bi === 0 ? `$${specialVal.toFixed(2)}` : "$0.00",
+                    bi === 0 ? `$${totalCost.toFixed(2)}` : `$${blockLabor.toFixed(2)}`,
+                    bi === 0 ? accList.join("; ") : "(continued)",
+                    bi === 0 ? (notes || "") : "",
+                    new Date().toISOString(),
+                  ]);
+                }
+              } else {
+                await appendSheetRow(trConfig.spreadsheetId, tabName, [
+                  date,
+                  property,
+                  timeDisplay,
+                  totalHours.toFixed(1),
+                  `$${rate.toFixed(2)}`,
+                  `$${laborCost.toFixed(2)}`,
+                  `${milesVal}`,
+                  `$${mileageVal.toFixed(2)}`,
+                  `$${specialVal.toFixed(2)}`,
+                  `$${totalCost.toFixed(2)}`,
+                  accList.join("; "),
+                  notes || "",
+                  new Date().toISOString(),
+                ]);
+              }
             }
           } catch (e) { console.error("[time-report] Tracking spreadsheet error:", e); }
         }

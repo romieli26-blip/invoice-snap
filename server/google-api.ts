@@ -53,7 +53,7 @@ export function isGoogleEnabled(): boolean {
 
 // ---- SHEETS ----
 
-export async function createSheetTab(spreadsheetId: string, title: string): Promise<number | null> {
+export async function createSheetTab(spreadsheetId: string, title: string, headers?: string[]): Promise<number | null> {
   if (!sheetsApi) return null;
   try {
     const res = await sheetsApi.spreadsheets.batchUpdate({
@@ -65,19 +65,20 @@ export async function createSheetTab(spreadsheetId: string, title: string): Prom
     const sheetId = res.data.replies?.[0]?.addSheet?.properties?.sheetId;
     if (sheetId == null) return null;
 
-    // Add header row
+    // Add header row (use custom headers or default receipt headers)
+    const headerRow = headers || ["Date", "Description", "What For / Use", "Amount ($)", "Bought By", "Payment Method", "Last 4 Digits", "Submitted By", "Submitted At", "Receipt Identification", "RM Service Issue #", "Receipt Type", "Edit History"];
     await sheetsApi.spreadsheets.values.append({
       spreadsheetId,
       range: `'${title}'!A1`,
       valueInputOption: "RAW",
-      requestBody: {
-        values: [["Date", "Description", "What For / Use", "Amount ($)", "Bought By", "Payment Method", "Last 4 Digits", "Submitted By", "Submitted At", "Receipt Identification", "RM Service Issue #", "Receipt Type", "Edit History"]],
-      },
+      requestBody: { values: [headerRow] },
     });
 
     console.log(`[google-api] Created sheet tab "${title}" (id: ${sheetId})`);
     return sheetId;
   } catch (err: any) {
+    // Tab already exists - not an error
+    if (err.message?.includes("already exists")) return -1;
     console.error(`[google-api] Failed to create sheet tab:`, err.message?.slice(0, 200));
     return null;
   }
