@@ -322,42 +322,89 @@ export default function AdminPage() {
             </Button>
           </div>
           {wfResult && (
-            <div className="border rounded-md p-3 space-y-2 bg-muted/30">
-              <p className="text-sm font-medium">
-                {wfResult.user.firstName && wfResult.user.lastName
-                  ? `${wfResult.user.firstName} ${wfResult.user.lastName}`
-                  : wfResult.user.displayName}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {wfResult.period.startDate} to {wfResult.period.endDate}
-              </p>
-              <div className="grid grid-cols-2 gap-2 text-sm">
-                <div>Days Worked: <span className="font-medium">{wfResult.summary.daysWorked}</span></div>
-                <div>Total Hours: <span className="font-medium">{wfResult.summary.totalHours}</span></div>
-                <div>Total Miles: <span className="font-medium">{wfResult.summary.totalMiles}</span></div>
-                <div>Mileage Pay: <span className="font-medium">${wfResult.summary.totalMileagePay}</span></div>
-                {parseFloat(wfResult.summary.totalSpecialTerms) > 0 && (
-                  <div>Travel Expenses: <span className="font-medium">${wfResult.summary.totalSpecialTerms}</span></div>
-                )}
-                {wfResult.user.baseRate && (
-                  <div>Base Rate: <span className="font-medium">${wfResult.user.baseRate}/hr</span></div>
-                )}
+            <div className="border rounded-md p-3 space-y-3 bg-muted/30">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold">
+                  {wfResult.user.firstName && wfResult.user.lastName
+                    ? `${wfResult.user.firstName} ${wfResult.user.lastName}`
+                    : wfResult.user.displayName}
+                </p>
+                <span className="text-xs text-muted-foreground">
+                  {wfResult.period.startDate} to {wfResult.period.endDate}
+                </span>
               </div>
+
+              {/* Financial Summary */}
+              <div className="bg-blue-50 dark:bg-blue-950/30 rounded-md p-3 space-y-1">
+                <p className="text-xs font-semibold text-blue-800 dark:text-blue-300 mb-2">Pay Summary</p>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                  <div className="text-muted-foreground">Days Worked</div>
+                  <div className="text-right font-medium">{wfResult.summary.daysWorked}</div>
+                  <div className="text-muted-foreground">Total Hours</div>
+                  <div className="text-right font-medium">{wfResult.summary.totalHours} hrs</div>
+                  <div className="text-muted-foreground">Rate</div>
+                  <div className="text-right font-medium">${wfResult.summary.baseRate}/hr</div>
+                  <div className="text-muted-foreground">Labor ({wfResult.summary.totalHours}h × ${wfResult.summary.baseRate})</div>
+                  <div className="text-right font-semibold">${wfResult.summary.laborCost?.toFixed(2)}</div>
+                  <div className="text-muted-foreground">Mileage ({wfResult.summary.totalMiles} mi)</div>
+                  <div className="text-right">${wfResult.summary.totalMileagePay?.toFixed(2)}</div>
+                  <div className="text-muted-foreground">Special Terms / Travel</div>
+                  <div className="text-right">${wfResult.summary.totalSpecialTerms?.toFixed(2)}</div>
+                </div>
+                <div className="border-t border-blue-200 dark:border-blue-800 mt-2 pt-2 flex justify-between items-center">
+                  <span className="font-bold text-sm">Total Pay</span>
+                  <span className="font-bold text-lg text-blue-700 dark:text-blue-300">${wfResult.summary.grandTotal?.toFixed(2)}</span>
+                </div>
+              </div>
+
+              {/* Collapsible Entries */}
               {wfResult.reports.length > 0 && (
                 <div className="space-y-1 mt-2">
-                  <p className="text-xs font-medium text-muted-foreground">Details ({wfResult.reports.length} reports)</p>
-                  {wfResult.reports.map((r: any) => (
-                    <div key={r.id} className="text-xs bg-background p-2 rounded border">
-                      <span className="font-medium">{r.date}</span> — {r.property} ({(() => {
-                        try {
-                          const blocks = r.timeBlocks ? JSON.parse(r.timeBlocks) : [];
-                          if (blocks.length > 1) return blocks.map((b: any) => `${b.start}–${b.end}`).join(", ");
-                        } catch {}
-                        return `${r.startTime}–${r.endTime}`;
-                      })()})
-                      {r.miles && ` · ${r.miles}mi`}
-                    </div>
-                  ))}
+                  <p className="text-xs font-medium text-muted-foreground">Entries ({wfResult.reports.length} reports) — tap to expand</p>
+                  {wfResult.reports.map((r: any) => {
+                    const timeDisplay = (() => {
+                      try {
+                        const blocks = r.timeBlocks ? JSON.parse(r.timeBlocks) : [];
+                        if (blocks.length > 0) return blocks.map((b: any) => `${b.start}–${b.end}`).join(", ");
+                      } catch {}
+                      return `${r.startTime}–${r.endTime}`;
+                    })();
+                    return (
+                      <details key={r.id} className="text-xs bg-background rounded border">
+                        <summary className="p-2 cursor-pointer hover:bg-muted/50 flex justify-between items-center">
+                          <span><span className="font-medium">{r.date}</span> — {r.property} — {r.calculatedHours}h</span>
+                          <span className="font-semibold text-blue-700">${r.entryTotal?.toFixed(2)}</span>
+                        </summary>
+                        <div className="p-2 pt-0 border-t space-y-1">
+                          <div className="grid grid-cols-2 gap-1">
+                            <span className="text-muted-foreground">Time</span>
+                            <span className="text-right">{timeDisplay}</span>
+                            <span className="text-muted-foreground">Hours</span>
+                            <span className="text-right">{r.calculatedHours}h</span>
+                            <span className="text-muted-foreground">Rate</span>
+                            <span className="text-right">${r.rate}/hr{r.isOffSite ? " (off-site)" : ""}</span>
+                            <span className="text-muted-foreground">Labor</span>
+                            <span className="text-right font-medium">${r.laborCost?.toFixed(2)}</span>
+                            <span className="text-muted-foreground">Miles</span>
+                            <span className="text-right">{r.miles || "0"} (${r.mileageAmount?.toFixed(2)})</span>
+                            <span className="text-muted-foreground">Special Terms</span>
+                            <span className="text-right">${r.specialAmount?.toFixed(2)}</span>
+                          </div>
+                          {r.accomplishmentsList?.length > 0 && (
+                            <div className="mt-1">
+                              <span className="text-muted-foreground">Accomplishments:</span>
+                              <ul className="list-disc list-inside ml-1">
+                                {r.accomplishmentsList.map((a: string, i: number) => (
+                                  <li key={i}>{a}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          {r.notes && <p className="text-muted-foreground">Notes: {r.notes}</p>}
+                        </div>
+                      </details>
+                    );
+                  })}
                 </div>
               )}
             </div>

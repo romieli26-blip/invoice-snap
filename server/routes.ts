@@ -2319,6 +2319,42 @@ export async function registerRoutes(
 
             try { fs.unlinkSync(reportFilePath); } catch {}
           } catch (e) { console.error("[time-report] Drive sync error:", e); }
+
+          // Update Time Reporting tracking spreadsheet
+          try {
+            const trConfigPath = path.resolve(dataDir, "time-tracking-config.json");
+            let trConfig: any = null;
+            if (fs.existsSync(trConfigPath)) {
+              trConfig = JSON.parse(fs.readFileSync(trConfigPath, "utf-8"));
+            }
+            const mainFolder = await ensureDriveFolder("Time Reporting");
+            if (mainFolder && !trConfig?.spreadsheetId) {
+              const ssId = await createSpreadsheetInFolder("Time Reports Tracking", mainFolder);
+              if (ssId) {
+                trConfig = { spreadsheetId: ssId };
+                fs.writeFileSync(trConfigPath, JSON.stringify(trConfig));
+              }
+            }
+            if (trConfig?.spreadsheetId) {
+              const tabName = displayName;
+              await createSheetTab(trConfig.spreadsheetId, tabName);
+              await appendSheetRow(trConfig.spreadsheetId, tabName, [
+                date,
+                property,
+                timeDisplay,
+                totalHours.toFixed(1),
+                `$${rate.toFixed(2)}`,
+                `$${laborCost.toFixed(2)}`,
+                `${milesVal}`,
+                `$${mileageVal.toFixed(2)}`,
+                `$${specialVal.toFixed(2)}`,
+                `$${totalCost.toFixed(2)}`,
+                accList.join("; "),
+                notes || "",
+                new Date().toISOString(),
+              ]);
+            }
+          } catch (e) { console.error("[time-report] Tracking spreadsheet error:", e); }
         }
       } catch (e) { console.error("[time-report] Background error:", e); }
     });
@@ -2716,24 +2752,73 @@ export async function registerRoutes(
       daysWorked.add(r.date);
     }
 
+    // Calculate labor cost
+    const baseRate = parseFloat((userObj as any)?.baseRate || "0");
+    const offSiteRate = parseFloat((userObj as any)?.offSiteRate || "0");
+    const homeProperty = (userObj as any)?.homeProperty || "";
+    const mileageRate = parseFloat((userObj as any)?.mileageRate || "0.50");
+    const laborCost = totalHours * baseRate;
+    const grandTotal = laborCost + totalMileagePay + totalSpecialTerms;
+
+    // Enrich each report with per-entry calculations
+    const enrichedReports = reports.map(r => {
+      let hours = 0;
+      let blocks: { start: string; end: string }[] = [];
+      try { blocks = r.timeBlocks ? JSON.parse(r.timeBlocks) : []; } catch {}
+      if (blocks.length > 0) {
+        hours = blocks.reduce((sum, b) => {
+          const [bsh, bsm] = b.start.split(":").map(Number);
+          const [beh, bem] = b.end.split(":").map(Number);
+          return sum + ((beh * 60 + bem) - (bsh * 60 + bsm)) / 60;
+        }, 0);
+      } else {
+        const [sh, sm] = (r.startTime || "0:0").split(":").map(Number);
+        const [eh, em] = (r.endTime || "0:0").split(":").map(Number);
+        hours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+      }
+      const isOffSite = r.property !== homeProperty && (userObj as any)?.allowOffSite;
+      const rate = isOffSite ? offSiteRate : baseRate;
+      const entryCost = hours * rate;
+      const entryMileage = parseFloat(r.mileageAmount || "0");
+      const entrySpecial = r.specialTerms ? parseFloat(r.specialTermsAmount || "0") : 0;
+      let accs: string[] = [];
+      try { accs = JSON.parse(r.accomplishments || "[]"); } catch {}
+      return {
+        ...r,
+        calculatedHours: parseFloat(hours.toFixed(2)),
+        rate,
+        isOffSite,
+        laborCost: parseFloat(entryCost.toFixed(2)),
+        mileageAmount: parseFloat(entryMileage.toFixed(2)),
+        specialAmount: parseFloat(entrySpecial.toFixed(2)),
+        entryTotal: parseFloat((entryCost + entryMileage + entrySpecial).toFixed(2)),
+        accomplishmentsList: accs,
+      };
+    });
+
     res.json({
       user: {
         id: userObj?.id,
         displayName: userObj?.displayName,
         firstName: (userObj as any)?.firstName,
         lastName: (userObj as any)?.lastName,
-        baseRate: (userObj as any)?.baseRate,
-        offSiteRate: (userObj as any)?.offSiteRate,
+        baseRate: (userObj as any)?.baseRate || "0",
+        offSiteRate: (userObj as any)?.offSiteRate || "0",
+        homeProperty,
+        mileageRate: mileageRate.toString(),
       },
       period: { startDate, endDate },
       summary: {
         daysWorked: daysWorked.size,
-        totalHours: totalHours.toFixed(1),
-        totalMiles: totalMiles.toFixed(1),
-        totalMileagePay: totalMileagePay.toFixed(2),
-        totalSpecialTerms: totalSpecialTerms.toFixed(2),
+        totalHours: parseFloat(totalHours.toFixed(1)),
+        totalMiles: parseFloat(totalMiles.toFixed(1)),
+        totalMileagePay: parseFloat(totalMileagePay.toFixed(2)),
+        totalSpecialTerms: parseFloat(totalSpecialTerms.toFixed(2)),
+        laborCost: parseFloat(laborCost.toFixed(2)),
+        grandTotal: parseFloat(grandTotal.toFixed(2)),
+        baseRate,
       },
-      reports,
+      reports: enrichedReports,
     });
   });
 
