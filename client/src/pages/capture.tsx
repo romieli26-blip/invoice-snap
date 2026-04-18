@@ -45,8 +45,8 @@ export default function CapturePage() {
       file = await compressImage(rawFile);
     } catch {}
 
-    if (file.size > 4 * 1024 * 1024) {
-      setError("File too large. Max 4MB. Please reduce the resolution or crop the image.");
+    if (file.size > 10 * 1024 * 1024) {
+      setError("File too large. Max 10MB. Please reduce the resolution or crop the image.");
       return;
     }
     const reader = new FileReader();
@@ -152,7 +152,7 @@ export default function CapturePage() {
                   </div>
                   <div className={isDesktop ? "text-center" : ""}>
                     <span className="text-sm font-medium block">{isDesktop ? "Upload or Drag & Drop" : "Upload from Gallery"}</span>
-                    <span className="text-xs text-muted-foreground">PNG, JPG, PDF — max 4MB</span>
+                    <span className="text-xs text-muted-foreground">PNG, JPG, PDF — max 10MB</span>
                   </div>
                 </CardContent>
               </Card>

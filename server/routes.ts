@@ -234,7 +234,7 @@ const upload = multer({
       cb(null, `invoice-${Date.now()}-${crypto.randomBytes(4).toString("hex")}${ext}`);
     },
   }),
-  limits: { fileSize: 4 * 1024 * 1024 }, // 4MB max
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max
   fileFilter: (_req, file, cb) => {
     const allowed = ["image/jpeg", "image/png", "application/pdf", "image/heic", "image/heif", "image/webp"];
     // Also allow if mimetype starts with image/ (some phones send non-standard types)
@@ -594,6 +594,7 @@ export async function registerRoutes(
       docsComplete: (user as any).docsComplete || 0,
       allowWorkCredits: (user as any).allowWorkCredits || 0,
       workCreditReport: (user as any).workCreditReport || 0,
+      documentUploadReport: (user as any).documentUploadReport || 0,
       docReminderEnabled: (user as any).docReminderEnabled || 0,
       docReminderDays: (user as any).docReminderDays || 3,
     });
@@ -666,6 +667,7 @@ export async function registerRoutes(
         receiveTransactionEmails: (u as any).receiveTransactionEmails || 0,
         allowWorkCredits: (u as any).allowWorkCredits || 0,
         workCreditReport: (u as any).workCreditReport || 0,
+        documentUploadReport: (u as any).documentUploadReport || 0,
         docReminderEnabled: (u as any).docReminderEnabled || 0,
         docReminderDays: (u as any).docReminderDays || 3,
         assignedProperties: propIds.map(pid => propMap.get(pid)).filter(Boolean) as string[],
@@ -727,6 +729,39 @@ export async function registerRoutes(
     }
 
     res.json({ id: user.id, username: user.username, displayName: user.displayName, role: user.role, email: user.email });
+
+    // Send welcome email to new user
+    if (email) {
+      setImmediate(async () => {
+        try {
+          const appUrl = "https://invoice-snap-production.up.railway.app";
+          const videoUrl = "https://drive.google.com/file/d/1L2SFfyKK19vpJxuJs99VrIMtywF7ox76/view";
+          await sendEmailToRecipients(
+            [{ name: displayName, email }],
+            `Welcome to Jetsetter Reporting`,
+            `<html><body style="font-family:Arial;max-width:600px;margin:0 auto;">
+              <div style="background:#01696F;padding:20px;text-align:center;">
+                <h1 style="color:white;margin:0;">Welcome to Jetsetter Reporting</h1>
+              </div>
+              <div style="padding:20px;">
+                <p>Hi ${displayName},</p>
+                <p>You've been invited to use <b>Jetsetter Reporting</b> by your administrator. This is our company's reporting app for tracking receipts, cash transactions, time reporting, and documents.</p>
+                <h3 style="color:#01696F;">Getting Started</h3>
+                <p>1. <b>Open the app:</b> <a href="${appUrl}" style="color:#01696F;">${appUrl}</a></p>
+                <p>2. <b>Log in</b> with your username: <b>${username}</b> and the password provided by your admin.</p>
+                <p>3. On first login, you'll be asked to <b>change your password</b>.</p>
+                <p>4. <b>Add the app to your home screen</b> for easy access — it works like a native app.</p>
+                <h3 style="color:#01696F;">Watch the Tutorial</h3>
+                <p>Watch this short video to learn how to install and use the app on your mobile device:</p>
+                <p style="text-align:center;"><a href="${videoUrl}" style="display:inline-block;background:#01696F;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold;">Watch Tutorial Video</a></p>
+                <p style="color:#888;font-size:12px;margin-top:30px;">If you have any questions, please contact your administrator.<br>- Jetsetter Reporting</p>
+              </div>
+            </body></html>`
+          );
+          console.log(`[welcome] Sent welcome email to ${email}`);
+        } catch (e) { console.error("[welcome] Failed to send welcome email:", e); }
+      });
+    }
   });
 
   app.delete("/api/users/:id", async (req, res) => {
@@ -754,7 +789,7 @@ export async function registerRoutes(
       firstName, lastName, baseRate, offSiteRate, homeProperty, allowOffSite,
       mileageRate, allowSpecialTerms, specialTermsAmount, w9OrW4, docsComplete,
       requireFinancialConfirm, allowPastDates, receiveTransactionEmails,
-      allowWorkCredits, workCreditReport, docReminderEnabled, docReminderDays } = req.body;
+      allowWorkCredits, workCreditReport, documentUploadReport, docReminderEnabled, docReminderDays } = req.body;
 
     if (email) {
       const allUsers = await storage.getAllUsers();
@@ -791,6 +826,7 @@ export async function registerRoutes(
     if (receiveTransactionEmails !== undefined) updateData.receiveTransactionEmails = receiveTransactionEmails ? 1 : 0;
     if (allowWorkCredits !== undefined) updateData.allowWorkCredits = allowWorkCredits ? 1 : 0;
     if (workCreditReport !== undefined) updateData.workCreditReport = workCreditReport ? 1 : 0;
+    if (documentUploadReport !== undefined) updateData.documentUploadReport = documentUploadReport ? 1 : 0;
     if (docReminderEnabled !== undefined) updateData.docReminderEnabled = docReminderEnabled ? 1 : 0;
     if (docReminderDays !== undefined) updateData.docReminderDays = parseInt(docReminderDays) || 3;
 
@@ -2716,6 +2752,31 @@ export async function registerRoutes(
 
       // Update document tracking spreadsheet
       try { await updateDocTrackingSheet(); } catch (e) { console.error("[doc-tracking] Update failed:", e); }
+
+      // Email admins who have documentUploadReport enabled
+      try {
+        const allUsersForEmail = await storage.getAllUsers();
+        const docEmailRecipients = allUsersForEmail
+          .filter((u: any) => u.documentUploadReport && u.email && isAdminRole(u.role))
+          .map((u: any) => ({ name: u.displayName, email: u.email }));
+        if (docEmailRecipients.length > 0) {
+          const docUser = await storage.getUser(session.userId);
+          const docDisplayName = docUser?.displayName || "Unknown";
+          const docTypeLabel = docType === "photo_id" ? "Photo ID" : docType === "banking" ? "Banking Info" : docType === "w9" ? "W-9 Form" : docType;
+          await sendEmailToRecipients(
+            docEmailRecipients,
+            `Document Uploaded: ${docDisplayName} - ${docTypeLabel}`,
+            `<html><body style="font-family:Arial;">
+              <h2 style="color:#01696F;">Document Upload Notification</h2>
+              <p><strong>User:</strong> ${docDisplayName}</p>
+              <p><strong>Document Type:</strong> ${docTypeLabel}</p>
+              <p><strong>Date:</strong> ${new Date().toLocaleDateString()}</p>
+              ${docType === "banking" && bankName ? `<p><strong>Bank:</strong> ${bankName}</p>` : ""}
+              <p style="color:#888;font-size:11px;margin-top:20px;">- Jetsetter Reporting</p>
+            </body></html>`
+          );
+        }
+      } catch (e) { console.error("[docs] Email notification failed:", e); }
     });
   });
 
@@ -2850,6 +2911,17 @@ export async function registerRoutes(
       },
       reports: enrichedReports,
     });
+  });
+
+  // Multer error handler for file size limits
+  app.use((err: any, _req: any, res: any, next: any) => {
+    if (err?.code === "LIMIT_FILE_SIZE") {
+      return res.status(413).json({ error: `File too large. Maximum size is 10MB. Please compress or resize your file.` });
+    }
+    if (err?.code === "LIMIT_UNEXPECTED_FILE") {
+      return res.status(400).json({ error: "Unexpected file field." });
+    }
+    next(err);
   });
 
   return httpServer;

@@ -77,6 +77,7 @@ export default function AdminPage() {
   const [editUserReceiveTransactionEmails, setEditUserReceiveTransactionEmails] = useState(false);
   const [editUserAllowWorkCredits, setEditUserAllowWorkCredits] = useState(false);
   const [editUserWorkCreditReport, setEditUserWorkCreditReport] = useState(false);
+  const [editUserDocumentUploadReport, setEditUserDocumentUploadReport] = useState(false);
   const [editUserDocReminderEnabled, setEditUserDocReminderEnabled] = useState(false);
   const [editUserDocReminderDays, setEditUserDocReminderDays] = useState(3);
   const [editUserSaving, setEditUserSaving] = useState(false);
@@ -763,6 +764,7 @@ export default function AdminPage() {
                             setEditUserReceiveTransactionEmails((u as any).receiveTransactionEmails === 1);
                             setEditUserAllowWorkCredits((u as any).allowWorkCredits === 1);
                             setEditUserWorkCreditReport((u as any).workCreditReport === 1);
+                            setEditUserDocumentUploadReport((u as any).documentUploadReport === 1);
                             setEditUserDocReminderEnabled((u as any).docReminderEnabled === 1);
                             setEditUserDocReminderDays((u as any).docReminderDays || 3);
                           }}
@@ -845,6 +847,10 @@ export default function AdminPage() {
                   <div className="flex items-center space-x-2">
                     <Checkbox id="edit-wc-report" checked={editUserWorkCreditReport} onCheckedChange={c => setEditUserWorkCreditReport(c === true)} />
                     <Label htmlFor="edit-wc-report" className="text-sm font-normal cursor-pointer">Work Credits (per entry + daily)</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox id="edit-doc-upload-report" checked={editUserDocumentUploadReport} onCheckedChange={c => setEditUserDocumentUploadReport(c === true)} />
+                    <Label htmlFor="edit-doc-upload-report" className="text-sm font-normal cursor-pointer">Document Uploads (per upload)</Label>
                   </div>
                   <div className="border-t pt-2 mt-2">
                     <p className="text-xs font-medium text-muted-foreground mb-2">Daily Summary Reports</p>
@@ -984,6 +990,7 @@ export default function AdminPage() {
                     receiveTransactionEmails: editUserReceiveTransactionEmails,
                     allowWorkCredits: editUserAllowWorkCredits,
                     workCreditReport: editUserWorkCreditReport,
+                    documentUploadReport: editUserDocumentUploadReport,
                     docReminderEnabled: editUserDocReminderEnabled,
                     docReminderDays: editUserDocReminderDays,
                   });

@@ -160,7 +160,10 @@ export default function DocumentsPage() {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
           body: formData,
         });
-        if (!res.ok) throw new Error("Upload failed");
+        if (!res.ok) {
+          const errData = await res.json().catch(() => null);
+          throw new Error(errData?.error || "Upload failed");
+        }
       }
 
       queryClient.invalidateQueries({ queryKey: ["/api/user-documents"] });
