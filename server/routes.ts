@@ -1423,6 +1423,34 @@ export async function registerRoutes(
     } else {
       timeHtml += `<p style="color:#888;">No work reports today.</p>`;
     }
+
+    // Append Work Credits to the Daily Work Report
+    const todayWorkCreditsForReport = await storage.getWorkCreditsByDate(date);
+    if (todayWorkCreditsForReport.length > 0) {
+      timeHtml += `<h2 style="color:#8b5cf6;border-bottom:1px solid #ddd;padding-bottom:5px;margin-top:25px;">Work Credits</h2>`;
+      let wcDailyTotal = 0;
+      for (const wc of todayWorkCreditsForReport) {
+        const wcUser = allUsers.find(u => u.id === wc.userId);
+        const wcName = wcUser?.displayName || "Unknown";
+        let descList: string[] = [];
+        try { descList = JSON.parse(wc.workDescriptions); } catch {}
+        const amt = parseFloat(wc.totalAmount || "0");
+        wcDailyTotal += amt;
+        timeHtml += `<div style="background:#f5f0ff;padding:10px;border-radius:5px;margin:8px 0;">`;
+        timeHtml += `<p><strong>${wc.tenantFirstName} ${wc.tenantLastName}</strong> - Lot/Unit: ${wc.lotOrUnit} - ${wc.property}</p>`;
+        timeHtml += `<p style="font-size:12px;color:#666;">Submitted by: ${wcName}</p>`;
+        timeHtml += `<p>Type: ${wc.creditType === "fixed" ? "Fixed Amount" : `Hourly (${wc.hoursWorked}h × $${wc.hourlyRate})`}</p>`;
+        if (descList.length > 0) {
+          timeHtml += `<ul style="margin:4px 0;">${descList.map((d: string) => `<li>${d}</li>`).join("")}</ul>`;
+        }
+        timeHtml += `<p style="font-weight:bold;">Credit: $${amt.toFixed(2)}</p>`;
+        timeHtml += `</div>`;
+      }
+      timeHtml += `<div style="border-top:1px solid #8b5cf6;padding-top:8px;margin-top:10px;">`;
+      timeHtml += `<p style="font-weight:bold;color:#8b5cf6;">Work Credits Total: ${todayWorkCreditsForReport.length} credits = $${wcDailyTotal.toFixed(2)}</p>`;
+      timeHtml += `</div>`;
+    }
+
     timeHtml += `<p style="color:#888;font-size:12px;margin-top:20px;">- Jetsetter Reporting</p></div>`;
 
     // Build Work Credits daily report
