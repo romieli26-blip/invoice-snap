@@ -2358,18 +2358,15 @@ export async function registerRoutes(
 
           // Update Time Reporting tracking spreadsheet
           try {
+            // Use the shared time tracking config (spreadsheet at Drive root)
             const trConfigPath = path.resolve(dataDir, "time-tracking-config.json");
             let trConfig: any = null;
             if (fs.existsSync(trConfigPath)) {
               trConfig = JSON.parse(fs.readFileSync(trConfigPath, "utf-8"));
             }
-            const mainFolder = await ensureDriveFolder("Time Reporting");
-            if (mainFolder && !trConfig?.spreadsheetId) {
-              const ssId = await createSpreadsheetInFolder("Time Reports Tracking", mainFolder);
-              if (ssId) {
-                trConfig = { spreadsheetId: ssId };
-                fs.writeFileSync(trConfigPath, JSON.stringify(trConfig));
-              }
+            // If no spreadsheet config, trigger a full sync which creates it
+            if (!trConfig?.spreadsheetId) {
+              console.log("[time-report] No time tracking spreadsheet yet, will be created on next sync");
             }
             if (trConfig?.spreadsheetId) {
               const tabName = displayName;
@@ -2928,17 +2925,49 @@ export async function registerRoutes(
       const mainFolder = await ensureDriveFolder("Time Reporting");
       if (!mainFolder) return res.status(500).json({ error: "Could not create Drive folder" });
 
-      // Create or find the spreadsheet
+      // Create or find the spreadsheet (at Drive root, like Cash Transactions)
       const trConfigPath = path.resolve(dataDir, "time-tracking-config.json");
       let trConfig: any = null;
       if (fs.existsSync(trConfigPath)) {
         trConfig = JSON.parse(fs.readFileSync(trConfigPath, "utf-8"));
       }
+
+      // Verify the spreadsheet still exists (not trashed)
+      if (trConfig?.spreadsheetId) {
+        try {
+          const { google } = require("googleapis");
+          const oauth2Client = new google.auth.OAuth2(
+            process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET
+          );
+          oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
+          const driveCheck = google.drive({ version: "v3", auth: oauth2Client });
+          const file = await driveCheck.files.get({ fileId: trConfig.spreadsheetId, fields: "trashed" });
+          if (file.data.trashed) {
+            console.log("[sync-time-sheet] Old spreadsheet was trashed, creating new one");
+            trConfig = null;
+          }
+        } catch (e: any) {
+          console.log("[sync-time-sheet] Old spreadsheet not accessible, creating new one");
+          trConfig = null;
+        }
+      }
+
       if (!trConfig?.spreadsheetId) {
-        const ssId = await createSpreadsheetInFolder("Time Reports - All Users", mainFolder);
+        // Create at Drive root level (not in a subfolder) so it's visible alongside other spreadsheets
+        const { google } = require("googleapis");
+        const oauth2Client = new google.auth.OAuth2(
+          process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET
+        );
+        oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
+        const sheets = google.sheets({ version: "v4", auth: oauth2Client });
+        const ssRes = await sheets.spreadsheets.create({
+          requestBody: { properties: { title: "Time Reports - All Users" } },
+        });
+        const ssId = ssRes.data.spreadsheetId;
         if (!ssId) return res.status(500).json({ error: "Could not create spreadsheet" });
         trConfig = { spreadsheetId: ssId };
         fs.writeFileSync(trConfigPath, JSON.stringify(trConfig));
+        console.log(`[sync-time-sheet] Created new spreadsheet at Drive root: ${ssId}`);
       }
 
       const allUsers = await storage.getAllUsers();
