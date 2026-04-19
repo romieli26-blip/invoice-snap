@@ -129,6 +129,23 @@ app.use((req, res, next) => {
         return et.toISOString().split("T")[0];
       }
 
+      // Sync time reports spreadsheet at 4:05 UTC (right after daily report)
+      cron.schedule("5 4 * * *", () => {
+        log("Time reports sheet sync triggered", "cron");
+        const http = require("http");
+        const req = http.request({
+          hostname: "localhost", port, path: "/api/admin/sync-time-reports-sheet",
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer internal-cron" },
+        }, (res: any) => {
+          let body = "";
+          res.on("data", (c: any) => body += c);
+          res.on("end", () => log(`Time reports sync result: ${body}`, "cron"));
+        });
+        req.on("error", (err: any) => log(`Time reports sync error: ${err.message}`, "cron"));
+        req.end();
+      }, { timezone: "UTC" });
+
       log("Daily report scheduler active (midnight ET)", "cron");
 
       // Document reminder scheduler - runs at 9:00 AM ET (14:00 UTC)

@@ -271,6 +271,21 @@ export default function AdminPage() {
         >
           Send Daily Report
         </Button>
+        <Button
+          variant="outline"
+          className="w-full"
+          onClick={async () => {
+            try {
+              toast({ title: "Syncing time reports to Google Sheet..." });
+              await apiRequest("POST", "/api/admin/sync-time-reports-sheet");
+              toast({ title: "Time reports spreadsheet updated", description: "Check Time Reporting folder on Google Drive" });
+            } catch (e: any) {
+              toast({ title: "Sync failed", description: e.message, variant: "destructive" });
+            }
+          }}
+        >
+          Sync All Time Reports to Sheet
+        </Button>
 
         {/* ---- WORKFORCE REPORT SECTION ---- */}
         <section className="space-y-3 border rounded-lg p-3">
