@@ -1534,24 +1534,22 @@ export async function registerRoutes(
       sentTo.push(...timeRecipients.map(r => r.email));
     }
 
-    // Forward both reports to jetsettercapitalllc@gmail.com with HTML file attachments
+    // Forward both reports to jetsettercapitalllc@gmail.com via email + Drive folders
     const companyEmail = "jetsettercapitalllc@gmail.com";
     try {
-      // Save reports as HTML files for attachment
+      // Save reports as HTML files
       const txFilePath = path.resolve(dataDir, `daily-tx-summary-${date}.html`);
       const wrFilePath = path.resolve(dataDir, `daily-work-report-${date}.html`);
       fs.writeFileSync(txFilePath, html);
       fs.writeFileSync(wrFilePath, timeHtml);
 
-      // Send Daily Transaction Summary with attachment
+      // Send emails with attachments
       await sendEmailToRecipients(
         [{ name: "Jetsetter Capital", email: companyEmail }],
         `Daily Transaction Summary - ${date}`,
         html,
         [{ filename: `Daily_Transaction_Summary_${date}.html`, path: txFilePath }]
       );
-
-      // Send Daily Work Report with attachment
       if (todayTimeReports.length > 0 || todayWorkCreditsForReport.length > 0) {
         await sendEmailToRecipients(
           [{ name: "Jetsetter Capital", email: companyEmail }],
@@ -1560,8 +1558,25 @@ export async function registerRoutes(
           [{ filename: `Daily_Work_Report_${date}.html`, path: wrFilePath }]
         );
       }
-
       sentTo.push(companyEmail);
+
+      // Upload report files to shared Drive folders for company access
+      if (isGoogleEnabled()) {
+        try {
+          // Create "Daily Transaction Summary" folder, share with company, upload
+          const txFolder = await ensureDriveFolder("Daily Transaction Summary");
+          if (txFolder) {
+            await shareFolderWithEmail(txFolder, companyEmail);
+            await uploadToDrive(txFilePath, `Daily_Transaction_Summary_${date}.html`, txFolder);
+          }
+          // Create "Daily Work Report" folder, share with company, upload
+          const wrFolder = await ensureDriveFolder("Daily Work Report");
+          if (wrFolder) {
+            await shareFolderWithEmail(wrFolder, companyEmail);
+            await uploadToDrive(wrFilePath, `Daily_Work_Report_${date}.html`, wrFolder);
+          }
+        } catch (e) { console.error("[daily-report] Drive folder upload failed:", e); }
+      }
 
       // Clean up temp files
       try { fs.unlinkSync(txFilePath); } catch {}
