@@ -2548,9 +2548,25 @@ export async function registerRoutes(
               wcConfig = JSON.parse(fs.readFileSync(wcConfigPath, "utf-8"));
             }
             if (!wcConfig?.spreadsheetId) {
-              console.log("[work-credit] No spreadsheet config yet, skipping Sheets sync");
-            } else {
-              await createSheetTab(wcConfig.spreadsheetId, property);
+              // Auto-create at Drive root level
+              try {
+                const { google: goog } = require("googleapis");
+                const oa = new goog.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET);
+                oa.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
+                const sh = goog.sheets({ version: "v4", auth: oa });
+                const ssRes = await sh.spreadsheets.create({ requestBody: { properties: { title: "Work Credits - All Properties" } } });
+                if (ssRes.data.spreadsheetId) {
+                  wcConfig = { spreadsheetId: ssRes.data.spreadsheetId };
+                  fs.writeFileSync(wcConfigPath, JSON.stringify(wcConfig));
+                  console.log(`[work-credit] Created spreadsheet: ${ssRes.data.spreadsheetId}`);
+                }
+              } catch (e) { console.error("[work-credit] Failed to create spreadsheet:", e); }
+            }
+            if (wcConfig?.spreadsheetId) {
+              await createSheetTab(wcConfig.spreadsheetId, property, [
+                "Date", "Submitted By", "Tenant", "Lot/Unit", "Description",
+                "Type", "Hours × Rate", "Amount ($)", "Submitted At",
+              ]);
               await appendSheetRow(wcConfig.spreadsheetId, property, [
                 date,
                 displayName,
