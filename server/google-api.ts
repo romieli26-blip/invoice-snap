@@ -199,6 +199,24 @@ export async function clearSheet(spreadsheetId: string, range: string): Promise<
   }
 }
 
+export async function shareFolderWithEmail(folderId: string, email: string): Promise<boolean> {
+  if (!driveApi) return false;
+  try {
+    await driveApi.permissions.create({
+      fileId: folderId,
+      requestBody: { type: "user", role: "reader", emailAddress: email },
+      sendNotificationEmail: false,
+    });
+    console.log(`[google-api] Shared folder ${folderId} with ${email}`);
+    return true;
+  } catch (err: any) {
+    // Already shared or other error
+    if (err.message?.includes("already has access")) return true;
+    console.error(`[google-api] Failed to share folder:`, err.message?.slice(0, 200));
+    return false;
+  }
+}
+
 export async function appendSheetRow(
   spreadsheetId: string,
   tabName: string,

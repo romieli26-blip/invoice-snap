@@ -8,7 +8,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
 import pdfParse from "pdf-parse";
-import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet } from "./google-api";
+import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail } from "./google-api";
 // nodemailer removed — using Gmail API instead (SMTP blocked on Railway)
 
 // Ensure uploads directory exists
@@ -1534,6 +1534,40 @@ export async function registerRoutes(
       sentTo.push(...timeRecipients.map(r => r.email));
     }
 
+    // Forward both reports to jetsettercapitalllc@gmail.com with HTML file attachments
+    const companyEmail = "jetsettercapitalllc@gmail.com";
+    try {
+      // Save reports as HTML files for attachment
+      const txFilePath = path.resolve(dataDir, `daily-tx-summary-${date}.html`);
+      const wrFilePath = path.resolve(dataDir, `daily-work-report-${date}.html`);
+      fs.writeFileSync(txFilePath, html);
+      fs.writeFileSync(wrFilePath, timeHtml);
+
+      // Send Daily Transaction Summary with attachment
+      await sendEmailToRecipients(
+        [{ name: "Jetsetter Capital", email: companyEmail }],
+        `Daily Transaction Summary - ${date}`,
+        html,
+        [{ filename: `Daily_Transaction_Summary_${date}.html`, path: txFilePath }]
+      );
+
+      // Send Daily Work Report with attachment
+      if (todayTimeReports.length > 0 || todayWorkCreditsForReport.length > 0) {
+        await sendEmailToRecipients(
+          [{ name: "Jetsetter Capital", email: companyEmail }],
+          `Daily Work Report - ${date}`,
+          timeHtml,
+          [{ filename: `Daily_Work_Report_${date}.html`, path: wrFilePath }]
+        );
+      }
+
+      sentTo.push(companyEmail);
+
+      // Clean up temp files
+      try { fs.unlinkSync(txFilePath); } catch {}
+      try { fs.unlinkSync(wrFilePath); } catch {}
+    } catch (e) { console.error("[daily-report] Failed to send to company email:", e); }
+
     // Send work credits report to workCreditReport subscribers
     const wcSubscribers = allUsers.filter((u: any) => u.workCreditReport && u.email);
     const wcRecipients = wcSubscribers.map(u => ({ name: u.displayName, email: u.email! }));
@@ -1555,6 +1589,8 @@ export async function registerRoutes(
           await uploadToDrive(reportPath, `Daily Report - ${date}.html`, reportsFolder);
           try { fs.unlinkSync(reportPath); } catch {}
           console.log(`[daily-report] Saved to Drive: Daily Report - ${date}.html`);
+          // Share Daily Reports folder with company email
+          await shareFolderWithEmail(reportsFolder, "jetsettercapitalllc@gmail.com");
         }
       } catch (e: any) { console.error("[daily-report] Drive save failed:", e.message?.slice(0, 200)); }
     }
