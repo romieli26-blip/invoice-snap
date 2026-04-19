@@ -3064,6 +3064,93 @@ export async function registerRoutes(
         }
       }
 
+      // ---- Build Summary tab ----
+      const summaryHeaders = [
+        "Employee", "Property", "Total Hours", "Rate ($/hr)", "Labor ($)",
+        "Total Miles", "Mileage Pay ($)", "Special Terms ($)", "Grand Total ($)", "# Entries",
+      ];
+      await createSheetTab(trConfig.spreadsheetId, "Summary", summaryHeaders);
+      await clearSheet(trConfig.spreadsheetId, "'Summary'!A2:Z");
+
+      // Aggregate per user per property
+      const summaryMap = new Map<string, {
+        user: string; property: string; hours: number; rate: number;
+        labor: number; miles: number; mileage: number; special: number; total: number; entries: number;
+      }>();
+
+      for (const [userId, reports] of reportsByUser) {
+        const user = userMap.get(userId);
+        if (!user) continue;
+        const displayName = user.displayName || `User ${userId}`;
+        const homeProperty = (user as any)?.homeProperty || "";
+        const baseRate = parseFloat((user as any)?.baseRate || "0");
+        const offSiteRate = parseFloat((user as any)?.offSiteRate || "0");
+
+        for (const r of reports) {
+          const key = `${userId}::${r.property}`;
+          let hours = 0;
+          let blocks: { start: string; end: string }[] = [];
+          try { blocks = r.timeBlocks ? JSON.parse(r.timeBlocks) : []; } catch {}
+          if (blocks.length > 0) {
+            hours = blocks.reduce((sum, b) => {
+              const [bsh, bsm] = b.start.split(":").map(Number);
+              const [beh, bem] = b.end.split(":").map(Number);
+              return sum + ((beh * 60 + bem) - (bsh * 60 + bsm)) / 60;
+            }, 0);
+          } else if (r.startTime && r.endTime) {
+            const [sh, sm] = r.startTime.split(":").map(Number);
+            const [eh, em] = r.endTime.split(":").map(Number);
+            hours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+          }
+          const isOffSite = r.property !== homeProperty && (user as any)?.allowOffSite;
+          const rate = isOffSite ? offSiteRate : baseRate;
+          const labor = hours * rate;
+          const milesVal = parseFloat(r.miles || "0");
+          const mileageVal = parseFloat(r.mileageAmount || "0");
+          const specialVal = r.specialTerms ? parseFloat(r.specialTermsAmount || "0") : 0;
+
+          const existing = summaryMap.get(key) || {
+            user: displayName, property: r.property, hours: 0, rate,
+            labor: 0, miles: 0, mileage: 0, special: 0, total: 0, entries: 0,
+          };
+          existing.hours += hours;
+          existing.labor += labor;
+          existing.miles += milesVal;
+          existing.mileage += mileageVal;
+          existing.special += specialVal;
+          existing.total += labor + mileageVal + specialVal;
+          existing.entries += 1;
+          summaryMap.set(key, existing);
+        }
+      }
+
+      // Sort by user name then property
+      const summaryRows: string[][] = [];
+      const sorted = [...summaryMap.values()].sort((a, b) =>
+        a.user.localeCompare(b.user) || a.property.localeCompare(b.property)
+      );
+
+      let grandHours = 0, grandLabor = 0, grandMiles = 0, grandMileage = 0, grandSpecial = 0, grandTotal = 0, grandEntries = 0;
+      for (const s of sorted) {
+        summaryRows.push([
+          s.user, s.property, s.hours.toFixed(1), `$${s.rate.toFixed(2)}`,
+          `$${s.labor.toFixed(2)}`, s.miles.toFixed(1), `$${s.mileage.toFixed(2)}`,
+          `$${s.special.toFixed(2)}`, `$${s.total.toFixed(2)}`, s.entries.toString(),
+        ]);
+        grandHours += s.hours; grandLabor += s.labor; grandMiles += s.miles;
+        grandMileage += s.mileage; grandSpecial += s.special; grandTotal += s.total; grandEntries += s.entries;
+      }
+      // Grand total row
+      summaryRows.push([
+        "TOTAL", "", grandHours.toFixed(1), "",
+        `$${grandLabor.toFixed(2)}`, grandMiles.toFixed(1), `$${grandMileage.toFixed(2)}`,
+        `$${grandSpecial.toFixed(2)}`, `$${grandTotal.toFixed(2)}`, grandEntries.toString(),
+      ]);
+
+      if (summaryRows.length > 0) {
+        await updateSheetRange(trConfig.spreadsheetId, "'Summary'!A2", summaryRows);
+      }
+
       res.json({
         ok: true,
         spreadsheetId: trConfig.spreadsheetId,
