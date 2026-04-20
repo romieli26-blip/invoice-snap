@@ -16,6 +16,7 @@ import TimeReportPage from "@/pages/time-report";
 import DocumentsPage from "@/pages/documents";
 import ChangePasswordPage from "@/pages/change-password";
 import WorkCreditPage from "@/pages/work-credit";
+import ContractorDocumentsPage from "@/pages/contractor-documents";
 import NotFound from "@/pages/not-found";
 import { Loader2 } from "lucide-react";
 
@@ -49,6 +50,7 @@ function AuthenticatedRouter() {
       <Route path="/time-report" component={TimeReportPage} />
       <Route path="/documents" component={DocumentsPage} />
       <Route path="/work-credit" component={WorkCreditPage} />
+      <Route path="/contractor-documents" component={ContractorDocumentsPage} />
       <Route component={NotFound} />
     </Switch>
   );

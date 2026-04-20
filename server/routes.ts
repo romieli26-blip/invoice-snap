@@ -597,6 +597,7 @@ export async function registerRoutes(
       documentUploadReport: (user as any).documentUploadReport || 0,
       docReminderEnabled: (user as any).docReminderEnabled || 0,
       docReminderDays: (user as any).docReminderDays || 3,
+      allowContractorDocs: (user as any).allowContractorDocs || 0,
     });
   });
 
@@ -670,6 +671,7 @@ export async function registerRoutes(
         documentUploadReport: (u as any).documentUploadReport || 0,
         docReminderEnabled: (u as any).docReminderEnabled || 0,
         docReminderDays: (u as any).docReminderDays || 3,
+        allowContractorDocs: (u as any).allowContractorDocs || 0,
         assignedProperties: propIds.map(pid => propMap.get(pid)).filter(Boolean) as string[],
       };
     }));
@@ -789,7 +791,7 @@ export async function registerRoutes(
       firstName, lastName, baseRate, offSiteRate, homeProperty, allowOffSite,
       mileageRate, allowSpecialTerms, specialTermsAmount, w9OrW4, docsComplete,
       requireFinancialConfirm, allowPastDates, receiveTransactionEmails,
-      allowWorkCredits, workCreditReport, documentUploadReport, docReminderEnabled, docReminderDays } = req.body;
+      allowWorkCredits, workCreditReport, documentUploadReport, docReminderEnabled, docReminderDays, allowContractorDocs } = req.body;
 
     if (email) {
       const allUsers = await storage.getAllUsers();
@@ -829,6 +831,7 @@ export async function registerRoutes(
     if (documentUploadReport !== undefined) updateData.documentUploadReport = documentUploadReport ? 1 : 0;
     if (docReminderEnabled !== undefined) updateData.docReminderEnabled = docReminderEnabled ? 1 : 0;
     if (docReminderDays !== undefined) updateData.docReminderDays = parseInt(docReminderDays) || 3;
+    if (allowContractorDocs !== undefined) updateData.allowContractorDocs = allowContractorDocs ? 1 : 0;
 
     const updated = await storage.updateUser(id, updateData);
     res.json(updated);
@@ -1510,6 +1513,33 @@ export async function registerRoutes(
       docStatusHtml += '</table>';
     } else {
       docStatusHtml += '<p style="color:#437a22;">All users have completed their document uploads.</p>';
+    }
+
+    // Contractor document status for daily summary
+    const allContractorDocs = await storage.getAllContractorDocuments();
+    if (allContractorDocs.length > 0) {
+      // Group by contractor name
+      const byContractor = new Map<string, typeof allContractorDocs>();
+      for (const cd of allContractorDocs) {
+        const key = `${cd.contractorFirstName} ${cd.contractorLastName}`;
+        if (!byContractor.has(key)) byContractor.set(key, []);
+        byContractor.get(key)!.push(cd);
+      }
+      docStatusHtml += '<h2 style="color:#333;margin-top:20px;">Contractor Document Status</h2>';
+      docStatusHtml += '<table style="width:100%;border-collapse:collapse;margin:8px 0;">';
+      docStatusHtml += '<tr style="background:#f0f0f0;"><th style="text-align:left;padding:6px;border:1px solid #ddd;">Contractor</th><th style="padding:6px;border:1px solid #ddd;">Photo ID</th><th style="padding:6px;border:1px solid #ddd;">Banking</th><th style="padding:6px;border:1px solid #ddd;">W-9</th></tr>';
+      const check = '\u2705';
+      const miss = '\u274C';
+      for (const [name, docs] of byContractor) {
+        const hasPhotoId = docs.some(d => d.docType === "photo_id");
+        const hasBanking = docs.some(d => d.docType === "banking");
+        const hasW9 = docs.some(d => d.docType === "w9");
+        docStatusHtml += `<tr><td style="padding:6px;border:1px solid #ddd;">${name}</td>`;
+        docStatusHtml += `<td style="padding:6px;border:1px solid #ddd;text-align:center;">${hasPhotoId ? check : miss}</td>`;
+        docStatusHtml += `<td style="padding:6px;border:1px solid #ddd;text-align:center;">${hasBanking ? check : miss}</td>`;
+        docStatusHtml += `<td style="padding:6px;border:1px solid #ddd;text-align:center;">${hasW9 ? check : miss}</td></tr>`;
+      }
+      docStatusHtml += '</table>';
     }
     // Append doc status to transaction report HTML
     html = html.replace('</div>', docStatusHtml + '</div>');
@@ -2895,6 +2925,128 @@ export async function registerRoutes(
     setImmediate(async () => {
       try { await updateDocTrackingSheet(); } catch (e) { console.error("[doc-tracking] Update failed:", e); }
     });
+  });
+
+  // ---- Contractor Documents ----
+  app.post("/api/contractor-documents", upload.single("document"), async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    // Check permission
+    const currentUser = await storage.getUser(session.userId);
+    if (!isAdminRole(session.role) && !(currentUser as any)?.allowContractorDocs) {
+      return res.status(403).json({ error: "You don't have permission to submit contractor documents" });
+    }
+
+    const { contractorFirstName, contractorLastName, contractorEmail, contractorPhone, docType, bankName, routingNumber, accountNumber } = req.body;
+    if (!contractorFirstName || !contractorLastName || !docType) {
+      return res.status(400).json({ error: "Contractor name and document type are required" });
+    }
+
+    const filePath = req.file ? `/api/uploads/${req.file.filename}` : null;
+    const doc = await storage.createContractorDocument({
+      submittedByUserId: session.userId,
+      contractorFirstName,
+      contractorLastName,
+      contractorEmail: contractorEmail || null,
+      contractorPhone: contractorPhone || null,
+      docType,
+      filePath,
+      bankName: bankName || null,
+      routingNumber: routingNumber || null,
+      accountNumber: accountNumber || null,
+      createdAt: new Date().toISOString(),
+    });
+    res.json(doc);
+
+    // Background: Drive sync + email notification
+    setImmediate(async () => {
+      try {
+        if (isGoogleEnabled()) {
+          const contractorName = `${contractorFirstName}_${contractorLastName}`;
+          // Upload to Contractor Documents > {ContractorName} folder
+          const mainFolder = await ensureDriveFolder("Contractor Documents");
+          if (mainFolder) {
+            const contractorFolder = await ensureDriveFolder(contractorName, mainFolder);
+            if (contractorFolder) {
+              if (req.file) {
+                const fullPath = path.resolve(dataDir, "uploads", req.file.filename);
+                if (fs.existsSync(fullPath)) {
+                  const ext = path.extname(req.file.filename).slice(1);
+                  const docName = `${docType}_${contractorName}_${Date.now()}.${ext}`;
+                  await uploadToDrive(fullPath, docName, contractorFolder);
+                }
+              } else if (docType === "banking" && (bankName || routingNumber || accountNumber)) {
+                const txtContent = [
+                  `Banking Information for ${contractorFirstName} ${contractorLastName}`,
+                  `Date: ${new Date().toLocaleDateString()}`,
+                  ``,
+                  `Bank Name: ${bankName || "N/A"}`,
+                  `Routing Number: ${routingNumber || "N/A"}`,
+                  `Account Number: ${accountNumber || "N/A"}`,
+                ].join("\n");
+                const txtPath = path.resolve(dataDir, "uploads", `contractor_banking_${Date.now()}.txt`);
+                fs.writeFileSync(txtPath, txtContent);
+                await uploadToDrive(txtPath, `Banking_Info_${contractorName}_${Date.now()}.txt`, contractorFolder);
+                try { fs.unlinkSync(txtPath); } catch {}
+              }
+            }
+          }
+        }
+      } catch (e) { console.error("[contractor-docs] Drive sync error:", e); }
+
+      // Email admins who have documentUploadReport enabled
+      try {
+        const allUsersForEmail = await storage.getAllUsers();
+        const docEmailRecipients = allUsersForEmail
+          .filter((u: any) => u.documentUploadReport && u.email && isAdminRole(u.role))
+          .map((u: any) => ({ name: u.displayName, email: u.email }));
+        if (docEmailRecipients.length > 0) {
+          const submitter = currentUser?.displayName || "Unknown";
+          const docTypeLabel = docType === "photo_id" ? "Photo ID" : docType === "banking" ? "Banking Info" : docType === "w9" ? "W-9 Form" : docType;
+          await sendEmailToRecipients(
+            docEmailRecipients,
+            `Contractor Document Uploaded: ${contractorFirstName} ${contractorLastName} - ${docTypeLabel}`,
+            `<html><body style="font-family:Arial;">
+              <h2 style="color:#01696F;">Contractor Document Upload</h2>
+              <p><strong>Contractor:</strong> ${contractorFirstName} ${contractorLastName}</p>
+              ${contractorEmail ? `<p><strong>Email:</strong> ${contractorEmail}</p>` : ""}
+              ${contractorPhone ? `<p><strong>Phone:</strong> ${contractorPhone}</p>` : ""}
+              <p><strong>Document Type:</strong> ${docTypeLabel}</p>
+              <p><strong>Submitted By:</strong> ${submitter}</p>
+              <p><strong>Date:</strong> ${new Date().toLocaleDateString()}</p>
+              ${docType === "banking" && bankName ? `<p><strong>Bank:</strong> ${bankName}</p>` : ""}
+              <p style="color:#888;font-size:11px;margin-top:20px;">- Jetsetter Reporting</p>
+            </body></html>`
+          );
+        }
+      } catch (e) { console.error("[contractor-docs] Email notification failed:", e); }
+    });
+  });
+
+  app.get("/api/contractor-documents", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    // Admins see all, others see only their own
+    if (isAdminRole(session.role)) {
+      const docs = await storage.getAllContractorDocuments();
+      res.json(docs);
+    } else {
+      const docs = await storage.getContractorDocumentsByUser(session.userId);
+      res.json(docs);
+    }
+  });
+
+  app.delete("/api/contractor-documents/:id", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const doc = await storage.getContractorDocument(parseInt(req.params.id));
+    if (!doc) return res.status(404).json({ error: "Document not found" });
+    // Only the submitter or an admin can delete
+    if (doc.submittedByUserId !== session.userId && !isAdminRole(session.role)) {
+      return res.status(403).json({ error: "Not authorized to delete this document" });
+    }
+    await storage.deleteContractorDocument(parseInt(req.params.id));
+    res.json({ ok: true });
   });
 
   // ---- Admin Workforce Report ----

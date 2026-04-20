@@ -80,6 +80,7 @@ export default function AdminPage() {
   const [editUserDocumentUploadReport, setEditUserDocumentUploadReport] = useState(false);
   const [editUserDocReminderEnabled, setEditUserDocReminderEnabled] = useState(false);
   const [editUserDocReminderDays, setEditUserDocReminderDays] = useState(3);
+  const [editUserAllowContractorDocs, setEditUserAllowContractorDocs] = useState(false);
   const [editUserSaving, setEditUserSaving] = useState(false);
 
   // Edit properties assignment state
@@ -782,6 +783,7 @@ export default function AdminPage() {
                             setEditUserDocumentUploadReport((u as any).documentUploadReport === 1);
                             setEditUserDocReminderEnabled((u as any).docReminderEnabled === 1);
                             setEditUserDocReminderDays((u as any).docReminderDays || 3);
+                            setEditUserAllowContractorDocs((u as any).allowContractorDocs === 1);
                           }}
                         >
                           <Pencil className="w-4 h-4" />
@@ -953,6 +955,10 @@ export default function AdminPage() {
                     <Label htmlFor="edit-work-credits" className="text-sm font-normal cursor-pointer">Allow Work Credits</Label>
                   </div>
                   <div className="flex items-center space-x-2">
+                    <Checkbox id="edit-contractor-docs" checked={editUserAllowContractorDocs} onCheckedChange={c => setEditUserAllowContractorDocs(c === true)} />
+                    <Label htmlFor="edit-contractor-docs" className="text-sm font-normal cursor-pointer">Allow Contractor Documents</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
                     <Checkbox id="edit-doc-reminder" checked={editUserDocReminderEnabled} onCheckedChange={c => setEditUserDocReminderEnabled(c === true)} />
                     <Label htmlFor="edit-doc-reminder" className="text-sm font-normal cursor-pointer">Send document upload reminders</Label>
                   </div>
@@ -1008,6 +1014,7 @@ export default function AdminPage() {
                     documentUploadReport: editUserDocumentUploadReport,
                     docReminderEnabled: editUserDocReminderEnabled,
                     docReminderDays: editUserDocReminderDays,
+                    allowContractorDocs: editUserAllowContractorDocs,
                   });
                   queryClient.invalidateQueries({ queryKey: ["/api/users"] });
                   setEditingUser(null);

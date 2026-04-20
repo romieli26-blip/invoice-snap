@@ -52,6 +52,7 @@ export const users = sqliteTable("users", {
   allowWorkCredits: integer("allow_work_credits").default(0),
   workCreditReport: integer("work_credit_report").default(0),
   documentUploadReport: integer("document_upload_report").default(0),
+  allowContractorDocs: integer("allow_contractor_docs").default(0),
   docReminderEnabled: integer("doc_reminder_enabled").default(0),
   docReminderDays: integer("doc_reminder_days").default(3),
 });
@@ -74,6 +75,23 @@ export const workCredits = sqliteTable("work_credits", {
   syncedToSheets: integer("synced_to_sheets").default(0),
   createdAt: text("created_at").notNull(),
 });
+
+export const contractorDocuments = sqliteTable("contractor_documents", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  submittedByUserId: integer("submitted_by_user_id").notNull(),
+  contractorFirstName: text("contractor_first_name").notNull(),
+  contractorLastName: text("contractor_last_name").notNull(),
+  contractorEmail: text("contractor_email"),
+  contractorPhone: text("contractor_phone"),
+  docType: text("doc_type").notNull(), // photo_id, banking, w9
+  filePath: text("file_path"),
+  bankName: text("bank_name"),
+  routingNumber: text("routing_number"),
+  accountNumber: text("account_number"),
+  createdAt: text("created_at").notNull(),
+});
+
+export type ContractorDocument = typeof contractorDocuments.$inferSelect;
 
 export const sessions = sqliteTable("sessions", {
   token: text("token").primaryKey(),

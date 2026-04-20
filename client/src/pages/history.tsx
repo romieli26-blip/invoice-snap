@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
-import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, DollarSign, Clock } from "lucide-react";
+import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, DollarSign, Clock, UserPlus } from "lucide-react";
 import { apiRequest, queryClient, getAuthToken } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
@@ -225,6 +225,16 @@ export default function HistoryPage() {
           </Button>
         )}
 
+        {user?.role === "contractor" && ((user as any)?.allowContractorDocs || false) && (
+          <Button
+            className="w-full h-12 text-sm gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
+            onClick={() => setLocation("/contractor-documents")}
+          >
+            <UserPlus className="w-4 h-4" />
+            Contractor Documents
+          </Button>
+        )}
+
         {user?.role !== "contractor" && (
           <div className="grid grid-cols-2 gap-3">
             <Button
@@ -252,6 +262,16 @@ export default function HistoryPage() {
           >
             <CreditCard className="w-4 h-4" />
             Work Credit
+          </Button>
+        )}
+
+        {user?.role !== "contractor" && ((user as any)?.allowContractorDocs || user?.role === "admin" || user?.role === "super_admin") && (
+          <Button
+            className="w-full h-12 text-sm gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
+            onClick={() => setLocation("/contractor-documents")}
+          >
+            <UserPlus className="w-4 h-4" />
+            Contractor Documents
           </Button>
         )}
 

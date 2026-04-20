@@ -1,4 +1,4 @@
-import { type User, type InsertUser, type Invoice, type InsertInvoice, type Property, type InsertProperty, type CashTransaction, type InsertCashTransaction, type CcStatement, type TimeReport, type UserDocument, type WorkCredit, users, invoices, properties, sessions, userProperties, cashTransactions, ccStatements, timeReports, userDocuments, workCredits } from "@shared/schema";
+import { type User, type InsertUser, type Invoice, type InsertInvoice, type Property, type InsertProperty, type CashTransaction, type InsertCashTransaction, type CcStatement, type TimeReport, type UserDocument, type WorkCredit, type ContractorDocument, users, invoices, properties, sessions, userProperties, cashTransactions, ccStatements, timeReports, userDocuments, workCredits, contractorDocuments } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, desc, inArray, and, gte, lte } from "drizzle-orm";
@@ -89,6 +89,7 @@ try { sqlite.exec("ALTER TABLE users ADD COLUMN allow_past_dates INTEGER DEFAULT
 try { sqlite.exec("ALTER TABLE users ADD COLUMN receive_transaction_emails INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN allow_work_credits INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN document_upload_report INTEGER DEFAULT 0"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN allow_contractor_docs INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN work_credit_report INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN doc_reminder_enabled INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN doc_reminder_days INTEGER DEFAULT 3"); } catch {}
@@ -110,6 +111,24 @@ sqlite.exec(`
     special_terms_amount TEXT,
     notes TEXT,
     synced_to_sheets INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+`);
+
+// Contractor Documents table (for non-users)
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS contractor_documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    submitted_by_user_id INTEGER NOT NULL,
+    contractor_first_name TEXT NOT NULL,
+    contractor_last_name TEXT NOT NULL,
+    contractor_email TEXT,
+    contractor_phone TEXT,
+    doc_type TEXT NOT NULL,
+    file_path TEXT,
+    bank_name TEXT,
+    routing_number TEXT,
+    account_number TEXT,
     created_at TEXT NOT NULL
   );
 `);
@@ -497,6 +516,23 @@ export class DatabaseStorage implements IStorage {
   }
   async deleteUserDocument(id: number): Promise<void> {
     db.delete(userDocuments).where(eq(userDocuments.id, id)).run();
+  }
+
+  // ---- Contractor Documents ----
+  async createContractorDocument(data: any): Promise<ContractorDocument> {
+    return db.insert(contractorDocuments).values(data).returning().get();
+  }
+  async getContractorDocumentsByUser(userId: number): Promise<ContractorDocument[]> {
+    return db.select().from(contractorDocuments).where(eq(contractorDocuments.submittedByUserId, userId)).orderBy(desc(contractorDocuments.id)).all();
+  }
+  async getAllContractorDocuments(): Promise<ContractorDocument[]> {
+    return db.select().from(contractorDocuments).orderBy(desc(contractorDocuments.id)).all();
+  }
+  async getContractorDocument(id: number): Promise<ContractorDocument | undefined> {
+    return db.select().from(contractorDocuments).where(eq(contractorDocuments.id, id)).get();
+  }
+  async deleteContractorDocument(id: number): Promise<void> {
+    db.delete(contractorDocuments).where(eq(contractorDocuments.id, id)).run();
   }
 
   async getCashBalanceByProperty(property: string): Promise<number> {
