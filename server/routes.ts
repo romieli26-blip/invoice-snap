@@ -1030,6 +1030,21 @@ export async function registerRoutes(
     });
   });
 
+  // Helper: returns invoices a non-admin user is allowed to see —
+  // their own submissions + any invoices for properties they manage.
+  async function getVisibleInvoicesForUser(userId: number) {
+    const ownInvoices = await storage.getInvoicesByUser(userId);
+    const assignedProps = await storage.getPropertiesForUser(userId);
+    const assignedPropNames = new Set(assignedProps.map(p => p.name));
+    if (assignedPropNames.size === 0) return ownInvoices;
+    const allInvoices = await storage.getAllInvoices();
+    const propertyInvoices = allInvoices.filter(inv => assignedPropNames.has(inv.property));
+    const byId = new Map<number, typeof allInvoices[number]>();
+    for (const inv of ownInvoices) byId.set(inv.id, inv);
+    for (const inv of propertyInvoices) byId.set(inv.id, inv);
+    return Array.from(byId.values()).sort((a, b) => b.id - a.id);
+  }
+
   app.get("/api/invoices", async (req, res) => {
     const session = await requireAuth(req, res);
     if (!session) return;
@@ -1038,7 +1053,7 @@ export async function registerRoutes(
     if (isAdminRole(session.role)) {
       invoicesList = await storage.getAllInvoices();
     } else {
-      invoicesList = await storage.getInvoicesByUser(session.userId);
+      invoicesList = await getVisibleInvoicesForUser(session.userId);
     }
 
     // Enrich with user display names
@@ -1651,7 +1666,7 @@ export async function registerRoutes(
     if (isAdminRole(session.role)) {
       invoicesList = await storage.getAllInvoices();
     } else {
-      invoicesList = await storage.getInvoicesByUser(session.userId);
+      invoicesList = await getVisibleInvoicesForUser(session.userId);
     }
 
     const allUsers = await storage.getAllUsers();
