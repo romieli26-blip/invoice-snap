@@ -2716,8 +2716,21 @@ export async function registerRoutes(
       const credits = await storage.getAllWorkCredits();
       res.json(credits);
     } else {
-      const credits = await storage.getWorkCreditsByUser(session.userId);
-      res.json(credits);
+      // Non-admins see their own submissions AND any work credits for properties they manage
+      const ownCredits = await storage.getWorkCreditsByUser(session.userId);
+      const assignedProps = await storage.getPropertiesForUser(session.userId);
+      const assignedPropNames = new Set(assignedProps.map(p => p.name));
+      let combined = ownCredits;
+      if (assignedPropNames.size > 0) {
+        const allCredits = await storage.getAllWorkCredits();
+        const propertyCredits = allCredits.filter(c => assignedPropNames.has(c.property));
+        // De-duplicate by id (own submissions for assigned properties appear in both lists)
+        const byId = new Map<number, typeof allCredits[number]>();
+        for (const c of ownCredits) byId.set(c.id, c);
+        for (const c of propertyCredits) byId.set(c.id, c);
+        combined = Array.from(byId.values()).sort((a, b) => b.id - a.id);
+      }
+      res.json(combined);
     }
   });
 
