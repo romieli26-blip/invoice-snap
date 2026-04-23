@@ -90,6 +90,7 @@ try { sqlite.exec("ALTER TABLE users ADD COLUMN receive_transaction_emails INTEG
 try { sqlite.exec("ALTER TABLE users ADD COLUMN allow_work_credits INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN document_upload_report INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN allow_contractor_docs INTEGER DEFAULT 0"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN allow_creating_contractors INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN work_credit_report INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN doc_reminder_enabled INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN doc_reminder_days INTEGER DEFAULT 3"); } catch {}

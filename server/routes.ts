@@ -582,6 +582,9 @@ export async function registerRoutes(
     if (!session) return res.status(401).json({ error: "Unauthorized" });
     const user = await storage.getUser(session.userId);
     if (!user) return res.status(401).json({ error: "User not found" });
+    const myPropIds = await storage.getUserPropertyIds(session.userId);
+    const allProps = await storage.getAllProperties();
+    const myProps = allProps.filter(p => myPropIds.includes(p.id)).map(p => p.name);
     res.json({
       id: user.id, username: user.username, displayName: user.displayName, role: user.role,
       firstName: (user as any).firstName, lastName: (user as any).lastName,
@@ -598,6 +601,8 @@ export async function registerRoutes(
       docReminderEnabled: (user as any).docReminderEnabled || 0,
       docReminderDays: (user as any).docReminderDays || 3,
       allowContractorDocs: (user as any).allowContractorDocs || 0,
+      allowCreatingContractors: (user as any).allowCreatingContractors || 0,
+      assignedProperties: myProps,
     });
   });
 
@@ -672,6 +677,7 @@ export async function registerRoutes(
         docReminderEnabled: (u as any).docReminderEnabled || 0,
         docReminderDays: (u as any).docReminderDays || 3,
         allowContractorDocs: (u as any).allowContractorDocs || 0,
+        allowCreatingContractors: (u as any).allowCreatingContractors || 0,
         assignedProperties: propIds.map(pid => propMap.get(pid)).filter(Boolean) as string[],
       };
     }));
@@ -766,6 +772,170 @@ export async function registerRoutes(
     }
   });
 
+  // ---- Property Manager: Create Contractors ----
+  // Requires allowCreatingContractors flag; creates a contractor auto-assigned to the PM's properties.
+  app.post("/api/pm/contractors", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const pm = await storage.getUser(session.userId);
+    if (!pm) return res.status(401).json({ error: "Unauthorized" });
+    if (!isAdminRole(session.role) && !(pm as any).allowCreatingContractors) {
+      return res.status(403).json({ error: "You don't have permission to create contractors" });
+    }
+
+    const { username, password, displayName, email, firstName, lastName, baseRate, offSiteRate, homeProperty } = req.body;
+    if (!username || !password || !displayName) {
+      return res.status(400).json({ error: "Username, password, and display name are required" });
+    }
+    if (!email) return res.status(400).json({ error: "Email is required" });
+
+    const allUsers = await storage.getAllUsers();
+    const emailTaken = allUsers.find(u => u.email && u.email.toLowerCase() === email.toLowerCase());
+    if (emailTaken) return res.status(409).json({ error: "This email address is already in use by another user." });
+
+    const pwError = validatePassword(password);
+    if (pwError) return res.status(400).json({ error: pwError });
+
+    const existing = await storage.getUserByUsername(username);
+    if (existing) return res.status(409).json({ error: "Username already taken" });
+
+    // Determine which properties to assign: default to ALL of the PM's properties,
+    // optionally restricted to a specific homeProperty if the PM picked one.
+    const pmPropIds = await storage.getUserPropertyIds(session.userId);
+    const allProps = await storage.getAllProperties();
+    const pmProps = allProps.filter(p => pmPropIds.includes(p.id));
+    if (pmProps.length === 0 && !isAdminRole(session.role)) {
+      return res.status(400).json({ error: "You don't have any assigned properties. Ask an admin to assign you properties first." });
+    }
+
+    let assignedPropIds = pmProps.map(p => p.id);
+    let resolvedHomeProperty = homeProperty || null;
+    if (homeProperty) {
+      const homeProp = pmProps.find(p => p.name === homeProperty);
+      if (!homeProp && !isAdminRole(session.role)) {
+        return res.status(403).json({ error: "You can only assign the contractor to your own properties" });
+      }
+      if (homeProp) assignedPropIds = [homeProp.id];
+    } else if (pmProps.length === 1) {
+      resolvedHomeProperty = pmProps[0].name;
+    }
+
+    const user = await storage.createUser({
+      username,
+      password,
+      displayName,
+      role: "contractor",
+      email: email || null,
+      mustChangePassword: 1,
+      firstName: firstName || null,
+      lastName: lastName || null,
+      baseRate: baseRate ? String(baseRate) : "0",
+      offSiteRate: offSiteRate ? String(offSiteRate) : "0",
+      homeProperty: resolvedHomeProperty,
+      w9OrW4: "w9",
+    } as any);
+
+    if (assignedPropIds.length > 0) {
+      await storage.setUserProperties(user.id, assignedPropIds);
+    }
+
+    res.json({ id: user.id, username: user.username, displayName: user.displayName, role: user.role, email: user.email });
+
+    // Send welcome email
+    if (email) {
+      setImmediate(async () => {
+        try {
+          const appUrl = "https://invoice-snap-production.up.railway.app";
+          const videoUrl = "https://drive.google.com/file/d/1L2SFfyKK19vpJxuJs99VrIMtywF7ox76/view";
+          await sendEmailToRecipients(
+            [{ name: displayName, email }],
+            `Welcome to Jetsetter Reporting`,
+            `<html><body style="font-family:Arial;max-width:600px;margin:0 auto;">
+              <div style="background:#01696F;padding:20px;text-align:center;">
+                <h1 style="color:white;margin:0;">Welcome to Jetsetter Reporting</h1>
+              </div>
+              <div style="padding:20px;">
+                <p>Hi ${displayName},</p>
+                <p>You've been invited to use <b>Jetsetter Reporting</b> by ${pm.displayName}. This is our company's reporting app for tracking receipts, cash transactions, time reporting, and documents.</p>
+                <h3 style="color:#01696F;">Getting Started</h3>
+                <p>1. <b>Open the app:</b> <a href="${appUrl}" style="color:#01696F;">${appUrl}</a></p>
+                <p>2. <b>Log in</b> with your username: <b>${username}</b> and the password provided to you.</p>
+                <p>3. On first login, you'll be asked to <b>change your password</b>.</p>
+                <p>4. <b>Add the app to your home screen</b> for easy access.</p>
+                <p style="text-align:center;margin-top:20px;"><a href="${videoUrl}" style="display:inline-block;background:#01696F;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold;">Watch Tutorial Video</a></p>
+                <p style="color:#888;font-size:12px;margin-top:30px;">- Jetsetter Reporting</p>
+              </div>
+            </body></html>`
+          );
+        } catch (e) { console.error("[pm-welcome] Failed:", e); }
+      });
+    }
+  });
+
+  // PM: List contractors in their properties
+  app.get("/api/pm/contractors", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const pm = await storage.getUser(session.userId);
+    if (!pm) return res.status(401).json({ error: "Unauthorized" });
+    if (!isAdminRole(session.role) && !(pm as any).allowCreatingContractors) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
+    const pmPropIds = new Set(await storage.getUserPropertyIds(session.userId));
+    const allUsers = await storage.getAllUsers();
+    const allProps = await storage.getAllProperties();
+    const propMap = new Map(allProps.map(p => [p.id, p.name]));
+
+    const contractors = [] as any[];
+    for (const u of allUsers) {
+      if (u.role !== "contractor") continue;
+      if (u.id === session.userId) continue;
+      const cPropIds = await storage.getUserPropertyIds(u.id);
+      const shared = cPropIds.some(pid => pmPropIds.has(pid));
+      if (shared) {
+        contractors.push({
+          id: u.id,
+          username: u.username,
+          displayName: u.displayName,
+          email: u.email,
+          firstName: (u as any).firstName,
+          lastName: (u as any).lastName,
+          baseRate: (u as any).baseRate,
+          offSiteRate: (u as any).offSiteRate,
+          homeProperty: (u as any).homeProperty,
+          assignedProperties: cPropIds.map(pid => propMap.get(pid)).filter(Boolean),
+        });
+      }
+    }
+    res.json(contractors);
+  });
+
+  // PM: Get time reports for a specific contractor they manage (for pay calculation)
+  app.get("/api/pm/contractors/:id/time-reports", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const pm = await storage.getUser(session.userId);
+    if (!pm) return res.status(401).json({ error: "Unauthorized" });
+    if (!isAdminRole(session.role) && !(pm as any).allowCreatingContractors) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+    const contractorId = parseInt(req.params.id);
+    // Verify the contractor shares at least one property with the PM
+    const pmPropIds = new Set(await storage.getUserPropertyIds(session.userId));
+    const cPropIds = await storage.getUserPropertyIds(contractorId);
+    const shared = cPropIds.some(pid => pmPropIds.has(pid));
+    if (!shared && !isAdminRole(session.role)) {
+      return res.status(403).json({ error: "This contractor is not in your properties" });
+    }
+    const reports = await storage.getTimeReportsByUser(contractorId);
+    // Restrict to time reports for PM's properties
+    const allProps = await storage.getAllProperties();
+    const pmPropNames = new Set(allProps.filter(p => pmPropIds.has(p.id)).map(p => p.name));
+    const filtered = isAdminRole(session.role) ? reports : reports.filter(r => pmPropNames.has(r.property));
+    res.json(filtered);
+  });
+
   app.delete("/api/users/:id", async (req, res) => {
     const session = await requireAdmin(req, res);
     if (!session) return;
@@ -791,7 +961,7 @@ export async function registerRoutes(
       firstName, lastName, baseRate, offSiteRate, homeProperty, allowOffSite,
       mileageRate, allowSpecialTerms, specialTermsAmount, w9OrW4, docsComplete,
       requireFinancialConfirm, allowPastDates, receiveTransactionEmails,
-      allowWorkCredits, workCreditReport, documentUploadReport, docReminderEnabled, docReminderDays, allowContractorDocs } = req.body;
+      allowWorkCredits, workCreditReport, documentUploadReport, docReminderEnabled, docReminderDays, allowContractorDocs, allowCreatingContractors } = req.body;
 
     if (email) {
       const allUsers = await storage.getAllUsers();
@@ -832,6 +1002,7 @@ export async function registerRoutes(
     if (docReminderEnabled !== undefined) updateData.docReminderEnabled = docReminderEnabled ? 1 : 0;
     if (docReminderDays !== undefined) updateData.docReminderDays = parseInt(docReminderDays) || 3;
     if (allowContractorDocs !== undefined) updateData.allowContractorDocs = allowContractorDocs ? 1 : 0;
+    if (allowCreatingContractors !== undefined) updateData.allowCreatingContractors = allowCreatingContractors ? 1 : 0;
 
     const updated = await storage.updateUser(id, updateData);
     res.json(updated);
@@ -2554,7 +2725,26 @@ export async function registerRoutes(
     if (isAdminRole(session.role)) {
       reports = await storage.getAllTimeReports();
     } else {
-      reports = await storage.getTimeReportsByUser(session.userId);
+      const ownReports = await storage.getTimeReportsByUser(session.userId);
+      // Property managers with allowCreatingContractors see time reports for their assigned properties too
+      const pmUser = await storage.getUser(session.userId);
+      if ((pmUser as any)?.allowCreatingContractors) {
+        const pmPropIds = new Set(await storage.getUserPropertyIds(session.userId));
+        if (pmPropIds.size > 0) {
+          const allProps = await storage.getAllProperties();
+          const pmPropNames = new Set(allProps.filter(p => pmPropIds.has(p.id)).map(p => p.name));
+          const allReports = await storage.getAllTimeReports();
+          const propertyReports = allReports.filter(r => pmPropNames.has(r.property));
+          const byId = new Map<number, typeof allReports[number]>();
+          for (const r of ownReports) byId.set(r.id, r);
+          for (const r of propertyReports) byId.set(r.id, r);
+          reports = Array.from(byId.values()).sort((a, b) => b.id - a.id);
+        } else {
+          reports = ownReports;
+        }
+      } else {
+        reports = ownReports;
+      }
     }
     // Enrich with submittedBy
     const allUsers = await storage.getAllUsers();

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
-import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, DollarSign, Clock, UserPlus } from "lucide-react";
+import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, DollarSign, Clock, UserPlus, UsersRound } from "lucide-react";
 import { apiRequest, queryClient, getAuthToken } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
@@ -272,6 +272,16 @@ export default function HistoryPage() {
           >
             <UserPlus className="w-4 h-4" />
             Contractor Documents
+          </Button>
+        )}
+
+        {user?.role !== "contractor" && ((user as any)?.allowCreatingContractors || user?.role === "admin" || user?.role === "super_admin") && (
+          <Button
+            className="w-full h-12 text-sm gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white"
+            onClick={() => setLocation("/my-contractors")}
+          >
+            <UsersRound className="w-4 h-4" />
+            My Contractors
           </Button>
         )}
 

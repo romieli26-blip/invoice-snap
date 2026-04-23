@@ -53,6 +53,7 @@ export const users = sqliteTable("users", {
   workCreditReport: integer("work_credit_report").default(0),
   documentUploadReport: integer("document_upload_report").default(0),
   allowContractorDocs: integer("allow_contractor_docs").default(0),
+  allowCreatingContractors: integer("allow_creating_contractors").default(0),
   docReminderEnabled: integer("doc_reminder_enabled").default(0),
   docReminderDays: integer("doc_reminder_days").default(3),
 });
