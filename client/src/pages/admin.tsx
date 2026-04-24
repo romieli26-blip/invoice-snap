@@ -82,6 +82,7 @@ export default function AdminPage() {
   const [editUserDocReminderDays, setEditUserDocReminderDays] = useState(3);
   const [editUserAllowContractorDocs, setEditUserAllowContractorDocs] = useState(false);
   const [editUserAllowCreatingContractors, setEditUserAllowCreatingContractors] = useState(false);
+  const [editUserAllowMiles, setEditUserAllowMiles] = useState(true);
   const [editUserShowWorkReport, setEditUserShowWorkReport] = useState(false);
   const [editUserShowMyDocuments, setEditUserShowMyDocuments] = useState(false);
   const [editUserShowWorkCredit, setEditUserShowWorkCredit] = useState(false);
@@ -795,6 +796,7 @@ export default function AdminPage() {
                             setEditUserDocReminderDays((u as any).docReminderDays || 3);
                             setEditUserAllowContractorDocs((u as any).allowContractorDocs === 1);
                             setEditUserAllowCreatingContractors((u as any).allowCreatingContractors === 1);
+                            setEditUserAllowMiles((u as any).allowMiles === 0 ? false : true);
                             setEditUserShowWorkReport((u as any).showWorkReport === 1);
                             setEditUserShowMyDocuments((u as any).showMyDocuments === 1);
                             setEditUserShowWorkCredit((u as any).showWorkCredit === 1);
@@ -977,6 +979,10 @@ export default function AdminPage() {
                     <Checkbox id="edit-create-contractors" checked={editUserAllowCreatingContractors} onCheckedChange={c => setEditUserAllowCreatingContractors(c === true)} />
                     <Label htmlFor="edit-create-contractors" className="text-sm font-normal cursor-pointer">Allow Creating Contractors</Label>
                   </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox id="edit-allow-miles" checked={editUserAllowMiles} onCheckedChange={c => setEditUserAllowMiles(c === true)} />
+                    <Label htmlFor="edit-allow-miles" className="text-sm font-normal cursor-pointer">Allow Miles (user can log miles on work reports)</Label>
+                  </div>
                   {(editingUser?.role === "admin" || editingUser?.role === "super_admin") && (
                     <div className="space-y-2 border rounded-md p-3 bg-muted/20">
                       <p className="text-xs font-medium text-muted-foreground">Dashboard Buttons (admins only)</p>
@@ -1056,6 +1062,7 @@ export default function AdminPage() {
                     docReminderDays: editUserDocReminderDays,
                     allowContractorDocs: editUserAllowContractorDocs,
                     allowCreatingContractors: editUserAllowCreatingContractors,
+                    allowMiles: editUserAllowMiles,
                     showWorkReport: editUserShowWorkReport,
                     showMyDocuments: editUserShowMyDocuments,
                     showWorkCredit: editUserShowWorkCredit,

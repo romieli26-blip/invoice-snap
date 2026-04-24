@@ -60,6 +60,7 @@ export default function MyContractorsPage() {
     offSiteRate: "",
     mileageRate: "0.50",
     allowOffSite: false,
+    allowMiles: false,
     homeProperty: "",
   });
   const [submitting, setSubmitting] = useState(false);
@@ -83,6 +84,7 @@ export default function MyContractorsPage() {
       offSiteRate: "",
       mileageRate: "0.50",
       allowOffSite: false,
+      allowMiles: false,
       homeProperty: "",
     });
   }
@@ -106,6 +108,7 @@ export default function MyContractorsPage() {
         offSiteRate: form.offSiteRate || "0",
         mileageRate: form.mileageRate || "0.50",
         allowOffSite: form.allowOffSite,
+        allowMiles: form.allowMiles,
         homeProperty: form.homeProperty || undefined,
       });
       queryClient.invalidateQueries({ queryKey: ["/api/pm/contractors"] });
@@ -274,6 +277,25 @@ export default function MyContractorsPage() {
                 <Checkbox id="pm-allow-offsite" checked={form.allowOffSite} onCheckedChange={c => setForm(f => ({ ...f, allowOffSite: c === true }))} />
                 <Label htmlFor="pm-allow-offsite" className="text-xs font-normal cursor-pointer">Allow off-site work</Label>
               </div>
+            </div>
+            <div className="flex items-center space-x-2 border rounded-md p-2 bg-amber-50 dark:bg-amber-950/20">
+              <Checkbox
+                id="pm-allow-miles"
+                checked={form.allowMiles}
+                onCheckedChange={(c) => {
+                  const checking = c === true;
+                  if (checking) {
+                    const ok = window.confirm(
+                      "Have you confirmed allowing miles to this contractor with the asset manager?\n\nClick OK to confirm. Click Cancel to leave miles disabled \u2014 an admin can enable this later if needed."
+                    );
+                    if (!ok) return;
+                  }
+                  setForm((f) => ({ ...f, allowMiles: checking }));
+                }}
+              />
+              <Label htmlFor="pm-allow-miles" className="text-xs font-normal cursor-pointer">
+                Allow this contractor to log miles
+              </Label>
             </div>
             {myProps && myProps.length > 1 && (
               <div className="space-y-1">

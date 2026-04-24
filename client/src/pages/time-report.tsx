@@ -419,23 +419,27 @@ export default function TimeReportPage() {
               ))}
             </div>
 
-            {/* Miles input is shown for every user. Miles driven are a
-                legitimate pay/expense item regardless of whether the user
-                is flagged for off-site work. Uses the user's mileage rate
-                (defaults to $0.50/mi if not set on the profile). */}
-            <div className="space-y-2">
-              <Label>Miles Driven (optional)</Label>
-              <Input
-                type="number"
-                step="0.1"
-                value={miles}
-                onChange={e => setMiles(e.target.value)}
-                placeholder="0"
-              />
-              {miles && parseFloat(miles) > 0 && (
-                <p className="text-xs text-muted-foreground">{miles} mi × ${mileageRate.toFixed(2)} = ${mileageAmount}</p>
-              )}
-            </div>
+            {/* Miles input is shown only when the user has allowMiles enabled.
+                Legacy users (allowMiles unset / null) default to allowed so
+                nothing changes for them; new contractors created by a PM are
+                off by default and the PM opts them in with a confirmation
+                popup. Admins can toggle this anytime via the user edit
+                dialog. */}
+            {(user as any)?.allowMiles !== 0 && (
+              <div className="space-y-2">
+                <Label>Miles Driven (optional)</Label>
+                <Input
+                  type="number"
+                  step="0.1"
+                  value={miles}
+                  onChange={e => setMiles(e.target.value)}
+                  placeholder="0"
+                />
+                {miles && parseFloat(miles) > 0 && (
+                  <p className="text-xs text-muted-foreground">{miles} mi × ${mileageRate.toFixed(2)} = ${mileageAmount}</p>
+                )}
+              </div>
+            )}
 
             {allowSpecialTermsUser && (
               <div className="space-y-2">

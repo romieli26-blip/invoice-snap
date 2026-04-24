@@ -602,6 +602,8 @@ export async function registerRoutes(
       docReminderDays: (user as any).docReminderDays || 3,
       allowContractorDocs: (user as any).allowContractorDocs || 0,
       allowCreatingContractors: (user as any).allowCreatingContractors || 0,
+      // allowMiles defaults to 1 — treat any non-zero (or null for legacy rows) as true.
+      allowMiles: (user as any).allowMiles === 0 ? 0 : 1,
       showWorkReport: (user as any).showWorkReport || 0,
       showMyDocuments: (user as any).showMyDocuments || 0,
       showWorkCredit: (user as any).showWorkCredit || 0,
@@ -683,6 +685,7 @@ export async function registerRoutes(
         docReminderDays: (u as any).docReminderDays || 3,
         allowContractorDocs: (u as any).allowContractorDocs || 0,
         allowCreatingContractors: (u as any).allowCreatingContractors || 0,
+        allowMiles: (u as any).allowMiles === 0 ? 0 : 1,
         showWorkReport: (u as any).showWorkReport || 0,
         showMyDocuments: (u as any).showMyDocuments || 0,
         showWorkCredit: (u as any).showWorkCredit || 0,
@@ -845,6 +848,8 @@ export async function registerRoutes(
       offSiteRate: offSiteRate ? String(offSiteRate) : "0",
       mileageRate: mileageRate ? String(mileageRate) : "0.50",
       allowOffSite: allowOffSite ? 1 : 0,
+      // Explicit opt-in from the PM; contractors without allowMiles cannot log miles.
+      allowMiles: req.body.allowMiles ? 1 : 0,
       homeProperty: resolvedHomeProperty,
       w9OrW4: "w9",
       createdByUserId: session.userId,
@@ -977,7 +982,7 @@ export async function registerRoutes(
       mileageRate, allowSpecialTerms, specialTermsAmount, w9OrW4, docsComplete,
       requireFinancialConfirm, allowPastDates, receiveTransactionEmails,
       allowWorkCredits, workCreditReport, documentUploadReport, docReminderEnabled, docReminderDays, allowContractorDocs, allowCreatingContractors,
-      showWorkReport, showMyDocuments, showWorkCredit, showMyContractors } = req.body;
+      showWorkReport, showMyDocuments, showWorkCredit, showMyContractors, allowMiles } = req.body;
 
     if (email) {
       const allUsers = await storage.getAllUsers();
@@ -1023,6 +1028,7 @@ export async function registerRoutes(
     if (showMyDocuments !== undefined) updateData.showMyDocuments = showMyDocuments ? 1 : 0;
     if (showWorkCredit !== undefined) updateData.showWorkCredit = showWorkCredit ? 1 : 0;
     if (showMyContractors !== undefined) updateData.showMyContractors = showMyContractors ? 1 : 0;
+    if (allowMiles !== undefined) updateData.allowMiles = allowMiles ? 1 : 0;
 
     const updated = await storage.updateUser(id, updateData);
     res.json(updated);
