@@ -3394,7 +3394,10 @@ export async function registerRoutes(
       for (const u of all) allowed.add(u.id);
       return allowed;
     }
-    // Managers with allowCreatingContractors can see users whose assigned properties overlap with theirs.
+    // Managers with allowCreatingContractors can see CONTRACTORS whose
+    // assigned properties overlap with theirs. Other managers on the same
+    // property are intentionally excluded — pay is only visible for the
+    // viewer themselves and the contractors they oversee.
     const viewer = await storage.getUser(viewerId);
     if ((viewer as any)?.allowCreatingContractors) {
       const viewerPropIds = new Set(await storage.getUserPropertyIds(viewerId));
@@ -3402,8 +3405,7 @@ export async function registerRoutes(
         const all = await storage.getAllUsers();
         for (const u of all) {
           if (u.id === viewerId) continue;
-          // Only contractors and managers get pay calculated
-          if (u.role !== "contractor" && u.role !== "manager") continue;
+          if (u.role !== "contractor") continue;
           const uPropIds = await storage.getUserPropertyIds(u.id);
           if (uPropIds.some(pid => viewerPropIds.has(pid))) allowed.add(u.id);
         }
@@ -3423,7 +3425,8 @@ export async function registerRoutes(
     const list = [] as any[];
     for (const u of all) {
       if (!allowed.has(u.id)) continue;
-      if (u.role !== "contractor" && u.role !== "manager" && u.id !== session.userId) continue;
+      // Non-admin viewers only get themselves + contractors; admins get everyone.
+      if (!isAdminRole(session.role) && u.role !== "contractor" && u.id !== session.userId) continue;
       const propIds = await storage.getUserPropertyIds(u.id);
       list.push({
         id: u.id,
