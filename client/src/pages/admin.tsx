@@ -972,7 +972,7 @@ export default function AdminPage() {
                     <Checkbox id="edit-create-contractors" checked={editUserAllowCreatingContractors} onCheckedChange={c => setEditUserAllowCreatingContractors(c === true)} />
                     <Label htmlFor="edit-create-contractors" className="text-sm font-normal cursor-pointer">Allow Creating Contractors</Label>
                   </div>
-                  {(editingUser.role === "admin" || editingUser.role === "super_admin") && (
+                  {(editingUser?.role === "admin" || editingUser?.role === "super_admin") && (
                     <div className="space-y-2 border rounded-md p-3 bg-muted/20">
                       <p className="text-xs font-medium text-muted-foreground">Dashboard Buttons (admins only)</p>
                       <div className="flex items-center space-x-2">
