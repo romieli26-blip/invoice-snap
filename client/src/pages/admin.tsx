@@ -735,6 +735,11 @@ export default function AdminPage() {
                           {u.assignedProperties.join(", ")}
                         </p>
                       )}
+                      {(u as any).createdByName && (
+                        <p className="text-[11px] text-muted-foreground italic">
+                          Created by {(u as any).createdByName}
+                        </p>
+                      )}
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">
                         {u.id !== user?.id && user?.role === "super_admin" && (

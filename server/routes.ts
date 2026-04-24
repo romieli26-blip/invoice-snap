@@ -647,6 +647,7 @@ export async function registerRoutes(
     const allUsers = await storage.getAllUsers();
     const allProps = await storage.getAllProperties();
     const propMap = new Map(allProps.map(p => [p.id, p.name]));
+    const allUsersForNames = new Map(allUsers.map(u => [u.id, u.displayName]));
 
     const enriched = await Promise.all(allUsers.map(async u => {
       const propIds = await storage.getUserPropertyIds(u.id);
@@ -686,6 +687,8 @@ export async function registerRoutes(
         showMyDocuments: (u as any).showMyDocuments || 0,
         showWorkCredit: (u as any).showWorkCredit || 0,
         showMyContractors: (u as any).showMyContractors || 0,
+        createdByUserId: (u as any).createdByUserId || null,
+        createdByName: (u as any).createdByUserId ? (allUsersForNames.get((u as any).createdByUserId) || null) : null,
         assignedProperties: propIds.map(pid => propMap.get(pid)).filter(Boolean) as string[],
       };
     }));
@@ -730,6 +733,7 @@ export async function registerRoutes(
       reconciliationReport: reconciliationReport ? 1 : 0,
       homeProperty: homeProperty || null,
       w9OrW4: "w9",
+      createdByUserId: session.userId,
     } as any);
 
     // Auto-assign home property if set
@@ -843,6 +847,7 @@ export async function registerRoutes(
       allowOffSite: allowOffSite ? 1 : 0,
       homeProperty: resolvedHomeProperty,
       w9OrW4: "w9",
+      createdByUserId: session.userId,
     } as any);
 
     if (assignedPropIds.length > 0) {

@@ -419,21 +419,23 @@ export default function TimeReportPage() {
               ))}
             </div>
 
-            {allowOffSite && (
-              <div className="space-y-2">
-                <Label>Miles Driven (optional)</Label>
-                <Input
-                  type="number"
-                  step="0.1"
-                  value={miles}
-                  onChange={e => setMiles(e.target.value)}
-                  placeholder="0"
-                />
-                {miles && parseFloat(miles) > 0 && (
-                  <p className="text-xs text-muted-foreground">{miles} mi × ${mileageRate.toFixed(2)} = ${mileageAmount}</p>
-                )}
-              </div>
-            )}
+            {/* Miles input is shown for every user. Miles driven are a
+                legitimate pay/expense item regardless of whether the user
+                is flagged for off-site work. Uses the user's mileage rate
+                (defaults to $0.50/mi if not set on the profile). */}
+            <div className="space-y-2">
+              <Label>Miles Driven (optional)</Label>
+              <Input
+                type="number"
+                step="0.1"
+                value={miles}
+                onChange={e => setMiles(e.target.value)}
+                placeholder="0"
+              />
+              {miles && parseFloat(miles) > 0 && (
+                <p className="text-xs text-muted-foreground">{miles} mi × ${mileageRate.toFixed(2)} = ${mileageAmount}</p>
+              )}
+            </div>
 
             {allowSpecialTermsUser && (
               <div className="space-y-2">
