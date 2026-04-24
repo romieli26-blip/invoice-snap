@@ -3286,6 +3286,173 @@ export async function registerRoutes(
   });
 
   // ---- Admin Workforce Report ----
+  // Helper: compute the pay summary for a single user & date range.
+  // Used by both the admin route and the non-admin route.
+  async function computeWorkforceReport(userIdNum: number, startDate: string, endDate: string) {
+    const reports = await storage.getTimeReportsByUserAndDateRange(userIdNum, startDate, endDate);
+    const userObj = await storage.getUser(userIdNum);
+
+    let totalHours = 0;
+    let totalMiles = 0;
+    let totalMileagePay = 0;
+    let totalSpecialTerms = 0;
+    const daysWorked = new Set<string>();
+
+    for (const r of reports) {
+      let blocks: { start: string; end: string }[] = [];
+      try { blocks = r.timeBlocks ? JSON.parse(r.timeBlocks) : []; } catch {}
+      if (blocks.length > 0) {
+        totalHours += blocks.reduce((sum, b) => {
+          const [bsh, bsm] = b.start.split(":").map(Number);
+          const [beh, bem] = b.end.split(":").map(Number);
+          return sum + ((beh * 60 + bem) - (bsh * 60 + bsm)) / 60;
+        }, 0);
+      } else {
+        const [sh, sm] = (r.startTime || "0:0").split(":").map(Number);
+        const [eh, em] = (r.endTime || "0:0").split(":").map(Number);
+        totalHours += ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+      }
+      totalMiles += parseFloat(r.miles || "0");
+      totalMileagePay += parseFloat(r.mileageAmount || "0");
+      if (r.specialTerms) totalSpecialTerms += parseFloat(r.specialTermsAmount || "0");
+      daysWorked.add(r.date);
+    }
+
+    const baseRate = parseFloat((userObj as any)?.baseRate || "0");
+    const offSiteRate = parseFloat((userObj as any)?.offSiteRate || "0");
+    const homeProperty = (userObj as any)?.homeProperty || "";
+    const mileageRate = parseFloat((userObj as any)?.mileageRate || "0.50");
+    const laborCost = totalHours * baseRate;
+    const grandTotal = laborCost + totalMileagePay + totalSpecialTerms;
+
+    const enrichedReports = reports.map(r => {
+      let hours = 0;
+      let blocks: { start: string; end: string }[] = [];
+      try { blocks = r.timeBlocks ? JSON.parse(r.timeBlocks) : []; } catch {}
+      if (blocks.length > 0) {
+        hours = blocks.reduce((sum, b) => {
+          const [bsh, bsm] = b.start.split(":").map(Number);
+          const [beh, bem] = b.end.split(":").map(Number);
+          return sum + ((beh * 60 + bem) - (bsh * 60 + bsm)) / 60;
+        }, 0);
+      } else {
+        const [sh, sm] = (r.startTime || "0:0").split(":").map(Number);
+        const [eh, em] = (r.endTime || "0:0").split(":").map(Number);
+        hours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+      }
+      const isOffSite = r.property !== homeProperty && (userObj as any)?.allowOffSite;
+      const rate = isOffSite ? offSiteRate : baseRate;
+      const entryCost = hours * rate;
+      const entryMileage = parseFloat(r.mileageAmount || "0");
+      const entrySpecial = r.specialTerms ? parseFloat(r.specialTermsAmount || "0") : 0;
+      let accs: string[] = [];
+      try { accs = JSON.parse(r.accomplishments || "[]"); } catch {}
+      return {
+        ...r,
+        calculatedHours: parseFloat(hours.toFixed(2)),
+        rate,
+        isOffSite,
+        laborCost: parseFloat(entryCost.toFixed(2)),
+        mileageAmount: parseFloat(entryMileage.toFixed(2)),
+        specialAmount: parseFloat(entrySpecial.toFixed(2)),
+        entryTotal: parseFloat((entryCost + entryMileage + entrySpecial).toFixed(2)),
+        accomplishmentsList: accs,
+      };
+    });
+
+    return {
+      user: {
+        id: userObj?.id,
+        displayName: userObj?.displayName,
+        firstName: (userObj as any)?.firstName,
+        lastName: (userObj as any)?.lastName,
+        baseRate: (userObj as any)?.baseRate || "0",
+        offSiteRate: (userObj as any)?.offSiteRate || "0",
+        homeProperty,
+        mileageRate: mileageRate.toString(),
+      },
+      period: { startDate, endDate },
+      summary: {
+        daysWorked: daysWorked.size,
+        totalHours: parseFloat(totalHours.toFixed(1)),
+        totalMiles: parseFloat(totalMiles.toFixed(1)),
+        totalMileagePay: parseFloat(totalMileagePay.toFixed(2)),
+        totalSpecialTerms: parseFloat(totalSpecialTerms.toFixed(2)),
+        laborCost: parseFloat(laborCost.toFixed(2)),
+        grandTotal: parseFloat(grandTotal.toFixed(2)),
+        baseRate,
+      },
+      reports: enrichedReports,
+    };
+  }
+
+  // Helper: determine which user IDs a given viewer may run workforce reports for.
+  async function getWorkforceViewableUserIds(viewerId: number, viewerRole: string): Promise<Set<number>> {
+    const allowed = new Set<number>([viewerId]);
+    if (isAdminRole(viewerRole)) {
+      const all = await storage.getAllUsers();
+      for (const u of all) allowed.add(u.id);
+      return allowed;
+    }
+    // Managers with allowCreatingContractors can see users whose assigned properties overlap with theirs.
+    const viewer = await storage.getUser(viewerId);
+    if ((viewer as any)?.allowCreatingContractors) {
+      const viewerPropIds = new Set(await storage.getUserPropertyIds(viewerId));
+      if (viewerPropIds.size > 0) {
+        const all = await storage.getAllUsers();
+        for (const u of all) {
+          if (u.id === viewerId) continue;
+          // Only contractors and managers get pay calculated
+          if (u.role !== "contractor" && u.role !== "manager") continue;
+          const uPropIds = await storage.getUserPropertyIds(u.id);
+          if (uPropIds.some(pid => viewerPropIds.has(pid))) allowed.add(u.id);
+        }
+      }
+    }
+    return allowed;
+  }
+
+  // Non-admin workforce report (any authenticated user)
+  app.get("/api/workforce-report/available-users", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const allowed = await getWorkforceViewableUserIds(session.userId, session.role);
+    const all = await storage.getAllUsers();
+    const allProps = await storage.getAllProperties();
+    const propMap = new Map(allProps.map(p => [p.id, p.name]));
+    const list = [] as any[];
+    for (const u of all) {
+      if (!allowed.has(u.id)) continue;
+      if (u.role !== "contractor" && u.role !== "manager" && u.id !== session.userId) continue;
+      const propIds = await storage.getUserPropertyIds(u.id);
+      list.push({
+        id: u.id,
+        displayName: u.displayName,
+        role: u.role,
+        homeProperty: (u as any).homeProperty,
+        assignedProperties: propIds.map(pid => propMap.get(pid)).filter(Boolean),
+      });
+    }
+    list.sort((a, b) => a.displayName.localeCompare(b.displayName));
+    res.json(list);
+  });
+
+  app.get("/api/workforce-report", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const { userId, startDate, endDate } = req.query as any;
+    if (!userId || !startDate || !endDate) {
+      return res.status(400).json({ error: "userId, startDate, endDate required" });
+    }
+    const targetId = parseInt(userId);
+    const allowed = await getWorkforceViewableUserIds(session.userId, session.role);
+    if (!allowed.has(targetId)) {
+      return res.status(403).json({ error: "You don't have permission to view this user's pay report" });
+    }
+    const data = await computeWorkforceReport(targetId, startDate, endDate);
+    res.json(data);
+  });
+
   app.get("/api/admin/workforce-report", async (req, res) => {
     const session = await requireAdmin(req, res);
     if (!session) return;

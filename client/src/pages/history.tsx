@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { WorkforceReport } from "@/components/WorkforceReport";
 import type { Invoice } from "@shared/schema";
 import { LogoBackground, LogoHeader } from "@/components/LogoBackground";
 
@@ -354,6 +355,17 @@ export default function HistoryPage() {
               ))}
             </div>
           </div>
+        )}
+
+        {/* Workforce Report (pay calculator).
+            - Contractors: locked to themselves
+            - Managers: dropdown of themselves + contractors/managers they can see (server-filtered)
+            - Admins: use the Admin Panel version which already has this widget */}
+        {user && user.role !== "admin" && user.role !== "super_admin" && (
+          <WorkforceReport
+            lockedUserId={user.role === "contractor" ? user.id : undefined}
+            title="Pay Calculator"
+          />
         )}
 
         {user?.role !== "contractor" && (<>
