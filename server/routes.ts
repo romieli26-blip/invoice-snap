@@ -602,6 +602,10 @@ export async function registerRoutes(
       docReminderDays: (user as any).docReminderDays || 3,
       allowContractorDocs: (user as any).allowContractorDocs || 0,
       allowCreatingContractors: (user as any).allowCreatingContractors || 0,
+      showWorkReport: (user as any).showWorkReport || 0,
+      showMyDocuments: (user as any).showMyDocuments || 0,
+      showWorkCredit: (user as any).showWorkCredit || 0,
+      showMyContractors: (user as any).showMyContractors || 0,
       assignedProperties: myProps,
     });
   });
@@ -678,6 +682,10 @@ export async function registerRoutes(
         docReminderDays: (u as any).docReminderDays || 3,
         allowContractorDocs: (u as any).allowContractorDocs || 0,
         allowCreatingContractors: (u as any).allowCreatingContractors || 0,
+        showWorkReport: (u as any).showWorkReport || 0,
+        showMyDocuments: (u as any).showMyDocuments || 0,
+        showWorkCredit: (u as any).showWorkCredit || 0,
+        showMyContractors: (u as any).showMyContractors || 0,
         assignedProperties: propIds.map(pid => propMap.get(pid)).filter(Boolean) as string[],
       };
     }));
@@ -783,7 +791,7 @@ export async function registerRoutes(
       return res.status(403).json({ error: "You don't have permission to create contractors" });
     }
 
-    const { username, password, displayName, email, firstName, lastName, baseRate, offSiteRate, homeProperty } = req.body;
+    const { username, password, displayName, email, firstName, lastName, baseRate, offSiteRate, mileageRate, allowOffSite, homeProperty } = req.body;
     if (!username || !password || !displayName) {
       return res.status(400).json({ error: "Username, password, and display name are required" });
     }
@@ -831,6 +839,8 @@ export async function registerRoutes(
       lastName: lastName || null,
       baseRate: baseRate ? String(baseRate) : "0",
       offSiteRate: offSiteRate ? String(offSiteRate) : "0",
+      mileageRate: mileageRate ? String(mileageRate) : "0.50",
+      allowOffSite: allowOffSite ? 1 : 0,
       homeProperty: resolvedHomeProperty,
       w9OrW4: "w9",
     } as any);
@@ -961,7 +971,8 @@ export async function registerRoutes(
       firstName, lastName, baseRate, offSiteRate, homeProperty, allowOffSite,
       mileageRate, allowSpecialTerms, specialTermsAmount, w9OrW4, docsComplete,
       requireFinancialConfirm, allowPastDates, receiveTransactionEmails,
-      allowWorkCredits, workCreditReport, documentUploadReport, docReminderEnabled, docReminderDays, allowContractorDocs, allowCreatingContractors } = req.body;
+      allowWorkCredits, workCreditReport, documentUploadReport, docReminderEnabled, docReminderDays, allowContractorDocs, allowCreatingContractors,
+      showWorkReport, showMyDocuments, showWorkCredit, showMyContractors } = req.body;
 
     if (email) {
       const allUsers = await storage.getAllUsers();
@@ -1003,6 +1014,10 @@ export async function registerRoutes(
     if (docReminderDays !== undefined) updateData.docReminderDays = parseInt(docReminderDays) || 3;
     if (allowContractorDocs !== undefined) updateData.allowContractorDocs = allowContractorDocs ? 1 : 0;
     if (allowCreatingContractors !== undefined) updateData.allowCreatingContractors = allowCreatingContractors ? 1 : 0;
+    if (showWorkReport !== undefined) updateData.showWorkReport = showWorkReport ? 1 : 0;
+    if (showMyDocuments !== undefined) updateData.showMyDocuments = showMyDocuments ? 1 : 0;
+    if (showWorkCredit !== undefined) updateData.showWorkCredit = showWorkCredit ? 1 : 0;
+    if (showMyContractors !== undefined) updateData.showMyContractors = showMyContractors ? 1 : 0;
 
     const updated = await storage.updateUser(id, updateData);
     res.json(updated);
@@ -2917,26 +2932,29 @@ export async function registerRoutes(
   app.get("/api/work-credits", async (req, res) => {
     const session = await requireAuth(req, res);
     if (!session) return;
+    let credits;
     if (isAdminRole(session.role)) {
-      const credits = await storage.getAllWorkCredits();
-      res.json(credits);
+      credits = await storage.getAllWorkCredits();
     } else {
       // Non-admins see their own submissions AND any work credits for properties they manage
       const ownCredits = await storage.getWorkCreditsByUser(session.userId);
       const assignedProps = await storage.getPropertiesForUser(session.userId);
       const assignedPropNames = new Set(assignedProps.map(p => p.name));
-      let combined = ownCredits;
+      credits = ownCredits;
       if (assignedPropNames.size > 0) {
         const allCredits = await storage.getAllWorkCredits();
         const propertyCredits = allCredits.filter(c => assignedPropNames.has(c.property));
-        // De-duplicate by id (own submissions for assigned properties appear in both lists)
         const byId = new Map<number, typeof allCredits[number]>();
         for (const c of ownCredits) byId.set(c.id, c);
         for (const c of propertyCredits) byId.set(c.id, c);
-        combined = Array.from(byId.values()).sort((a, b) => b.id - a.id);
+        credits = Array.from(byId.values()).sort((a, b) => b.id - a.id);
       }
-      res.json(combined);
     }
+    // Enrich with submittedBy (display name)
+    const allUsers = await storage.getAllUsers();
+    const userMap = new Map(allUsers.map(u => [u.id, u.displayName]));
+    const enriched = credits.map(c => ({ ...c, submittedBy: userMap.get(c.userId) || "Unknown" }));
+    res.json(enriched);
   });
 
   app.delete("/api/work-credits/:id", async (req, res) => {

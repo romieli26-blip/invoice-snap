@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Invoice } from "@shared/schema";
 import { LogoBackground, LogoHeader } from "@/components/LogoBackground";
 
@@ -62,6 +63,41 @@ export default function HistoryPage() {
   const { data: workCredits } = useQuery<any[]>({
     queryKey: ["/api/work-credits"],
   });
+
+  // ---- User filter (admins + PMs with managed properties) ----
+  // Build list of distinct users who appear in any of the four lists.
+  const [userFilter, setUserFilter] = useState<string>("all");
+
+  const filterOptions = useMemo(() => {
+    const set = new Map<number, string>();
+    const add = (items: any[] | undefined) => {
+      if (!items) return;
+      for (const it of items) {
+        if (it.userId && it.submittedBy) set.set(it.userId, it.submittedBy);
+      }
+    };
+    add(invoices);
+    add(cashTxs);
+    add(timeReports);
+    add(workCredits);
+    // Always include the viewer themselves
+    if (user?.id && user?.displayName) set.set(user.id, user.displayName);
+    return Array.from(set.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [invoices, cashTxs, timeReports, workCredits, user?.id, user?.displayName]);
+
+  // Show the filter only when there's more than one unique user represented.
+  const showUserFilter = filterOptions.length > 1;
+
+  function matchesFilter(item: any): boolean {
+    if (userFilter === "all") return true;
+    return String(item.userId) === userFilter;
+  }
+  const filteredInvoices = useMemo(() => invoices?.filter(matchesFilter), [invoices, userFilter]);
+  const filteredCashTxs = useMemo(() => cashTxs?.filter(matchesFilter), [cashTxs, userFilter]);
+  const filteredTimeReports = useMemo(() => timeReports?.filter(matchesFilter), [timeReports, userFilter]);
+  const filteredWorkCredits = useMemo(() => workCredits?.filter(matchesFilter), [workCredits, userFilter]);
 
   // Cash transaction edit state
   const [editingCashTx, setEditingCashTx] = useState<any | null>(null);
@@ -235,55 +271,73 @@ export default function HistoryPage() {
           </Button>
         )}
 
-        {user?.role !== "contractor" && (
-          <div className="grid grid-cols-2 gap-3">
-            <Button
-              className="h-12 text-sm gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
-              onClick={() => setLocation("/time-report")}
-            >
-              <Clock className="w-4 h-4" />
-              Work Report
-            </Button>
-            <Button
-              className={`h-12 text-sm gap-1.5 ${(user as any)?.docsComplete ? "bg-green-100 hover:bg-green-200 text-green-800 border-green-300" : ""}`}
-              variant="outline"
-              onClick={() => setLocation("/documents")}
-            >
-              <FileText className="w-4 h-4" />
-              My Documents
-            </Button>
-          </div>
-        )}
+        {/* Non-contractor buttons. For admins, each button is gated on an opt-in show* flag.
+            For managers, the existing allow* flags determine visibility. */}
+        {user?.role !== "contractor" && (() => {
+          const isAdmin = user?.role === "admin" || user?.role === "super_admin";
+          const showWorkReport = isAdmin ? !!(user as any)?.showWorkReport : true;
+          const showMyDocs = isAdmin ? !!(user as any)?.showMyDocuments : true;
+          const showWorkCredit = isAdmin ? !!(user as any)?.showWorkCredit : !!(user as any)?.allowWorkCredits;
+          const showMyContractors = isAdmin ? !!(user as any)?.showMyContractors : !!(user as any)?.allowCreatingContractors;
+          const showContractorDocs = !!(user as any)?.allowContractorDocs || isAdmin;
+          return (
+            <>
+              {(showWorkReport || showMyDocs) && (
+                <div className="grid grid-cols-2 gap-3">
+                  {showWorkReport && (
+                    <Button
+                      className={`h-12 text-sm gap-1.5 bg-blue-600 hover:bg-blue-700 text-white ${!showMyDocs ? "col-span-2" : ""}`}
+                      onClick={() => setLocation("/time-report")}
+                    >
+                      <Clock className="w-4 h-4" />
+                      Work Report
+                    </Button>
+                  )}
+                  {showMyDocs && (
+                    <Button
+                      className={`h-12 text-sm gap-1.5 ${(user as any)?.docsComplete ? "bg-green-100 hover:bg-green-200 text-green-800 border-green-300" : ""} ${!showWorkReport ? "col-span-2" : ""}`}
+                      variant="outline"
+                      onClick={() => setLocation("/documents")}
+                    >
+                      <FileText className="w-4 h-4" />
+                      My Documents
+                    </Button>
+                  )}
+                </div>
+              )}
 
-        {user?.role !== "contractor" && ((user as any)?.allowWorkCredits || user?.role === "admin" || user?.role === "super_admin") && (
-          <Button
-            className="w-full h-12 text-sm gap-1.5 bg-purple-600 hover:bg-purple-700 text-white"
-            onClick={() => setLocation("/work-credit")}
-          >
-            <CreditCard className="w-4 h-4" />
-            Work Credit
-          </Button>
-        )}
+              {showWorkCredit && (
+                <Button
+                  className="w-full h-12 text-sm gap-1.5 bg-purple-600 hover:bg-purple-700 text-white"
+                  onClick={() => setLocation("/work-credit")}
+                >
+                  <CreditCard className="w-4 h-4" />
+                  Work Credit
+                </Button>
+              )}
 
-        {user?.role !== "contractor" && ((user as any)?.allowContractorDocs || user?.role === "admin" || user?.role === "super_admin") && (
-          <Button
-            className="w-full h-12 text-sm gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
-            onClick={() => setLocation("/contractor-documents")}
-          >
-            <UserPlus className="w-4 h-4" />
-            Contractor Documents
-          </Button>
-        )}
+              {showContractorDocs && (
+                <Button
+                  className="w-full h-12 text-sm gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
+                  onClick={() => setLocation("/contractor-documents")}
+                >
+                  <UserPlus className="w-4 h-4" />
+                  Contractor Documents
+                </Button>
+              )}
 
-        {user?.role !== "contractor" && ((user as any)?.allowCreatingContractors || user?.role === "admin" || user?.role === "super_admin") && (
-          <Button
-            className="w-full h-12 text-sm gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white"
-            onClick={() => setLocation("/my-contractors")}
-          >
-            <UsersRound className="w-4 h-4" />
-            My Contractors
-          </Button>
-        )}
+              {showMyContractors && (
+                <Button
+                  className="w-full h-12 text-sm gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white"
+                  onClick={() => setLocation("/my-contractors")}
+                >
+                  <UsersRound className="w-4 h-4" />
+                  My Contractors
+                </Button>
+              )}
+            </>
+          );
+        })()}
 
         {/* Cash Balances */}
         {user?.role !== "contractor" && cashBalances && Object.keys(cashBalances).length > 0 && (
@@ -303,6 +357,31 @@ export default function HistoryPage() {
         )}
 
         {user?.role !== "contractor" && (<>
+        {/* Filter by user */}
+        {showUserFilter && (
+          <div className="flex items-center gap-2">
+            <Users className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+            <Select value={userFilter} onValueChange={setUserFilter}>
+              <SelectTrigger className="h-9 text-sm" data-testid="select-user-filter">
+                <SelectValue placeholder="Filter by user" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All users</SelectItem>
+                {filterOptions.map(opt => (
+                  <SelectItem key={opt.id} value={String(opt.id)}>
+                    {opt.name}{opt.id === user?.id ? " (me)" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {userFilter !== "all" && (
+              <Button variant="ghost" size="sm" onClick={() => setUserFilter("all")} className="h-9 px-2 text-xs">
+                <X className="w-3.5 h-3.5" />
+              </Button>
+            )}
+          </div>
+        )}
+
         {/* Section header */}
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium text-muted-foreground">Recent Receipts</h2>
@@ -329,9 +408,9 @@ export default function HistoryPage() {
               </Card>
             ))}
           </div>
-        ) : invoices && invoices.length > 0 ? (
+        ) : filteredInvoices && filteredInvoices.length > 0 ? (
           <div className="space-y-2">
-            {invoices.map(inv => (
+            {filteredInvoices.map(inv => (
               <Card key={inv.id} data-testid={`card-invoice-${inv.id}`}>
                 <CardContent className="py-3 flex gap-3">
                   <div
@@ -441,9 +520,9 @@ export default function HistoryPage() {
               </Button>
             )}
           </div>
-          {cashTxs && cashTxs.length > 0 ? (
+          {filteredCashTxs && filteredCashTxs.length > 0 ? (
             <div className="space-y-2">
-              {cashTxs.map((tx: any) => (
+              {filteredCashTxs.map((tx: any) => (
                 <Card key={tx.id}>
                   <CardContent className="py-3 flex gap-3">
                     {/* Photo thumbnail */}
@@ -513,9 +592,9 @@ export default function HistoryPage() {
         {/* ---- TIME REPORTS SECTION ---- */}
         <div className="space-y-2">
           <h2 className="text-sm font-medium text-muted-foreground">Work Reports</h2>
-          {timeReports && timeReports.length > 0 ? (
+          {filteredTimeReports && filteredTimeReports.length > 0 ? (
             <div className="space-y-2">
-              {timeReports.map((tr: any) => (
+              {filteredTimeReports.map((tr: any) => (
                 <Card key={tr.id}>
                   <CardContent className="py-3 flex gap-3">
                     <div className="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center flex-shrink-0">
@@ -618,11 +697,11 @@ export default function HistoryPage() {
         </div>
 
         {/* ---- WORK CREDITS SECTION ---- */}
-        {workCredits && workCredits.length > 0 && (
+        {filteredWorkCredits && filteredWorkCredits.length > 0 && (
           <div className="space-y-2">
             <h2 className="text-sm font-medium text-muted-foreground">Work Credits</h2>
             <div className="space-y-2">
-              {workCredits.map((wc: any) => {
+              {filteredWorkCredits.map((wc: any) => {
                 let descList: string[] = [];
                 try { descList = JSON.parse(wc.workDescriptions); } catch {}
                 return (

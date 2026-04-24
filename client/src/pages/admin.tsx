@@ -82,6 +82,10 @@ export default function AdminPage() {
   const [editUserDocReminderDays, setEditUserDocReminderDays] = useState(3);
   const [editUserAllowContractorDocs, setEditUserAllowContractorDocs] = useState(false);
   const [editUserAllowCreatingContractors, setEditUserAllowCreatingContractors] = useState(false);
+  const [editUserShowWorkReport, setEditUserShowWorkReport] = useState(false);
+  const [editUserShowMyDocuments, setEditUserShowMyDocuments] = useState(false);
+  const [editUserShowWorkCredit, setEditUserShowWorkCredit] = useState(false);
+  const [editUserShowMyContractors, setEditUserShowMyContractors] = useState(false);
   const [editUserSaving, setEditUserSaving] = useState(false);
 
   // Edit properties assignment state
@@ -786,6 +790,10 @@ export default function AdminPage() {
                             setEditUserDocReminderDays((u as any).docReminderDays || 3);
                             setEditUserAllowContractorDocs((u as any).allowContractorDocs === 1);
                             setEditUserAllowCreatingContractors((u as any).allowCreatingContractors === 1);
+                            setEditUserShowWorkReport((u as any).showWorkReport === 1);
+                            setEditUserShowMyDocuments((u as any).showMyDocuments === 1);
+                            setEditUserShowWorkCredit((u as any).showWorkCredit === 1);
+                            setEditUserShowMyContractors((u as any).showMyContractors === 1);
                           }}
                         >
                           <Pencil className="w-4 h-4" />
@@ -964,6 +972,27 @@ export default function AdminPage() {
                     <Checkbox id="edit-create-contractors" checked={editUserAllowCreatingContractors} onCheckedChange={c => setEditUserAllowCreatingContractors(c === true)} />
                     <Label htmlFor="edit-create-contractors" className="text-sm font-normal cursor-pointer">Allow Creating Contractors</Label>
                   </div>
+                  {(editingUser.role === "admin" || editingUser.role === "super_admin") && (
+                    <div className="space-y-2 border rounded-md p-3 bg-muted/20">
+                      <p className="text-xs font-medium text-muted-foreground">Dashboard Buttons (admins only)</p>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox id="edit-show-work-report" checked={editUserShowWorkReport} onCheckedChange={c => setEditUserShowWorkReport(c === true)} />
+                        <Label htmlFor="edit-show-work-report" className="text-sm font-normal cursor-pointer">Show Work Report</Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox id="edit-show-my-docs" checked={editUserShowMyDocuments} onCheckedChange={c => setEditUserShowMyDocuments(c === true)} />
+                        <Label htmlFor="edit-show-my-docs" className="text-sm font-normal cursor-pointer">Show My Documents</Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox id="edit-show-work-credit" checked={editUserShowWorkCredit} onCheckedChange={c => setEditUserShowWorkCredit(c === true)} />
+                        <Label htmlFor="edit-show-work-credit" className="text-sm font-normal cursor-pointer">Show Work Credit</Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Checkbox id="edit-show-my-contractors" checked={editUserShowMyContractors} onCheckedChange={c => setEditUserShowMyContractors(c === true)} />
+                        <Label htmlFor="edit-show-my-contractors" className="text-sm font-normal cursor-pointer">Show My Contractors</Label>
+                      </div>
+                    </div>
+                  )}
                   <div className="flex items-center space-x-2">
                     <Checkbox id="edit-doc-reminder" checked={editUserDocReminderEnabled} onCheckedChange={c => setEditUserDocReminderEnabled(c === true)} />
                     <Label htmlFor="edit-doc-reminder" className="text-sm font-normal cursor-pointer">Send document upload reminders</Label>
@@ -1022,6 +1051,10 @@ export default function AdminPage() {
                     docReminderDays: editUserDocReminderDays,
                     allowContractorDocs: editUserAllowContractorDocs,
                     allowCreatingContractors: editUserAllowCreatingContractors,
+                    showWorkReport: editUserShowWorkReport,
+                    showMyDocuments: editUserShowMyDocuments,
+                    showWorkCredit: editUserShowWorkCredit,
+                    showMyContractors: editUserShowMyContractors,
                   });
                   queryClient.invalidateQueries({ queryKey: ["/api/users"] });
                   setEditingUser(null);

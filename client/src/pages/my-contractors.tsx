@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -57,6 +58,8 @@ export default function MyContractorsPage() {
     password: "",
     baseRate: "",
     offSiteRate: "",
+    mileageRate: "0.50",
+    allowOffSite: false,
     homeProperty: "",
   });
   const [submitting, setSubmitting] = useState(false);
@@ -78,6 +81,8 @@ export default function MyContractorsPage() {
       password: "",
       baseRate: "",
       offSiteRate: "",
+      mileageRate: "0.50",
+      allowOffSite: false,
       homeProperty: "",
     });
   }
@@ -99,6 +104,8 @@ export default function MyContractorsPage() {
         password: form.password,
         baseRate: form.baseRate || "0",
         offSiteRate: form.offSiteRate || "0",
+        mileageRate: form.mileageRate || "0.50",
+        allowOffSite: form.allowOffSite,
         homeProperty: form.homeProperty || undefined,
       });
       queryClient.invalidateQueries({ queryKey: ["/api/pm/contractors"] });
@@ -256,6 +263,16 @@ export default function MyContractorsPage() {
               <div className="space-y-1">
                 <Label className="text-xs">Off-Site Rate ($/hr)</Label>
                 <Input type="number" step="0.01" value={form.offSiteRate} onChange={e => setForm(f => ({ ...f, offSiteRate: e.target.value }))} placeholder="0.00" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 items-end">
+              <div className="space-y-1">
+                <Label className="text-xs">Mileage Rate ($/mile)</Label>
+                <Input type="number" step="0.01" value={form.mileageRate} onChange={e => setForm(f => ({ ...f, mileageRate: e.target.value }))} placeholder="0.50" />
+              </div>
+              <div className="flex items-center space-x-2 pb-2">
+                <Checkbox id="pm-allow-offsite" checked={form.allowOffSite} onCheckedChange={c => setForm(f => ({ ...f, allowOffSite: c === true }))} />
+                <Label htmlFor="pm-allow-offsite" className="text-xs font-normal cursor-pointer">Allow off-site work</Label>
               </div>
             </div>
             {myProps && myProps.length > 1 && (
