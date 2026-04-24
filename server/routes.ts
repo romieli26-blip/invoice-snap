@@ -798,7 +798,10 @@ export async function registerRoutes(
       return res.status(403).json({ error: "You don't have permission to create contractors" });
     }
 
-    const { username, password, displayName, email, firstName, lastName, baseRate, offSiteRate, mileageRate, allowOffSite, homeProperty } = req.body;
+    // Note: offSiteRate and allowOffSite are intentionally not accepted from
+    // the PM. Those remain admin-only settings so a PM can't grant a
+    // contractor off-site pay. An admin can enable them later via PUT.
+    const { username, password, displayName, email, firstName, lastName, baseRate, mileageRate, homeProperty } = req.body;
     if (!username || !password || !displayName) {
       return res.status(400).json({ error: "Username, password, and display name are required" });
     }
@@ -845,9 +848,9 @@ export async function registerRoutes(
       firstName: firstName || null,
       lastName: lastName || null,
       baseRate: baseRate ? String(baseRate) : "0",
-      offSiteRate: offSiteRate ? String(offSiteRate) : "0",
+      offSiteRate: "0",
       mileageRate: mileageRate ? String(mileageRate) : "0.50",
-      allowOffSite: allowOffSite ? 1 : 0,
+      allowOffSite: 0,
       // Explicit opt-in from the PM; contractors without allowMiles cannot log miles.
       allowMiles: req.body.allowMiles ? 1 : 0,
       homeProperty: resolvedHomeProperty,

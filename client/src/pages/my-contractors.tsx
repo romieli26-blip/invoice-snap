@@ -48,7 +48,8 @@ export default function MyContractorsPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [selectedContractor, setSelectedContractor] = useState<PMContractor | null>(null);
 
-  // Form state
+  // Form state (off-site rate & allow off-site intentionally omitted —
+  // those are admin-only toggles managed from the user edit dialog).
   const [form, setForm] = useState({
     displayName: "",
     firstName: "",
@@ -57,9 +58,7 @@ export default function MyContractorsPage() {
     email: "",
     password: "",
     baseRate: "",
-    offSiteRate: "",
     mileageRate: "0.50",
-    allowOffSite: false,
     allowMiles: false,
     homeProperty: "",
   });
@@ -81,9 +80,7 @@ export default function MyContractorsPage() {
       email: "",
       password: "",
       baseRate: "",
-      offSiteRate: "",
       mileageRate: "0.50",
-      allowOffSite: false,
       allowMiles: false,
       homeProperty: "",
     });
@@ -105,9 +102,10 @@ export default function MyContractorsPage() {
         email: form.email.trim(),
         password: form.password,
         baseRate: form.baseRate || "0",
-        offSiteRate: form.offSiteRate || "0",
+        // offSiteRate and allowOffSite are intentionally not set by the PM;
+        // the server defaults offSiteRate to "0" and allowOffSite to 0.
+        // An admin can enable these later from the user edit dialog.
         mileageRate: form.mileageRate || "0.50",
-        allowOffSite: form.allowOffSite,
         allowMiles: form.allowMiles,
         homeProperty: form.homeProperty || undefined,
       });
@@ -264,18 +262,8 @@ export default function MyContractorsPage() {
                 <Input type="number" step="0.01" value={form.baseRate} onChange={e => setForm(f => ({ ...f, baseRate: e.target.value }))} placeholder="0.00" />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Off-Site Rate ($/hr)</Label>
-                <Input type="number" step="0.01" value={form.offSiteRate} onChange={e => setForm(f => ({ ...f, offSiteRate: e.target.value }))} placeholder="0.00" />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-2 items-end">
-              <div className="space-y-1">
                 <Label className="text-xs">Mileage Rate ($/mile)</Label>
                 <Input type="number" step="0.01" value={form.mileageRate} onChange={e => setForm(f => ({ ...f, mileageRate: e.target.value }))} placeholder="0.50" />
-              </div>
-              <div className="flex items-center space-x-2 pb-2">
-                <Checkbox id="pm-allow-offsite" checked={form.allowOffSite} onCheckedChange={c => setForm(f => ({ ...f, allowOffSite: c === true }))} />
-                <Label htmlFor="pm-allow-offsite" className="text-xs font-normal cursor-pointer">Allow off-site work</Label>
               </div>
             </div>
             <div className="flex items-center space-x-2 border rounded-md p-2 bg-amber-50 dark:bg-amber-950/20">
