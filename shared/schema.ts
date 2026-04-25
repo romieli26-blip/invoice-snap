@@ -62,6 +62,7 @@ export const users = sqliteTable("users", {
   allowMiles: integer("allow_miles").default(1),
   docReminderEnabled: integer("doc_reminder_enabled").default(0),
   docReminderDays: integer("doc_reminder_days").default(3),
+  eveningReminderEnabled: integer("evening_reminder_enabled").default(0),
 });
 
 export const workCredits = sqliteTable("work_credits", {

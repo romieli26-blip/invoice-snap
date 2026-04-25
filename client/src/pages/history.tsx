@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
-import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, DollarSign, Clock, UserPlus, UsersRound } from "lucide-react";
+import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, DollarSign, Clock, UserPlus, UsersRound, Settings as SettingsIcon } from "lucide-react";
 import { apiRequest, queryClient, getAuthToken } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
@@ -35,6 +35,9 @@ export default function HistoryPage() {
   const [viewingPhotos, setViewingPhotos] = useState<string[] | null>(null);
   const [viewPhotoIdx, setViewPhotoIdx] = useState(0);
   const [photoZoom, setPhotoZoom] = useState(1);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [eveningReminderEnabled, setEveningReminderEnabled] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<EnrichedInvoice | null>(null);
   const [editDescription, setEditDescription] = useState("");
   const [editPurpose, setEditPurpose] = useState("");
@@ -183,6 +186,23 @@ export default function HistoryPage() {
                 data-testid="button-admin"
               >
                 <Users className="w-5 h-5" />
+              </Button>
+            )}
+            {(user?.role === "manager" || user?.role === "contractor") && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={async () => {
+                  try {
+                    const res = await apiRequest("GET", "/api/me");
+                    const me = await res.json();
+                    setEveningReminderEnabled((me?.eveningReminderEnabled || 0) === 1);
+                  } catch {}
+                  setSettingsOpen(true);
+                }}
+                data-testid="button-settings"
+              >
+                <SettingsIcon className="w-5 h-5" />
               </Button>
             )}
             <Button
@@ -941,6 +961,54 @@ export default function HistoryPage() {
           </div>
         </div>
       )}
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>My Settings</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={eveningReminderEnabled}
+                onChange={(e) => setEveningReminderEnabled(e.target.checked)}
+                data-testid="checkbox-evening-reminder"
+              />
+              <div>
+                <div className="font-medium">Evening reminder email</div>
+                <div className="text-xs text-muted-foreground">
+                  {user?.role === "contractor"
+                    ? "Get a reminder at 7 PM ET (Mon-Sat) to log your hours."
+                    : "Get a reminder at 7 PM ET (Mon-Sat) to log your hours, receipts, and any work credits."}
+                </div>
+              </div>
+            </label>
+          </div>
+          <div className="flex gap-2 mt-2">
+            <Button variant="outline" className="flex-1" onClick={() => setSettingsOpen(false)}>Cancel</Button>
+            <Button
+              className="flex-1"
+              disabled={settingsSaving}
+              onClick={async () => {
+                setSettingsSaving(true);
+                try {
+                  await apiRequest("POST", "/api/me/settings", { eveningReminderEnabled });
+                  toast({ title: "Settings saved" });
+                  setSettingsOpen(false);
+                } catch {
+                  toast({ title: "Failed to save settings", variant: "destructive" });
+                } finally {
+                  setSettingsSaving(false);
+                }
+              }}
+            >
+              {settingsSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+              Save
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       </div>
     </LogoBackground>
   );

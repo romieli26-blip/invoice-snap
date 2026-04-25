@@ -80,6 +80,7 @@ export default function AdminPage() {
   const [editUserDocumentUploadReport, setEditUserDocumentUploadReport] = useState(false);
   const [editUserDocReminderEnabled, setEditUserDocReminderEnabled] = useState(false);
   const [editUserDocReminderDays, setEditUserDocReminderDays] = useState(3);
+  const [editUserEveningReminderEnabled, setEditUserEveningReminderEnabled] = useState(false);
   const [editUserAllowContractorDocs, setEditUserAllowContractorDocs] = useState(false);
   const [editUserAllowCreatingContractors, setEditUserAllowCreatingContractors] = useState(false);
   const [editUserAllowMiles, setEditUserAllowMiles] = useState(true);
@@ -794,6 +795,7 @@ export default function AdminPage() {
                             setEditUserDocumentUploadReport((u as any).documentUploadReport === 1);
                             setEditUserDocReminderEnabled((u as any).docReminderEnabled === 1);
                             setEditUserDocReminderDays((u as any).docReminderDays || 3);
+                            setEditUserEveningReminderEnabled((u as any).eveningReminderEnabled === 1);
                             setEditUserAllowContractorDocs((u as any).allowContractorDocs === 1);
                             setEditUserAllowCreatingContractors((u as any).allowCreatingContractors === 1);
                             setEditUserAllowMiles((u as any).allowMiles === 0 ? false : true);
@@ -1008,6 +1010,10 @@ export default function AdminPage() {
                     <Checkbox id="edit-doc-reminder" checked={editUserDocReminderEnabled} onCheckedChange={c => setEditUserDocReminderEnabled(c === true)} />
                     <Label htmlFor="edit-doc-reminder" className="text-sm font-normal cursor-pointer">Send document upload reminders</Label>
                   </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox id="edit-evening-reminder" checked={editUserEveningReminderEnabled} onCheckedChange={c => setEditUserEveningReminderEnabled(c === true)} />
+                    <Label htmlFor="edit-evening-reminder" className="text-sm font-normal cursor-pointer">Send evening reminder email (7 PM ET, Mon-Sat)</Label>
+                  </div>
                   {editUserDocReminderEnabled && (
                     <div className="space-y-1 ml-6">
                       <Label className="text-xs">Reminder frequency (days)</Label>
@@ -1060,6 +1066,7 @@ export default function AdminPage() {
                     documentUploadReport: editUserDocumentUploadReport,
                     docReminderEnabled: editUserDocReminderEnabled,
                     docReminderDays: editUserDocReminderDays,
+                    eveningReminderEnabled: editUserEveningReminderEnabled,
                     allowContractorDocs: editUserAllowContractorDocs,
                     allowCreatingContractors: editUserAllowCreatingContractors,
                     allowMiles: editUserAllowMiles,
