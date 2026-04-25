@@ -97,6 +97,7 @@ try { sqlite.exec("ALTER TABLE users ADD COLUMN show_work_credit INTEGER DEFAULT
 try { sqlite.exec("ALTER TABLE users ADD COLUMN show_my_contractors INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN created_by_user_id INTEGER"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN allow_miles INTEGER DEFAULT 1"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN daily_reminder_enabled INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN work_credit_report INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN doc_reminder_enabled INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN doc_reminder_days INTEGER DEFAULT 3"); } catch {}

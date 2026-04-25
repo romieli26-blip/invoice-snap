@@ -167,6 +167,27 @@ app.use((req, res, next) => {
       }, { timezone: "UTC" });
 
       log("Document reminder scheduler active (9 AM ET)", "cron");
+
+      // Daily 7pm Florida-time reminder (Mon–Sat). Uses America/New_York
+      // tz so DST is auto-handled. Sundays excluded.
+      cron.schedule("0 19 * * 1-6", () => {
+        log("Daily 7pm reminder cron triggered", "cron");
+        const http = require("http");
+        const req = http.request({
+          hostname: "localhost", port, path: "/api/admin/daily-7pm-reminders",
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer internal-cron", "Content-Length": "2" },
+        }, (res: any) => {
+          let body = "";
+          res.on("data", (c: any) => body += c);
+          res.on("end", () => log(`Daily 7pm reminders result: ${body}`, "cron"));
+        });
+        req.on("error", (err: any) => log(`Daily 7pm reminders error: ${err.message}`, "cron"));
+        req.write("{}");
+        req.end();
+      }, { timezone: "America/New_York" });
+
+      log("Daily 7pm reminder scheduler active (Mon–Sat ET)", "cron");
     },
   );
 })();

@@ -604,6 +604,7 @@ export async function registerRoutes(
       allowCreatingContractors: (user as any).allowCreatingContractors || 0,
       // allowMiles defaults to 1 — treat any non-zero (or null for legacy rows) as true.
       allowMiles: (user as any).allowMiles === 0 ? 0 : 1,
+      dailyReminderEnabled: (user as any).dailyReminderEnabled || 0,
       showWorkReport: (user as any).showWorkReport || 0,
       showMyDocuments: (user as any).showMyDocuments || 0,
       showWorkCredit: (user as any).showWorkCredit || 0,
@@ -686,6 +687,7 @@ export async function registerRoutes(
         allowContractorDocs: (u as any).allowContractorDocs || 0,
         allowCreatingContractors: (u as any).allowCreatingContractors || 0,
         allowMiles: (u as any).allowMiles === 0 ? 0 : 1,
+        dailyReminderEnabled: (u as any).dailyReminderEnabled || 0,
         showWorkReport: (u as any).showWorkReport || 0,
         showMyDocuments: (u as any).showMyDocuments || 0,
         showWorkCredit: (u as any).showWorkCredit || 0,
@@ -893,6 +895,47 @@ export async function registerRoutes(
         } catch (e) { console.error("[pm-welcome] Failed:", e); }
       });
     }
+
+    // Admin alert: notify admins (subscribed to documentUploadReport) that
+    // a property manager created a new contractor account.
+    setImmediate(async () => {
+      try {
+        const adminPropIds = await storage.getUserPropertyIds(session.userId);
+        const allProps = await storage.getAllProperties();
+        const propMap = new Map(allProps.map(p => [p.id, p.name]));
+        const propNames = adminPropIds.map(id => propMap.get(id)).filter(Boolean).join(", ");
+        const allUsers = await storage.getAllUsers();
+        const adminRecipients = allUsers
+          .filter((u: any) => u.documentUploadReport && u.email && isAdminRole(u.role))
+          .map((u: any) => ({ name: u.displayName, email: u.email }));
+        if (adminRecipients.length === 0) return;
+        await sendEmailToRecipients(
+          adminRecipients,
+          `New Contractor Created by ${pm.displayName}`,
+          `<html><body style="font-family:Arial;max-width:600px;margin:0 auto;">
+            <div style="background:#01696F;padding:18px;text-align:center;">
+              <h2 style="color:white;margin:0;">New Contractor Created</h2>
+            </div>
+            <div style="padding:20px;">
+              <p>A property manager just onboarded a new contractor in Jetsetter Reporting.</p>
+              <table style="border-collapse:collapse;margin:8px 0;">
+                <tr><td style="padding:4px 12px 4px 0;color:#666;">Property Manager</td><td style="padding:4px 0;"><b>${pm.displayName}</b></td></tr>
+                <tr><td style="padding:4px 12px 4px 0;color:#666;">Contractor</td><td style="padding:4px 0;"><b>${displayName}</b></td></tr>
+                <tr><td style="padding:4px 12px 4px 0;color:#666;">Username</td><td style="padding:4px 0;">${username}</td></tr>
+                ${email ? `<tr><td style="padding:4px 12px 4px 0;color:#666;">Email</td><td style="padding:4px 0;">${email}</td></tr>` : ""}
+                ${baseRate ? `<tr><td style="padding:4px 12px 4px 0;color:#666;">Base Rate</td><td style="padding:4px 0;">$${baseRate}/hr</td></tr>` : ""}
+                ${mileageRate ? `<tr><td style="padding:4px 12px 4px 0;color:#666;">Mileage Rate</td><td style="padding:4px 0;">$${mileageRate}/mi</td></tr>` : ""}
+                <tr><td style="padding:4px 12px 4px 0;color:#666;">Allow Miles</td><td style="padding:4px 0;">${req.body.allowMiles ? "Yes" : "No"}</td></tr>
+                <tr><td style="padding:4px 12px 4px 0;color:#666;">Property</td><td style="padding:4px 0;">${resolvedHomeProperty || propNames}</td></tr>
+                <tr><td style="padding:4px 12px 4px 0;color:#666;">Created</td><td style="padding:4px 0;">${new Date().toLocaleString("en-US", { timeZone: "America/New_York" })} ET</td></tr>
+              </table>
+              <p style="color:#666;font-size:13px;margin-top:14px;">You can review or adjust this contractor's settings (off-site rate, allow off-site, etc.) from the Admin Panel.</p>
+              <p style="color:#888;font-size:11px;margin-top:24px;">- Jetsetter Reporting</p>
+            </div>
+          </body></html>`
+        );
+      } catch (e) { console.error("[pm-contractor-alert] Failed:", e); }
+    });
   });
 
   // PM: List contractors in their properties
@@ -985,7 +1028,7 @@ export async function registerRoutes(
       mileageRate, allowSpecialTerms, specialTermsAmount, w9OrW4, docsComplete,
       requireFinancialConfirm, allowPastDates, receiveTransactionEmails,
       allowWorkCredits, workCreditReport, documentUploadReport, docReminderEnabled, docReminderDays, allowContractorDocs, allowCreatingContractors,
-      showWorkReport, showMyDocuments, showWorkCredit, showMyContractors, allowMiles } = req.body;
+      showWorkReport, showMyDocuments, showWorkCredit, showMyContractors, allowMiles, dailyReminderEnabled } = req.body;
 
     if (email) {
       const allUsers = await storage.getAllUsers();
@@ -1032,6 +1075,7 @@ export async function registerRoutes(
     if (showWorkCredit !== undefined) updateData.showWorkCredit = showWorkCredit ? 1 : 0;
     if (showMyContractors !== undefined) updateData.showMyContractors = showMyContractors ? 1 : 0;
     if (allowMiles !== undefined) updateData.allowMiles = allowMiles ? 1 : 0;
+    if (dailyReminderEnabled !== undefined) updateData.dailyReminderEnabled = dailyReminderEnabled ? 1 : 0;
 
     const updated = await storage.updateUser(id, updateData);
     res.json(updated);
@@ -3032,6 +3076,69 @@ export async function registerRoutes(
     }
 
     res.json({ sent });
+  });
+
+  // Daily 7pm reminder (called by node-cron Mon–Sat). Sends a friendly
+  // reminder to each user with dailyReminderEnabled=1. Property managers get
+  // the full message about hours + work credits + cash/CC; contractors get
+  // just the hours-reporting line.
+  app.post("/api/admin/daily-7pm-reminders", async (req, res) => {
+    const authHeader = req.headers.authorization || "";
+    const isInternalCron = authHeader === "Bearer internal-cron";
+    if (!isInternalCron) {
+      const session = await requireAdmin(req, res);
+      if (!session) return;
+    }
+
+    const allUsers = await storage.getAllUsers();
+    let sent = 0;
+    const errors: string[] = [];
+
+    for (const u of allUsers) {
+      if (!(u as any).dailyReminderEnabled) continue;
+      if (!u.email) continue;
+      // Only managers and contractors get the reminder.
+      if (u.role !== "manager" && u.role !== "contractor") continue;
+
+      const firstName = (u as any).firstName || u.displayName?.split(" ")[0] || u.username;
+
+      const isManager = u.role === "manager";
+      const reminderBody = isManager
+        ? `<p>Hi ${firstName},</p>
+           <p>This is a friendly reminder that after the working day you have submitted your daily reporting:</p>
+           <ul style="margin:8px 0 8px 20px;padding:0;">
+             <li>Hours worked</li>
+             <li>Work credits</li>
+             <li>Any cash / credit-card transactions</li>
+           </ul>
+           <p>Best regards,<br/>Jetsetter Capital</p>`
+        : `<p>Hi ${firstName},</p>
+           <p>This is a friendly reminder to submit your hours-worked report for today.</p>
+           <p>Best regards,<br/>Jetsetter Capital</p>`;
+
+      const html = `<html><body style="font-family:Arial;max-width:600px;margin:0 auto;">
+        <div style="background:#01696F;padding:18px;text-align:center;">
+          <h2 style="color:white;margin:0;">Daily Reporting Reminder</h2>
+        </div>
+        <div style="padding:20px;color:#28251D;line-height:1.5;">
+          ${reminderBody}
+          <p style="color:#888;font-size:11px;margin-top:24px;">- Jetsetter Reporting</p>
+        </div>
+      </body></html>`;
+
+      try {
+        await sendEmailToRecipients(
+          [{ name: u.displayName, email: u.email }],
+          `Daily Reporting Reminder — ${new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" })}`,
+          html
+        );
+        sent++;
+      } catch (e: any) {
+        errors.push(`${u.username}: ${e.message}`);
+      }
+    }
+
+    res.json({ sent, errors });
   });
 
   // ---- User Documents ----

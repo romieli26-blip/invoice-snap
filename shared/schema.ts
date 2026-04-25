@@ -60,6 +60,7 @@ export const users = sqliteTable("users", {
   showMyContractors: integer("show_my_contractors").default(0),
   createdByUserId: integer("created_by_user_id"),
   allowMiles: integer("allow_miles").default(1),
+  dailyReminderEnabled: integer("daily_reminder_enabled").default(0),
   docReminderEnabled: integer("doc_reminder_enabled").default(0),
   docReminderDays: integer("doc_reminder_days").default(3),
 });
