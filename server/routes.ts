@@ -600,6 +600,7 @@ export async function registerRoutes(
       documentUploadReport: (user as any).documentUploadReport || 0,
       docReminderEnabled: (user as any).docReminderEnabled || 0,
       docReminderDays: (user as any).docReminderDays || 3,
+      eveningReminderEnabled: (user as any).eveningReminderEnabled || 0,
       allowContractorDocs: (user as any).allowContractorDocs || 0,
       allowCreatingContractors: (user as any).allowCreatingContractors || 0,
       // allowMiles defaults to 1 — treat any non-zero (or null for legacy rows) as true.
@@ -639,6 +640,18 @@ export async function registerRoutes(
     const { firstName, lastName } = req.body;
     const displayName = `${firstName} ${lastName}`;
     await storage.updateUser(session.userId, { firstName, lastName, displayName } as any);
+    res.json({ ok: true });
+  });
+
+  // ---- User self-settings (limited fields the user is allowed to change) ----
+  app.post("/api/me/settings", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const { eveningReminderEnabled } = req.body;
+    const updateData: any = {};
+    if (eveningReminderEnabled !== undefined) updateData.eveningReminderEnabled = eveningReminderEnabled ? 1 : 0;
+    if (Object.keys(updateData).length === 0) return res.status(400).json({ error: "No valid settings provided" });
+    await storage.updateUser(session.userId, updateData);
     res.json({ ok: true });
   });
 
@@ -683,6 +696,7 @@ export async function registerRoutes(
         documentUploadReport: (u as any).documentUploadReport || 0,
         docReminderEnabled: (u as any).docReminderEnabled || 0,
         docReminderDays: (u as any).docReminderDays || 3,
+        eveningReminderEnabled: (u as any).eveningReminderEnabled || 0,
         allowContractorDocs: (u as any).allowContractorDocs || 0,
         allowCreatingContractors: (u as any).allowCreatingContractors || 0,
         allowMiles: (u as any).allowMiles === 0 ? 0 : 1,
@@ -893,6 +907,47 @@ export async function registerRoutes(
         } catch (e) { console.error("[pm-welcome] Failed:", e); }
       });
     }
+
+    // Notify admins that a PM created a new contractor
+    setImmediate(async () => {
+      try {
+        const allUsers = await storage.getAllUsers();
+        const adminRecipients = allUsers
+          .filter((a: any) => isAdminRole(a.role) && a.email)
+          .map((a: any) => ({ name: a.displayName, email: a.email }));
+        if (adminRecipients.length === 0) return;
+
+        const propertyOrLocation = resolvedHomeProperty
+          || (assignedPropIds.length > 0
+            ? allProps.filter(p => assignedPropIds.includes(p.id)).map(p => p.name).join(", ")
+            : "(none)");
+        const createdAt = new Date().toLocaleString("en-US", {
+          timeZone: "America/New_York",
+          dateStyle: "medium",
+          timeStyle: "short",
+        }) + " ET";
+
+        const subject = `New contractor created: ${displayName}`;
+        const html = `<html><body style="font-family:Arial;max-width:600px;margin:0 auto;">
+          <div style="background:#01696F;padding:16px;text-align:center;">
+            <h2 style="color:white;margin:0;">New Contractor Created</h2>
+          </div>
+          <div style="padding:20px;">
+            <p>Hi Admin Team,</p>
+            <p><b>${pm.displayName}</b> (${pm.email || "no email on file"}) created a new contractor user.</p>
+            <table style="border-collapse:collapse;margin-top:8px;">
+              <tr><td style="padding:4px 12px 4px 0;color:#555;">Contractor:</td><td style="padding:4px 0;"><b>${displayName}</b></td></tr>
+              <tr><td style="padding:4px 12px 4px 0;color:#555;">Email:</td><td style="padding:4px 0;">${email || "(none)"}</td></tr>
+              <tr><td style="padding:4px 12px 4px 0;color:#555;">Property/Location:</td><td style="padding:4px 0;">${propertyOrLocation}</td></tr>
+              <tr><td style="padding:4px 12px 4px 0;color:#555;">Created:</td><td style="padding:4px 0;">${createdAt}</td></tr>
+            </table>
+            <p style="color:#888;font-size:12px;margin-top:30px;">Jetsetter Capital</p>
+          </div>
+        </body></html>`;
+        await sendEmailToRecipients(adminRecipients, subject, html);
+        console.log(`[admin-notify] Notified ${adminRecipients.length} admin(s) of new contractor ${displayName}`);
+      } catch (e) { console.error("[admin-notify] Failed to notify admins of new contractor:", e); }
+    });
   });
 
   // PM: List contractors in their properties
@@ -984,7 +1039,7 @@ export async function registerRoutes(
       firstName, lastName, baseRate, offSiteRate, homeProperty, allowOffSite,
       mileageRate, allowSpecialTerms, specialTermsAmount, w9OrW4, docsComplete,
       requireFinancialConfirm, allowPastDates, receiveTransactionEmails,
-      allowWorkCredits, workCreditReport, documentUploadReport, docReminderEnabled, docReminderDays, allowContractorDocs, allowCreatingContractors,
+      allowWorkCredits, workCreditReport, documentUploadReport, docReminderEnabled, docReminderDays, eveningReminderEnabled, allowContractorDocs, allowCreatingContractors,
       showWorkReport, showMyDocuments, showWorkCredit, showMyContractors, allowMiles } = req.body;
 
     if (email) {
@@ -1025,6 +1080,7 @@ export async function registerRoutes(
     if (documentUploadReport !== undefined) updateData.documentUploadReport = documentUploadReport ? 1 : 0;
     if (docReminderEnabled !== undefined) updateData.docReminderEnabled = docReminderEnabled ? 1 : 0;
     if (docReminderDays !== undefined) updateData.docReminderDays = parseInt(docReminderDays) || 3;
+    if (eveningReminderEnabled !== undefined) updateData.eveningReminderEnabled = eveningReminderEnabled ? 1 : 0;
     if (allowContractorDocs !== undefined) updateData.allowContractorDocs = allowContractorDocs ? 1 : 0;
     if (allowCreatingContractors !== undefined) updateData.allowCreatingContractors = allowCreatingContractors ? 1 : 0;
     if (showWorkReport !== undefined) updateData.showWorkReport = showWorkReport ? 1 : 0;
@@ -3029,6 +3085,68 @@ export async function registerRoutes(
         );
         sent++;
       } catch (e) { console.error(`[doc-reminder] Failed for ${u.displayName}:`, e); }
+    }
+
+    res.json({ sent });
+  });
+
+  // ---- Evening Reminders (7 PM ET, Mon-Sat) ----
+  // Sends a friendly nightly reminder to contractors and property managers
+  // who have opted in to receive it. Contractors get a hours-only reminder;
+  // property managers get a hours + receipts + work credits reminder.
+  app.post("/api/admin/evening-reminders", async (req, res) => {
+    const authHeader = req.headers.authorization || "";
+    const isInternalCron = authHeader === "Bearer internal-cron";
+    if (!isInternalCron) {
+      const session = await requireAdmin(req, res);
+      if (!session) return;
+    }
+
+    // Skip Sundays in case the scheduler somehow fires that day.
+    const nowET = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+    if (nowET.getDay() === 0) {
+      return res.json({ sent: 0, skipped: "sunday" });
+    }
+
+    const allUsers = await storage.getAllUsers();
+    let sent = 0;
+
+    for (const u of allUsers) {
+      if (!(u as any).eveningReminderEnabled || !(u as any).email) continue;
+      const role = u.role;
+      if (role !== "contractor" && role !== "manager") continue;
+
+      const firstName = (u as any).firstName || u.displayName?.split(" ")[0] || "there";
+      let subject: string;
+      let body: string;
+      if (role === "contractor") {
+        subject = "Reminder to log your hours";
+        body = `<html><body style="font-family:Arial;max-width:600px;margin:0 auto;">
+          <div style="padding:20px;">
+            <p>Hi ${firstName},</p>
+            <p>This is a friendly reminder to make sure you have logged your hours for today.</p>
+            <p>Have a great evening,<br>Jetsetter Capital</p>
+          </div>
+        </body></html>`;
+      } else {
+        subject = "Reminder to log hours, receipts, and work credits";
+        body = `<html><body style="font-family:Arial;max-width:600px;margin:0 auto;">
+          <div style="padding:20px;">
+            <p>Hi ${firstName},</p>
+            <p>This is a friendly reminder to make sure you have logged your hours, receipts, and any work credits for today.</p>
+            <p>Have a great evening,<br>Jetsetter Capital</p>
+          </div>
+        </body></html>`;
+      }
+
+      try {
+        await sendEmailToRecipients(
+          [{ name: u.displayName, email: (u as any).email }],
+          subject,
+          body,
+        );
+        sent++;
+      } catch (e) { console.error(`[evening-reminder] Failed for ${u.displayName}:`, e); }
     }
 
     res.json({ sent });

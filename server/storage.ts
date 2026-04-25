@@ -100,6 +100,7 @@ try { sqlite.exec("ALTER TABLE users ADD COLUMN allow_miles INTEGER DEFAULT 1");
 try { sqlite.exec("ALTER TABLE users ADD COLUMN work_credit_report INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN doc_reminder_enabled INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN doc_reminder_days INTEGER DEFAULT 3"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN evening_reminder_enabled INTEGER DEFAULT 0"); } catch {}
 
 // Time reports table
 sqlite.exec(`

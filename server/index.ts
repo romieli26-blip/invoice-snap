@@ -167,6 +167,27 @@ app.use((req, res, next) => {
       }, { timezone: "UTC" });
 
       log("Document reminder scheduler active (9 AM ET)", "cron");
+
+      // Evening reminder scheduler — 7:00 PM America/New_York, Mon-Sat
+      // (DST-aware via node-cron timezone option)
+      cron.schedule("0 19 * * 1-6", () => {
+        log("Evening reminder cron triggered (7 PM ET, Mon-Sat)", "cron");
+        const http = require("http");
+        const req = http.request({
+          hostname: "localhost", port, path: "/api/admin/evening-reminders",
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer internal-cron", "Content-Length": "2" },
+        }, (res: any) => {
+          let body = "";
+          res.on("data", (c: any) => body += c);
+          res.on("end", () => log(`Evening reminders result: ${body}`, "cron"));
+        });
+        req.on("error", (err: any) => log(`Evening reminders error: ${err.message}`, "cron"));
+        req.write("{}");
+        req.end();
+      }, { timezone: "America/New_York" });
+
+      log("Evening reminder scheduler active (7 PM ET Mon-Sat)", "cron");
     },
   );
 })();
