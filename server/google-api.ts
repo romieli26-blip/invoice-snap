@@ -443,3 +443,53 @@ export async function ensureDriveFolder(
     return null;
   }
 }
+
+/**
+ * Rename a Drive folder. Returns the folder ID if found and renamed (or already named correctly), null otherwise.
+ */
+export async function renameDriveFolder(
+  oldName: string,
+  newName: string
+): Promise<string | null> {
+  if (!driveApi) return null;
+  try {
+    const search = await driveApi.files.list({
+      q: `name='${oldName.replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+      fields: "files(id, name)",
+      spaces: "drive",
+    });
+    if (!search.data.files || search.data.files.length === 0) {
+      return null;
+    }
+    const folder = search.data.files[0];
+    await driveApi.files.update({
+      fileId: folder.id!,
+      requestBody: { name: newName },
+    });
+    console.log(`[google-api] Renamed Drive folder "${oldName}" -> "${newName}" (id: ${folder.id})`);
+    return folder.id!;
+  } catch (err: any) {
+    console.error(`[google-api] Failed to rename folder "${oldName}":`, err.message?.slice(0, 200));
+    return null;
+  }
+}
+
+/**
+ * Get a public-ish web view link for a Drive folder by name. Returns null if not found.
+ */
+export async function getDriveFolderWebViewLink(folderName: string): Promise<string | null> {
+  if (!driveApi) return null;
+  try {
+    const search = await driveApi.files.list({
+      q: `name='${folderName.replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+      fields: "files(id, name, webViewLink)",
+      spaces: "drive",
+    });
+    if (!search.data.files || search.data.files.length === 0) return null;
+    const f = search.data.files[0];
+    return f.webViewLink || (f.id ? `https://drive.google.com/drive/folders/${f.id}` : null);
+  } catch (err: any) {
+    console.error(`[google-api] Failed to get folder link:`, err.message?.slice(0, 200));
+    return null;
+  }
+}

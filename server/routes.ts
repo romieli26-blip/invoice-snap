@@ -8,7 +8,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
 import pdfParse from "pdf-parse";
-import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail } from "./google-api";
+import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, getDriveFolderWebViewLink } from "./google-api";
 // nodemailer removed — using Gmail API instead (SMTP blocked on Railway)
 
 // Ensure uploads directory exists
@@ -488,6 +488,62 @@ export async function registerRoutes(
 
   // Initialize Google APIs (service account for Railway, or fallback to external-tool)
   initGoogleApis();
+
+  // ---- One-time Drive folder migration ----
+  // Renames the four legacy daily-report folders to make it clear they are
+  // archived. Ensures the new "Daily Reporting" folder exists.
+  // Idempotent: if a legacy folder is already renamed, this no-ops.
+  async function runDriveFolderMigration() {
+    if (!isGoogleEnabled()) return;
+    const legacyMap: [string, string][] = [
+      ["Jetsetter Daily Reports", "Daily Reporting"], // upgrade interim folder to the canonical name
+      ["Daily Transaction Summary", "Old - Daily Transaction Summary (legacy, not in use)"],
+      ["Daily Work Report", "Old - Daily Work Report (legacy, not in use)"],
+      ["Daily Reports", "Old - Daily Reports (legacy, not in use)"],
+    ];
+    for (const [oldName, newName] of legacyMap) {
+      try {
+        const renamed = await renameDriveFolder(oldName, newName);
+        if (renamed) console.log(`[drive-migration] Renamed "${oldName}" -> "${newName}"`);
+      } catch (e: any) {
+        console.error(`[drive-migration] Skipped "${oldName}":`, e.message?.slice(0, 100));
+      }
+    }
+    // Ensure the canonical folder exists & is shared with the company inbox
+    try {
+      const dailyFolderId = await ensureDriveFolder("Daily Reporting");
+      if (dailyFolderId) {
+        await shareFolderWithEmail(dailyFolderId, "jetsettercapitalllc@gmail.com");
+        console.log(`[drive-migration] Active folder "Daily Reporting" id=${dailyFolderId}`);
+      }
+    } catch (e: any) {
+      console.error(`[drive-migration] Failed to ensure Daily Reporting:`, e.message?.slice(0, 100));
+    }
+  }
+  // Fire-and-forget: don't block server startup
+  runDriveFolderMigration().catch(e => console.error("[drive-migration] Top-level error:", e));
+
+  // Admin endpoint: run the migration on demand and return the public folder link
+  app.post("/api/admin/drive-migration", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    if (!isGoogleEnabled()) {
+      return res.status(503).json({ error: "Google APIs not configured on this server" });
+    }
+    await runDriveFolderMigration();
+    const link = await getDriveFolderWebViewLink("Daily Reporting");
+    res.json({ ok: true, folderName: "Daily Reporting", link });
+  });
+
+  app.get("/api/admin/daily-reporting-folder", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    if (!isGoogleEnabled()) {
+      return res.json({ link: null, note: "Google APIs not configured" });
+    }
+    const link = await getDriveFolderWebViewLink("Daily Reporting");
+    res.json({ folderName: "Daily Reporting", link });
+  });
 
   // Serve uploaded files (supports both Bearer token and ?token= query param for <img> tags)
   app.use("/api/uploads", async (req, res, next) => {
@@ -2016,25 +2072,14 @@ export async function registerRoutes(
       );
       sentTo.push(companyEmail);
 
-      // Upload to Drive (single folder now, but also keep the legacy folders populated
-      // so existing links/automations don't break).
+      // Upload to the single "Daily Reporting" Drive folder.
+      // Legacy folders are renamed at startup (see runDriveFolderMigration).
       if (isGoogleEnabled()) {
         try {
-          const dailyFolder = await ensureDriveFolder("Jetsetter Daily Reports");
+          const dailyFolder = await ensureDriveFolder("Daily Reporting");
           if (dailyFolder) {
             await shareFolderWithEmail(dailyFolder, companyEmail);
             await uploadToDrive(reportFilePath, `Jetsetter_Daily_Report_${date}.html`, dailyFolder);
-          }
-          // Legacy folders — keep them populated for any existing automations
-          const txFolder = await ensureDriveFolder("Daily Transaction Summary");
-          if (txFolder) {
-            await shareFolderWithEmail(txFolder, companyEmail);
-            await uploadToDrive(reportFilePath, `Jetsetter_Daily_Report_${date}.html`, txFolder);
-          }
-          const wrFolder = await ensureDriveFolder("Daily Work Report");
-          if (wrFolder) {
-            await shareFolderWithEmail(wrFolder, companyEmail);
-            await uploadToDrive(reportFilePath, `Jetsetter_Daily_Report_${date}.html`, wrFolder);
           }
         } catch (e) { console.error("[daily-report] Drive folder upload failed:", e); }
       }
@@ -2046,22 +2091,6 @@ export async function registerRoutes(
 
     // Update document tracking spreadsheet
     try { await updateDocTrackingSheet(); } catch (e) { console.error("[doc-tracking] Daily update failed:", e); }
-
-    // Save report to Google Drive "Daily Reports" folder
-    if (isGoogleEnabled()) {
-      try {
-        const reportsFolder = await ensureDriveFolder("Daily Reports");
-        if (reportsFolder) {
-          const reportPath = path.resolve(dataDir, `report-${date}.html`);
-          fs.writeFileSync(reportPath, html);
-          await uploadToDrive(reportPath, `Daily Report - ${date}.html`, reportsFolder);
-          try { fs.unlinkSync(reportPath); } catch {}
-          console.log(`[daily-report] Saved to Drive: Daily Report - ${date}.html`);
-          // Share Daily Reports folder with company email
-          await shareFolderWithEmail(reportsFolder, "jetsettercapitalllc@gmail.com");
-        }
-      } catch (e: any) { console.error("[daily-report] Drive save failed:", e.message?.slice(0, 200)); }
-    }
 
     res.json({ ok: true, date, receipts: todayInvoices.length, cashTx: todayCash.length, timeReports: todayTimeReports.length, workCredits: todayWorkCredits.length, sentTo: [...new Set(sentTo)] });
   });
