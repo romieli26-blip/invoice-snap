@@ -18,6 +18,7 @@ import ChangePasswordPage from "@/pages/change-password";
 import WorkCreditPage from "@/pages/work-credit";
 import ContractorDocumentsPage from "@/pages/contractor-documents";
 import MyContractorsPage from "@/pages/my-contractors";
+import FlatRateAssignmentPage from "@/pages/flat-rate-assignment";
 import NotFound from "@/pages/not-found";
 import { Loader2 } from "lucide-react";
 
@@ -53,6 +54,7 @@ function AuthenticatedRouter() {
       <Route path="/work-credit" component={WorkCreditPage} />
       <Route path="/contractor-documents" component={ContractorDocumentsPage} />
       <Route path="/my-contractors" component={MyContractorsPage} />
+      <Route path="/flat-rate-assignment" component={FlatRateAssignmentPage} />
       <Route component={NotFound} />
     </Switch>
   );

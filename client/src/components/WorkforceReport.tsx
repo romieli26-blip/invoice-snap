@@ -153,12 +153,46 @@ export function WorkforceReport({
               <div className="text-right">${wfResult.summary.totalMileagePay?.toFixed(2)}</div>
               <div className="text-muted-foreground">Special Terms / Travel</div>
               <div className="text-right">${wfResult.summary.totalSpecialTerms?.toFixed(2)}</div>
+              {wfResult.summary.flatRateCount > 0 && (
+                <>
+                  <div className="text-muted-foreground">Flat Rate ({wfResult.summary.flatRateCount} {wfResult.summary.flatRateCount === 1 ? "entry" : "entries"})</div>
+                  <div className="text-right">${wfResult.summary.totalFlatRate?.toFixed(2)}</div>
+                </>
+              )}
             </div>
             <div className="border-t border-blue-200 dark:border-blue-800 mt-2 pt-2 flex justify-between items-center">
               <span className="font-bold text-sm">Total Pay</span>
               <span className="font-bold text-lg text-blue-700 dark:text-blue-300">${wfResult.summary.grandTotal?.toFixed(2)}</span>
             </div>
           </div>
+
+          {/* Flat-rate entries */}
+          {wfResult.flatRates && wfResult.flatRates.length > 0 && (
+            <div className="space-y-1 mt-2">
+              <p className="text-xs font-medium text-muted-foreground">Flat-Rate Entries ({wfResult.flatRates.length})</p>
+              {wfResult.flatRates.map((fr: any) => (
+                <details key={fr.id} className="text-xs bg-background rounded border">
+                  <summary className="p-2 cursor-pointer hover:bg-muted/50 flex justify-between items-center">
+                    <span><span className="font-medium">{fr.date}</span> — {fr.property}</span>
+                    <span className="font-semibold text-pink-700 dark:text-pink-400">${fr.rate.toFixed(2)}</span>
+                  </summary>
+                  <div className="p-2 pt-0 border-t space-y-1">
+                    {fr.accomplishmentsList?.length > 0 && (
+                      <div>
+                        <span className="text-muted-foreground">Accomplishments:</span>
+                        <ul className="list-disc list-inside ml-1">
+                          {fr.accomplishmentsList.map((a: string, i: number) => (
+                            <li key={i}>{a}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {fr.notes && <p className="text-muted-foreground">Notes: {fr.notes}</p>}
+                  </div>
+                </details>
+              ))}
+            </div>
+          )}
 
           {/* Collapsible Entries */}
           {wfResult.reports.length > 0 && (

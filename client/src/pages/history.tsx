@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
-import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, DollarSign, Clock, UserPlus, UsersRound } from "lucide-react";
+import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, DollarSign, Clock, UserPlus, UsersRound, Wallet } from "lucide-react";
 import { apiRequest, queryClient, getAuthToken } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
@@ -339,6 +339,17 @@ export default function HistoryPage() {
             </>
           );
         })()}
+
+        {/* Flat Rate Assignment — visible to any user (any role) with the flag on. */}
+        {((user as any)?.allowFlatRate || user?.role === "admin" || user?.role === "super_admin") && (
+          <Button
+            className="w-full h-12 text-sm gap-1.5 bg-pink-600 hover:bg-pink-700 text-white"
+            onClick={() => setLocation("/flat-rate-assignment")}
+          >
+            <Wallet className="w-4 h-4" />
+            Flat Rate Assignment
+          </Button>
+        )}
 
         {/* Cash Balances */}
         {user?.role !== "contractor" && cashBalances && Object.keys(cashBalances).length > 0 && (

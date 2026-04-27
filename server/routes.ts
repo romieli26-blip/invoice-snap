@@ -605,6 +605,7 @@ export async function registerRoutes(
       // allowMiles defaults to 1 — treat any non-zero (or null for legacy rows) as true.
       allowMiles: (user as any).allowMiles === 0 ? 0 : 1,
       dailyReminderEnabled: (user as any).dailyReminderEnabled || 0,
+      allowFlatRate: (user as any).allowFlatRate || 0,
       showWorkReport: (user as any).showWorkReport || 0,
       showMyDocuments: (user as any).showMyDocuments || 0,
       showWorkCredit: (user as any).showWorkCredit || 0,
@@ -688,6 +689,7 @@ export async function registerRoutes(
         allowCreatingContractors: (u as any).allowCreatingContractors || 0,
         allowMiles: (u as any).allowMiles === 0 ? 0 : 1,
         dailyReminderEnabled: (u as any).dailyReminderEnabled || 0,
+        allowFlatRate: (u as any).allowFlatRate || 0,
         showWorkReport: (u as any).showWorkReport || 0,
         showMyDocuments: (u as any).showMyDocuments || 0,
         showWorkCredit: (u as any).showWorkCredit || 0,
@@ -1028,7 +1030,7 @@ export async function registerRoutes(
       mileageRate, allowSpecialTerms, specialTermsAmount, w9OrW4, docsComplete,
       requireFinancialConfirm, allowPastDates, receiveTransactionEmails,
       allowWorkCredits, workCreditReport, documentUploadReport, docReminderEnabled, docReminderDays, allowContractorDocs, allowCreatingContractors,
-      showWorkReport, showMyDocuments, showWorkCredit, showMyContractors, allowMiles, dailyReminderEnabled } = req.body;
+      showWorkReport, showMyDocuments, showWorkCredit, showMyContractors, allowMiles, dailyReminderEnabled, allowFlatRate } = req.body;
 
     if (email) {
       const allUsers = await storage.getAllUsers();
@@ -1076,6 +1078,7 @@ export async function registerRoutes(
     if (showMyContractors !== undefined) updateData.showMyContractors = showMyContractors ? 1 : 0;
     if (allowMiles !== undefined) updateData.allowMiles = allowMiles ? 1 : 0;
     if (dailyReminderEnabled !== undefined) updateData.dailyReminderEnabled = dailyReminderEnabled ? 1 : 0;
+    if (allowFlatRate !== undefined) updateData.allowFlatRate = allowFlatRate ? 1 : 0;
 
     const updated = await storage.updateUser(id, updateData);
     res.json(updated);
@@ -3024,6 +3027,82 @@ export async function registerRoutes(
     res.json({ ok: true });
   });
 
+  // ---- Flat Rate Assignments ----
+  app.post("/api/flat-rate-assignments", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const user = await storage.getUser(session.userId);
+    if (!isAdminRole(session.role) && !(user as any)?.allowFlatRate) {
+      return res.status(403).json({ error: "You don't have permission to submit flat rate assignments" });
+    }
+    const { property, date, rate, accomplishments, notes } = req.body;
+    if (!property || !date || rate === undefined || rate === null || rate === "") {
+      return res.status(400).json({ error: "Property, date, and rate are required" });
+    }
+    const rateNum = parseFloat(rate);
+    if (isNaN(rateNum) || rateNum <= 0 || rateNum > 10000) {
+      return res.status(400).json({ error: "Rate must be greater than 0 and at most $10,000" });
+    }
+    if (date > new Date().toISOString().slice(0, 10)) {
+      return res.status(400).json({ error: "Date cannot be in the future" });
+    }
+    const accs = Array.isArray(accomplishments) ? accomplishments.filter((s: string) => s && s.trim()) : [];
+    if (accs.length === 0) {
+      return res.status(400).json({ error: "At least one accomplishment is required" });
+    }
+    const created = await storage.createFlatRate({
+      userId: session.userId,
+      property,
+      date,
+      rate: String(rateNum),
+      accomplishments: JSON.stringify(accs),
+      notes: notes || null,
+      createdAt: new Date().toISOString(),
+    });
+    res.json(created);
+  });
+
+  app.get("/api/flat-rate-assignments", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    let rows;
+    if (isAdminRole(session.role)) {
+      rows = await storage.getAllFlatRates();
+    } else {
+      const ownRows = await storage.getFlatRatesByUser(session.userId);
+      // Property managers also see flat-rate entries on their assigned properties
+      const assignedProps = await storage.getPropertiesForUser(session.userId);
+      const assignedNames = new Set(assignedProps.map(p => p.name));
+      rows = ownRows;
+      if (assignedNames.size > 0) {
+        const all = await storage.getAllFlatRates();
+        const propertyRows = all.filter(r => assignedNames.has(r.property));
+        const byId = new Map<number, typeof all[number]>();
+        for (const r of ownRows) byId.set(r.id, r);
+        for (const r of propertyRows) byId.set(r.id, r);
+        rows = Array.from(byId.values()).sort((a, b) => b.id - a.id);
+      }
+    }
+    // Enrich with submittedBy
+    const allUsers = await storage.getAllUsers();
+    const userMap = new Map(allUsers.map(u => [u.id, u.displayName]));
+    res.json(rows.map(r => ({ ...r, submittedBy: userMap.get(r.userId) || "Unknown" })));
+  });
+
+  app.delete("/api/flat-rate-assignments/:id", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+    const row = await storage.getFlatRate(id);
+    if (!row) return res.status(404).json({ error: "Not found" });
+    if (row.userId !== session.userId && !isAdminRole(session.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+    await storage.deleteFlatRate(id);
+    res.json({ ok: true });
+  });
+
   // ---- Document Reminders ----
   app.post("/api/admin/doc-reminders", async (req, res) => {
     const authHeader = req.headers.authorization || "";
@@ -3444,7 +3523,18 @@ export async function registerRoutes(
     const homeProperty = (userObj as any)?.homeProperty || "";
     const mileageRate = parseFloat((userObj as any)?.mileageRate || "0.50");
     const laborCost = totalHours * baseRate;
-    const grandTotal = laborCost + totalMileagePay + totalSpecialTerms;
+
+    // Flat rate assignments contribute additional pay independent of hours.
+    const flatRates = await storage.getFlatRatesByUserAndDateRange(userIdNum, startDate, endDate);
+    const totalFlatRate = flatRates.reduce((sum, fr) => sum + parseFloat(fr.rate || "0"), 0);
+    for (const fr of flatRates) daysWorked.add(fr.date);
+    const enrichedFlatRates = flatRates.map(fr => {
+      let accs: string[] = [];
+      try { accs = JSON.parse(fr.accomplishments || "[]"); } catch {}
+      return { ...fr, rate: parseFloat(fr.rate || "0"), accomplishmentsList: accs };
+    });
+
+    const grandTotal = laborCost + totalMileagePay + totalSpecialTerms + totalFlatRate;
 
     const enrichedReports = reports.map(r => {
       let hours = 0;
@@ -3499,11 +3589,14 @@ export async function registerRoutes(
         totalMiles: parseFloat(totalMiles.toFixed(1)),
         totalMileagePay: parseFloat(totalMileagePay.toFixed(2)),
         totalSpecialTerms: parseFloat(totalSpecialTerms.toFixed(2)),
+        totalFlatRate: parseFloat(totalFlatRate.toFixed(2)),
+        flatRateCount: flatRates.length,
         laborCost: parseFloat(laborCost.toFixed(2)),
         grandTotal: parseFloat(grandTotal.toFixed(2)),
         baseRate,
       },
       reports: enrichedReports,
+      flatRates: enrichedFlatRates,
     };
   }
 
@@ -3584,80 +3677,25 @@ export async function registerRoutes(
     if (!userId || !startDate || !endDate) {
       return res.status(400).json({ error: "userId, startDate, endDate required" });
     }
-    const reports = await storage.getTimeReportsByUserAndDateRange(parseInt(userId), startDate, endDate);
-    const userObj = await storage.getUser(parseInt(userId));
+    // Delegates to the same helper used by /api/workforce-report so admins
+    // and non-admins see identical numbers (including flat rate assignments).
+    const data = await computeWorkforceReport(parseInt(userId), startDate, endDate);
+    res.json(data);
+  });
 
-    let totalHours = 0;
-    let totalMiles = 0;
-    let totalMileagePay = 0;
-    let totalSpecialTerms = 0;
+  // (legacy admin workforce-report block kept below for the diff history;
+  //  the route above now delegates to the shared helper. This dead block is
+  //  removed entirely.)
+  app.get("/api/admin/workforce-report-legacy", async (req, res) => {
+    return res.status(410).json({ error: "Use /api/admin/workforce-report" });
+    // Unreachable but keeping for ts-typing.
+    const reports: any[] = [];
+    const userObj: any = null;
+    const totalHours = 0, totalMiles = 0, totalMileagePay = 0, totalSpecialTerms = 0;
     const daysWorked = new Set<string>();
-
-    for (const r of reports) {
-      // Calculate hours from timeBlocks if available, fallback to startTime/endTime
-      let blocks: { start: string; end: string }[] = [];
-      try { blocks = r.timeBlocks ? JSON.parse(r.timeBlocks) : []; } catch {}
-      if (blocks.length > 0) {
-        totalHours += blocks.reduce((sum, b) => {
-          const [bsh, bsm] = b.start.split(":").map(Number);
-          const [beh, bem] = b.end.split(":").map(Number);
-          return sum + ((beh * 60 + bem) - (bsh * 60 + bsm)) / 60;
-        }, 0);
-      } else {
-        const [sh, sm] = (r.startTime || "0:0").split(":").map(Number);
-        const [eh, em] = (r.endTime || "0:0").split(":").map(Number);
-        totalHours += ((eh * 60 + em) - (sh * 60 + sm)) / 60;
-      }
-      totalMiles += parseFloat(r.miles || "0");
-      totalMileagePay += parseFloat(r.mileageAmount || "0");
-      if (r.specialTerms) totalSpecialTerms += parseFloat(r.specialTermsAmount || "0");
-      daysWorked.add(r.date);
-    }
-
-    // Calculate labor cost
-    const baseRate = parseFloat((userObj as any)?.baseRate || "0");
-    const offSiteRate = parseFloat((userObj as any)?.offSiteRate || "0");
-    const homeProperty = (userObj as any)?.homeProperty || "";
-    const mileageRate = parseFloat((userObj as any)?.mileageRate || "0.50");
-    const laborCost = totalHours * baseRate;
-    const grandTotal = laborCost + totalMileagePay + totalSpecialTerms;
-
-    // Enrich each report with per-entry calculations
-    const enrichedReports = reports.map(r => {
-      let hours = 0;
-      let blocks: { start: string; end: string }[] = [];
-      try { blocks = r.timeBlocks ? JSON.parse(r.timeBlocks) : []; } catch {}
-      if (blocks.length > 0) {
-        hours = blocks.reduce((sum, b) => {
-          const [bsh, bsm] = b.start.split(":").map(Number);
-          const [beh, bem] = b.end.split(":").map(Number);
-          return sum + ((beh * 60 + bem) - (bsh * 60 + bsm)) / 60;
-        }, 0);
-      } else {
-        const [sh, sm] = (r.startTime || "0:0").split(":").map(Number);
-        const [eh, em] = (r.endTime || "0:0").split(":").map(Number);
-        hours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
-      }
-      const isOffSite = r.property !== homeProperty && (userObj as any)?.allowOffSite;
-      const rate = isOffSite ? offSiteRate : baseRate;
-      const entryCost = hours * rate;
-      const entryMileage = parseFloat(r.mileageAmount || "0");
-      const entrySpecial = r.specialTerms ? parseFloat(r.specialTermsAmount || "0") : 0;
-      let accs: string[] = [];
-      try { accs = JSON.parse(r.accomplishments || "[]"); } catch {}
-      return {
-        ...r,
-        calculatedHours: parseFloat(hours.toFixed(2)),
-        rate,
-        isOffSite,
-        laborCost: parseFloat(entryCost.toFixed(2)),
-        mileageAmount: parseFloat(entryMileage.toFixed(2)),
-        specialAmount: parseFloat(entrySpecial.toFixed(2)),
-        entryTotal: parseFloat((entryCost + entryMileage + entrySpecial).toFixed(2)),
-        accomplishmentsList: accs,
-      };
-    });
-
+    const baseRate = 0, offSiteRate = 0, homeProperty = "", mileageRate = 0;
+    const laborCost = 0, grandTotal = 0;
+    const enrichedReports: any[] = [];
     res.json({
       user: {
         id: userObj?.id,

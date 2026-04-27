@@ -1,4 +1,4 @@
-import { type User, type InsertUser, type Invoice, type InsertInvoice, type Property, type InsertProperty, type CashTransaction, type InsertCashTransaction, type CcStatement, type TimeReport, type UserDocument, type WorkCredit, type ContractorDocument, users, invoices, properties, sessions, userProperties, cashTransactions, ccStatements, timeReports, userDocuments, workCredits, contractorDocuments } from "@shared/schema";
+import { type User, type InsertUser, type Invoice, type InsertInvoice, type Property, type InsertProperty, type CashTransaction, type InsertCashTransaction, type CcStatement, type TimeReport, type UserDocument, type WorkCredit, type ContractorDocument, type FlatRateAssignment, users, invoices, properties, sessions, userProperties, cashTransactions, ccStatements, timeReports, userDocuments, workCredits, contractorDocuments, flatRateAssignments } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, desc, inArray, and, gte, lte } from "drizzle-orm";
@@ -98,6 +98,7 @@ try { sqlite.exec("ALTER TABLE users ADD COLUMN show_my_contractors INTEGER DEFA
 try { sqlite.exec("ALTER TABLE users ADD COLUMN created_by_user_id INTEGER"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN allow_miles INTEGER DEFAULT 1"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN daily_reminder_enabled INTEGER DEFAULT 0"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN allow_flat_rate INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN work_credit_report INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN doc_reminder_enabled INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN doc_reminder_days INTEGER DEFAULT 3"); } catch {}
@@ -137,6 +138,20 @@ sqlite.exec(`
     bank_name TEXT,
     routing_number TEXT,
     account_number TEXT,
+    created_at TEXT NOT NULL
+  );
+`);
+
+// Flat Rate Assignments table
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS flat_rate_assignments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    property TEXT NOT NULL,
+    date TEXT NOT NULL,
+    rate TEXT NOT NULL,
+    accomplishments TEXT NOT NULL,
+    notes TEXT,
     created_at TEXT NOT NULL
   );
 `);
@@ -541,6 +556,27 @@ export class DatabaseStorage implements IStorage {
   }
   async deleteContractorDocument(id: number): Promise<void> {
     db.delete(contractorDocuments).where(eq(contractorDocuments.id, id)).run();
+  }
+
+  // ---- Flat Rate Assignments ----
+  async createFlatRate(data: any): Promise<FlatRateAssignment> {
+    return db.insert(flatRateAssignments).values(data).returning().get();
+  }
+  async getFlatRatesByUser(userId: number): Promise<FlatRateAssignment[]> {
+    return db.select().from(flatRateAssignments).where(eq(flatRateAssignments.userId, userId)).orderBy(desc(flatRateAssignments.id)).all();
+  }
+  async getFlatRatesByUserAndDateRange(userId: number, startDate: string, endDate: string): Promise<FlatRateAssignment[]> {
+    const rows = db.select().from(flatRateAssignments).where(eq(flatRateAssignments.userId, userId)).all();
+    return rows.filter(r => r.date >= startDate && r.date <= endDate);
+  }
+  async getAllFlatRates(): Promise<FlatRateAssignment[]> {
+    return db.select().from(flatRateAssignments).orderBy(desc(flatRateAssignments.id)).all();
+  }
+  async getFlatRate(id: number): Promise<FlatRateAssignment | undefined> {
+    return db.select().from(flatRateAssignments).where(eq(flatRateAssignments.id, id)).get();
+  }
+  async deleteFlatRate(id: number): Promise<void> {
+    db.delete(flatRateAssignments).where(eq(flatRateAssignments.id, id)).run();
   }
 
   async getCashBalanceByProperty(property: string): Promise<number> {

@@ -61,6 +61,7 @@ export const users = sqliteTable("users", {
   createdByUserId: integer("created_by_user_id"),
   allowMiles: integer("allow_miles").default(1),
   dailyReminderEnabled: integer("daily_reminder_enabled").default(0),
+  allowFlatRate: integer("allow_flat_rate").default(0),
   docReminderEnabled: integer("doc_reminder_enabled").default(0),
   docReminderDays: integer("doc_reminder_days").default(3),
 });
@@ -81,6 +82,21 @@ export const workCredits = sqliteTable("work_credits", {
   timeBlocks: text("time_blocks"), // JSON array of {start, end} for hourly
   totalAmount: text("total_amount").notNull(),
   syncedToSheets: integer("synced_to_sheets").default(0),
+  createdAt: text("created_at").notNull(),
+});
+
+// Flat Rate Assignment — a one-off, fixed-amount task that contributes to the
+// user's pay independently of time-based reporting (work reports / hours).
+// Example: a $10 mail-organizing task done in addition to a 2-hour work
+// report on the same day.
+export const flatRateAssignments = sqliteTable("flat_rate_assignments", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  property: text("property").notNull(),
+  date: text("date").notNull(),
+  rate: text("rate").notNull(), // dollars, decimal
+  accomplishments: text("accomplishments").notNull(), // JSON array of strings
+  notes: text("notes"),
   createdAt: text("created_at").notNull(),
 });
 
@@ -219,6 +235,10 @@ export const userDocuments = sqliteTable("user_documents", {
 });
 
 export type UserDocument = typeof userDocuments.$inferSelect;
+
+export const insertFlatRateSchema = createInsertSchema(flatRateAssignments).omit({ id: true });
+export type FlatRateAssignment = typeof flatRateAssignments.$inferSelect;
+export type InsertFlatRateAssignment = z.infer<typeof insertFlatRateSchema>;
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true });
 export const insertInvoiceSchema = createInsertSchema(invoices).omit({ id: true });
