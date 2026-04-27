@@ -565,6 +565,9 @@ export class DatabaseStorage implements IStorage {
   async getFlatRatesByUser(userId: number): Promise<FlatRateAssignment[]> {
     return db.select().from(flatRateAssignments).where(eq(flatRateAssignments.userId, userId)).orderBy(desc(flatRateAssignments.id)).all();
   }
+  async getFlatRatesByDate(date: string): Promise<FlatRateAssignment[]> {
+    return db.select().from(flatRateAssignments).where(eq(flatRateAssignments.date, date)).all();
+  }
   async getFlatRatesByUserAndDateRange(userId: number, startDate: string, endDate: string): Promise<FlatRateAssignment[]> {
     const rows = db.select().from(flatRateAssignments).where(eq(flatRateAssignments.userId, userId)).all();
     return rows.filter(r => r.date >= startDate && r.date <= endDate);

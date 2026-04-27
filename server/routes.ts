@@ -1716,6 +1716,32 @@ export async function registerRoutes(
       timeHtml += `</div>`;
     }
 
+    // Append Flat Rate Assignments to the Daily Work Report
+    const todayFlatRatesForReport = await storage.getFlatRatesByDate(date);
+    if (todayFlatRatesForReport.length > 0) {
+      timeHtml += `<h2 style="color:#A12C7B;border-bottom:1px solid #ddd;padding-bottom:5px;margin-top:25px;">Flat Rate Assignments</h2>`;
+      timeHtml += `<div style="background:#fdf3f9;padding:12px;border-left:4px solid #A12C7B;border-radius:4px;margin-bottom:10px;">`;
+      let frDailyTotal = 0;
+      for (const fr of todayFlatRatesForReport) {
+        const submitter = (await storage.getUser(fr.userId))?.displayName || "Unknown";
+        let accs: string[] = [];
+        try { accs = JSON.parse(fr.accomplishments || "[]"); } catch {}
+        const rateNum = parseFloat(fr.rate || "0");
+        frDailyTotal += rateNum;
+        timeHtml += `<div style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px dashed #e0c5d6;">`;
+        timeHtml += `<p style="margin:2px 0;"><b>${submitter}</b> at <b>${fr.property}</b> — <b style="color:#A12C7B;">$${rateNum.toFixed(2)}</b></p>`;
+        if (accs.length > 0) {
+          timeHtml += `<ul style="margin:4px 0 4px 20px;padding:0;color:#444;">`;
+          for (const a of accs) timeHtml += `<li>${a}</li>`;
+          timeHtml += `</ul>`;
+        }
+        if (fr.notes) timeHtml += `<p style="margin:2px 0;color:#666;font-style:italic;">Notes: ${fr.notes}</p>`;
+        timeHtml += `</div>`;
+      }
+      timeHtml += `<p style="font-weight:bold;color:#A12C7B;">Flat Rate Total: ${todayFlatRatesForReport.length} ${todayFlatRatesForReport.length === 1 ? "entry" : "entries"} = $${frDailyTotal.toFixed(2)}</p>`;
+      timeHtml += `</div>`;
+    }
+
     timeHtml += `<p style="color:#888;font-size:12px;margin-top:20px;">- Jetsetter Reporting</p></div>`;
 
     // Build Work Credits daily report
@@ -1842,7 +1868,7 @@ export async function registerRoutes(
         html,
         [{ filename: `Daily_Transaction_Summary_${date}.html`, path: txFilePath }]
       );
-      if (todayTimeReports.length > 0 || todayWorkCreditsForReport.length > 0) {
+      if (todayTimeReports.length > 0 || todayWorkCreditsForReport.length > 0 || todayFlatRatesForReport.length > 0) {
         await sendEmailToRecipients(
           [{ name: "Jetsetter Capital", email: companyEmail }],
           `Daily Work Report - ${date}`,
@@ -3060,6 +3086,44 @@ export async function registerRoutes(
       createdAt: new Date().toISOString(),
     });
     res.json(created);
+
+    // Per-entry email to admins subscribed to work credit reports or daily transaction
+    // reports (matches the work-credit notification list).
+    setImmediate(async () => {
+      try {
+        const submitter = await storage.getUser(session.userId);
+        const submitterName = submitter?.displayName || "Unknown";
+        const allUsers = await storage.getAllUsers();
+        const recipients = allUsers
+          .filter((u: any) => (u.workCreditReport || u.dailyTransactionReport) && u.email && isAdminRole(u.role))
+          .map((u: any) => ({ name: u.displayName, email: u.email }));
+        if (recipients.length === 0) return;
+        const accListHtml = accs.map((a: string) => `<li>${a}</li>`).join("");
+        const html = `<html><body style="font-family:Arial;max-width:600px;margin:0 auto;">
+          <div style="background:#01696F;padding:18px;text-align:center;">
+            <h2 style="color:white;margin:0;">Flat Rate Assignment</h2>
+          </div>
+          <div style="padding:20px;color:#28251D;line-height:1.5;">
+            <p>A new flat-rate assignment was submitted in Jetsetter Reporting.</p>
+            <table style="border-collapse:collapse;margin:8px 0;">
+              <tr><td style="padding:4px 12px 4px 0;color:#666;">Submitted By</td><td style="padding:4px 0;"><b>${submitterName}</b></td></tr>
+              <tr><td style="padding:4px 12px 4px 0;color:#666;">Property</td><td style="padding:4px 0;">${property}</td></tr>
+              <tr><td style="padding:4px 12px 4px 0;color:#666;">Date</td><td style="padding:4px 0;">${date}</td></tr>
+              <tr><td style="padding:4px 12px 4px 0;color:#666;">Flat Rate</td><td style="padding:4px 0;"><b style="color:#A12C7B;">$${rateNum.toFixed(2)}</b></td></tr>
+            </table>
+            <p style="margin-top:14px;margin-bottom:4px;"><b>Accomplishments</b></p>
+            <ul style="margin:0 0 8px 20px;padding:0;">${accListHtml}</ul>
+            ${notes ? `<p style="margin-top:14px;margin-bottom:4px;"><b>Notes</b></p><p style="margin:0;color:#444;">${notes}</p>` : ""}
+            <p style="color:#888;font-size:11px;margin-top:24px;">- Jetsetter Reporting</p>
+          </div>
+        </body></html>`;
+        await sendEmailToRecipients(
+          recipients,
+          `Flat Rate: ${submitterName} - ${property} - $${rateNum.toFixed(2)} (${date})`,
+          html
+        );
+      } catch (e) { console.error("[flat-rate-email] Failed:", e); }
+    });
   });
 
   app.get("/api/flat-rate-assignments", async (req, res) => {
