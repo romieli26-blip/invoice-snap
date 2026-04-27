@@ -234,48 +234,11 @@ export default function FlatRateAssignmentPage() {
             </Card>
           )}
 
-          {/* History */}
-          <h2 className="text-sm font-medium text-muted-foreground mt-2">Recent Flat-Rate Assignments</h2>
-          {isLoading ? (
-            <div className="space-y-2">
-              {[1, 2].map(i => <Card key={i}><CardContent className="py-3 h-12 animate-pulse bg-muted/30" /></Card>)}
-            </div>
-          ) : existingRows && existingRows.length > 0 ? (
-            <div className="space-y-2">
-              {existingRows.map(r => {
-                let accs: string[] = [];
-                try { accs = JSON.parse(r.accomplishments); } catch {}
-                return (
-                  <Card key={r.id}>
-                    <CardContent className="py-3">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold text-pink-700 dark:text-pink-400">${parseFloat(r.rate).toFixed(2)}</span>
-                            <span className="text-sm">{r.property}</span>
-                          </div>
-                          <p className="text-xs text-muted-foreground mt-0.5">{r.date}{r.submittedBy && r.submittedBy !== user?.displayName ? ` · by ${r.submittedBy}` : ""}</p>
-                          {accs.length > 0 && (
-                            <ul className="text-xs text-muted-foreground list-disc list-inside ml-1 mt-1">
-                              {accs.map((a, i) => <li key={i}>{a}</li>)}
-                            </ul>
-                          )}
-                          {r.notes && <p className="text-xs text-muted-foreground italic mt-1">{r.notes}</p>}
-                        </div>
-                        {(r.userId === user?.id || user?.role === "admin" || user?.role === "super_admin") && (
-                          <Button variant="ghost" size="icon" className="flex-shrink-0" onClick={() => handleDelete(r.id)}>
-                            <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive" />
-                          </Button>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground text-center py-4">No flat-rate assignments yet.</p>
-          )}
+          {/* Past entries are now listed on the main dashboard alongside Work Reports.
+              The Flat Rate Assignment page is form-only. */}
+          <p className="text-xs text-muted-foreground text-center mt-2">
+            Your past flat-rate entries appear on the main dashboard alongside your other reports.
+          </p>
         </div>
       </div>
     </LogoBackground>

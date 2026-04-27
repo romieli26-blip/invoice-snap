@@ -98,8 +98,15 @@ async function sendEmailToRecipients(recipients: { name: string; email: string }
           for (const att of attachments) {
             if (fs.existsSync(att.path)) {
               const fileData = fs.readFileSync(att.path).toString("base64");
-              const ext = path.extname(att.filename).slice(1) || "jpg";
-              const mimeType = ext === "pdf" ? "application/pdf" : `image/${ext}`;
+              const ext = path.extname(att.filename).slice(1).toLowerCase() || "jpg";
+              let mimeType: string;
+              if (ext === "pdf") mimeType = "application/pdf";
+              else if (ext === "html" || ext === "htm") mimeType = "text/html";
+              else if (ext === "mp4") mimeType = "video/mp4";
+              else if (ext === "mov") mimeType = "video/quicktime";
+              else if (ext === "webm") mimeType = "video/webm";
+              else if (ext === "m4v") mimeType = "video/x-m4v";
+              else mimeType = `image/${ext}`;
               mime.push(`--${boundary}`);
               mime.push(`Content-Type: ${mimeType}; name="${att.filename}"`);
               mime.push(`Content-Disposition: attachment; filename="${att.filename}"`);
@@ -126,6 +133,71 @@ async function sendEmailToRecipients(recipients: { name: string; email: string }
 // Backward compat wrapper — old name still used by some callers
 async function sendNotificationEmails(subject: string, htmlBody: string, attachments?: { filename: string; path: string }[]) {
   await sendTransactionNotificationEmails(subject, htmlBody, attachments);
+}
+
+// ---- Tutorial video helper ----
+// Downloads the welcome-tutorial video from Google Drive once, caches it under /tmp,
+// and returns { path, sizeBytes } so the welcome email can attach it.
+// Returns null if download fails or the file is too large to attach (>20MB).
+const TUTORIAL_VIDEO_DRIVE_ID = "1L2SFfyKK19vpJxuJs99VrIMtywF7ox76";
+const TUTORIAL_VIDEO_CACHE_PATH = "/tmp/jetsetter-tutorial.mp4";
+const MAX_EMAIL_ATTACHMENT_BYTES = 20 * 1024 * 1024; // 20 MB safe limit for Gmail (hard cap is 25 MB)
+
+async function getTutorialVideoAttachment(): Promise<{ path: string; filename: string } | null> {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+  if (!clientId || !clientSecret || !refreshToken) {
+    console.log("[tutorial-video] No Google OAuth credentials");
+    return null;
+  }
+
+  // Use cached copy if present and reasonably sized
+  if (fs.existsSync(TUTORIAL_VIDEO_CACHE_PATH)) {
+    const stat = fs.statSync(TUTORIAL_VIDEO_CACHE_PATH);
+    if (stat.size > 0 && stat.size <= MAX_EMAIL_ATTACHMENT_BYTES) {
+      return { path: TUTORIAL_VIDEO_CACHE_PATH, filename: "jetsetter-tutorial.mp4" };
+    }
+    if (stat.size > MAX_EMAIL_ATTACHMENT_BYTES) {
+      console.log(`[tutorial-video] Cached file is ${(stat.size/1024/1024).toFixed(1)}MB — too large to attach`);
+      return null;
+    }
+  }
+
+  try {
+    const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
+    oauth2Client.setCredentials({ refresh_token: refreshToken });
+    const drive = google.drive({ version: "v3", auth: oauth2Client });
+
+    // Check size first to avoid wasting bandwidth
+    const meta = await drive.files.get({
+      fileId: TUTORIAL_VIDEO_DRIVE_ID,
+      fields: "id,name,size,mimeType",
+    });
+    const sizeBytes = parseInt((meta.data.size as string) || "0", 10);
+    console.log(`[tutorial-video] Drive file: ${meta.data.name}, size ${(sizeBytes/1024/1024).toFixed(2)}MB`);
+    if (sizeBytes === 0 || sizeBytes > MAX_EMAIL_ATTACHMENT_BYTES) {
+      console.log("[tutorial-video] Too large to attach — falling back to link");
+      return null;
+    }
+
+    // Download to cache
+    const dest = fs.createWriteStream(TUTORIAL_VIDEO_CACHE_PATH);
+    const r = await drive.files.get(
+      { fileId: TUTORIAL_VIDEO_DRIVE_ID, alt: "media" },
+      { responseType: "stream" }
+    );
+    await new Promise<void>((resolve, reject) => {
+      (r.data as any).on("end", () => resolve()).on("error", reject).pipe(dest);
+    });
+    const finalStat = fs.statSync(TUTORIAL_VIDEO_CACHE_PATH);
+    console.log(`[tutorial-video] Cached ${(finalStat.size/1024/1024).toFixed(2)}MB to ${TUTORIAL_VIDEO_CACHE_PATH}`);
+    if (finalStat.size > MAX_EMAIL_ATTACHMENT_BYTES) return null;
+    return { path: TUTORIAL_VIDEO_CACHE_PATH, filename: "jetsetter-tutorial.mp4" };
+  } catch (err: any) {
+    console.error("[tutorial-video] Download failed:", err.message?.slice(0, 200));
+    return null;
+  }
 }
 
 function callExternalTool(sourceId: string, toolName: string, args: Record<string, any>) {
@@ -763,6 +835,18 @@ export async function registerRoutes(
         try {
           const appUrl = "https://invoice-snap-production.up.railway.app";
           const videoUrl = "https://drive.google.com/file/d/1L2SFfyKK19vpJxuJs99VrIMtywF7ox76/view";
+
+          // Try to attach the tutorial video directly so users don't need Drive access.
+          const videoAttachment = await getTutorialVideoAttachment();
+          const attachments = videoAttachment ? [videoAttachment] : undefined;
+
+          const tutorialBlock = videoAttachment
+            ? `<p>The tutorial video is <b>attached to this email</b>. Open the attachment to watch it on any device.</p>
+               <p style="color:#666;font-size:12px;">Can't see the attachment? You can also <a href="${videoUrl}" style="color:#01696F;">watch it online</a> (requires a Google account that has been granted access).</p>`
+            : `<p>Watch this short video to learn how to install and use the app on your mobile device:</p>
+               <p style="text-align:center;"><a href="${videoUrl}" style="display:inline-block;background:#01696F;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold;">Watch Tutorial Video</a></p>
+               <p style="color:#666;font-size:12px;text-align:center;">If the link asks for permission, contact your administrator to be added.</p>`;
+
           await sendEmailToRecipients(
             [{ name: displayName, email }],
             `Welcome to Jetsetter Reporting`,
@@ -779,13 +863,13 @@ export async function registerRoutes(
                 <p>3. On first login, you'll be asked to <b>change your password</b>.</p>
                 <p>4. <b>Add the app to your home screen</b> for easy access — it works like a native app.</p>
                 <h3 style="color:#01696F;">Watch the Tutorial</h3>
-                <p>Watch this short video to learn how to install and use the app on your mobile device:</p>
-                <p style="text-align:center;"><a href="${videoUrl}" style="display:inline-block;background:#01696F;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold;">Watch Tutorial Video</a></p>
+                ${tutorialBlock}
                 <p style="color:#888;font-size:12px;margin-top:30px;">If you have any questions, please contact your administrator.<br>- Jetsetter Reporting</p>
               </div>
-            </body></html>`
+            </body></html>`,
+            attachments
           );
-          console.log(`[welcome] Sent welcome email to ${email}`);
+          console.log(`[welcome] Sent welcome email to ${email} (video attached: ${!!videoAttachment})`);
         } catch (e) { console.error("[welcome] Failed to send welcome email:", e); }
       });
     }
@@ -1829,85 +1913,136 @@ export async function registerRoutes(
       }
       docStatusHtml += '</table>';
     }
-    // Append doc status to transaction report HTML
-    html = html.replace('</div>', docStatusHtml + '</div>');
+    // ---- Build ONE consolidated daily report ----
+    // Strip leading/trailing wrappers from individual section HTMLs so they slot cleanly
+    // into the master document. We intentionally keep the existing per-section HTML —
+    // we just compose them with shared header/TOC/footer.
+    //
+    // Helpers for stripping the outer <div>...</div> + heading/footer from each section:
+    const innerOf = (s: string) => {
+      // Remove the leading `<div ...>` wrapper and trailing `</div>` and the section's
+      // own <h1> + generated-on <p> + footer <p> so we don't repeat them.
+      let body = s;
+      body = body.replace(/^<div [^>]*>/, "");
+      body = body.replace(/<\/div>\s*$/, "");
+      body = body.replace(/<h1[^>]*>[\s\S]*?<\/h1>\s*<p[^>]*>Generated on[^<]*<\/p>/i, "");
+      body = body.replace(/<p[^>]*>-\s*(Receipt App Daily Report|Jetsetter Reporting)<\/p>/gi, "");
+      return body;
+    };
 
-    // Send transaction report to dailyTransactionReport subscribers
-    const txSubscribers = allUsers.filter((u: any) => u.dailyTransactionReport && u.email);
-    // Fallback: also include old dailyReport subscribers for backward compat
-    const oldSubscribers = allUsers.filter((u: any) => u.dailyReport && u.email && !u.dailyTransactionReport);
-    const txRecipients = [...txSubscribers, ...oldSubscribers].map(u => ({ name: u.displayName, email: u.email! }));
+    const txInner = innerOf(html);          // receipts + cash + cash-on-hand
+    const timeInner = innerOf(timeHtml);    // time + work credits + flat rate (already grouped)
+    // wcHtml content is already included inside timeHtml; we don't duplicate it.
+
+    // Compute high-level totals for the executive summary banner
+    const totalReceipts = todayInvoices.length;
+    const totalCash = todayCash.length;
+    const totalTime = todayTimeReports.length;
+    const totalWC = todayWorkCreditsForReport.length;
+    const totalFR = todayFlatRatesForReport.length;
+    const anyActivity = totalReceipts + totalCash + totalTime + totalWC + totalFR > 0;
+
+    const consolidated = `<div style="font-family:Arial,sans-serif;max-width:820px;margin:0 auto;color:#28251D;">
+      <div style="background:#01696F;padding:20px;text-align:center;border-radius:6px 6px 0 0;">
+        <h1 style="color:white;margin:0;font-size:22px;">Jetsetter Daily Report</h1>
+        <p style="color:#cfeef0;margin:4px 0 0;font-size:13px;">${date}</p>
+      </div>
+      <div style="padding:18px;">
+        <p style="color:#666;font-size:12px;margin:0 0 12px;">Generated ${new Date().toISOString().replace("T", " ").slice(0, 19)} UTC</p>
+        ${!anyActivity ? `<p style="background:#f7f6f2;padding:14px;border-radius:6px;color:#7A7974;">No activity logged today.</p>` : `
+        <div style="background:#f7f6f2;padding:14px;border-radius:6px;margin-bottom:18px;">
+          <p style="margin:0 0 6px;font-weight:bold;color:#01696F;">Today at a glance</p>
+          <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <tr><td style="padding:3px 0;color:#666;">Credit-card receipts</td><td style="padding:3px 0;text-align:right;font-weight:bold;">${totalReceipts}</td></tr>
+            <tr><td style="padding:3px 0;color:#666;">Cash transactions</td><td style="padding:3px 0;text-align:right;font-weight:bold;">${totalCash}</td></tr>
+            <tr><td style="padding:3px 0;color:#666;">Work reports</td><td style="padding:3px 0;text-align:right;font-weight:bold;">${totalTime}</td></tr>
+            <tr><td style="padding:3px 0;color:#666;">Work credits</td><td style="padding:3px 0;text-align:right;font-weight:bold;">${totalWC}</td></tr>
+            <tr><td style="padding:3px 0;color:#666;">Flat-rate assignments</td><td style="padding:3px 0;text-align:right;font-weight:bold;">${totalFR}</td></tr>
+          </table>
+        </div>
+        <div style="background:#fbfbf9;padding:10px 14px;border:1px solid #e7e5dc;border-radius:6px;margin-bottom:18px;font-size:13px;">
+          <p style="margin:0 0 4px;font-weight:bold;color:#01696F;">Sections in this report</p>
+          <ol style="margin:0;padding-left:20px;color:#444;">
+            ${(totalReceipts + totalCash) > 0 ? `<li>Transactions — receipts, cash, cash on hand</li>` : `<li style="color:#aaa;">Transactions (no activity)</li>`}
+            ${(totalTime + totalWC + totalFR) > 0 ? `<li>Work — work reports, work credits, flat-rate assignments</li>` : `<li style="color:#aaa;">Work (no activity)</li>`}
+            <li>Document upload status</li>
+          </ol>
+        </div>`}
+        <h2 style="color:#01696F;border-bottom:2px solid #01696F;padding:0 0 6px;margin:24px 0 10px;">1. Transactions</h2>
+        ${txInner || '<p style="color:#888;">No transactions today.</p>'}
+        <h2 style="color:#3b82f6;border-bottom:2px solid #3b82f6;padding:0 0 6px;margin:32px 0 10px;">2. Work</h2>
+        ${timeInner || '<p style="color:#888;">No work activity today.</p>'}
+        <h2 style="color:#7A7974;border-bottom:2px solid #7A7974;padding:0 0 6px;margin:32px 0 10px;">3. Document upload status</h2>
+        ${docStatusHtml.replace(/^<h2[^>]*>[^<]*<\/h2>/, "")}
+        <p style="color:#888;font-size:11px;margin-top:30px;text-align:center;border-top:1px solid #e7e5dc;padding-top:12px;">- Jetsetter Reporting</p>
+      </div>
+    </div>`;
+
+    // Recipients = union of every old subscriber set, deduplicated by email
     const sentTo: string[] = [];
+    const recipientMap = new Map<string, { name: string; email: string }>();
+    for (const u of allUsers as any[]) {
+      if (!u.email) continue;
+      const subscribed =
+        u.dailyTransactionReport ||
+        u.dailyTimeReport ||
+        u.workCreditReport ||
+        u.dailyReport; // legacy flag
+      if (!subscribed) continue;
+      recipientMap.set(u.email.toLowerCase(), { name: u.displayName, email: u.email });
+    }
+    const consolidatedRecipients = Array.from(recipientMap.values());
 
-    if (txRecipients.length > 0) {
-      await sendEmailToRecipients(txRecipients, `Daily Transaction Summary - ${date}`, html);
-      sentTo.push(...txRecipients.map(r => r.email));
+    if (consolidatedRecipients.length > 0) {
+      await sendEmailToRecipients(
+        consolidatedRecipients,
+        `Jetsetter Daily Report \u2014 ${date}`,
+        consolidated
+      );
+      sentTo.push(...consolidatedRecipients.map(r => r.email));
     }
 
-    // Send time report to dailyTimeReport subscribers
-    const timeSubscribers = allUsers.filter((u: any) => u.dailyTimeReport && u.email);
-    const timeRecipients = timeSubscribers.map(u => ({ name: u.displayName, email: u.email! }));
-    if (timeRecipients.length > 0 && todayTimeReports.length > 0) {
-      await sendEmailToRecipients(timeRecipients, `Daily Work Report - ${date}`, timeHtml);
-      sentTo.push(...timeRecipients.map(r => r.email));
-    }
-
-    // Forward both reports to jetsettercapitalllc@gmail.com via email + Drive folders
+    // Forward to company inbox (with HTML attachment) + upload to Drive folders
     const companyEmail = "jetsettercapitalllc@gmail.com";
     try {
-      // Save reports as HTML files
-      const txFilePath = path.resolve(dataDir, `daily-tx-summary-${date}.html`);
-      const wrFilePath = path.resolve(dataDir, `daily-work-report-${date}.html`);
-      fs.writeFileSync(txFilePath, html);
-      fs.writeFileSync(wrFilePath, timeHtml);
+      const reportFilePath = path.resolve(dataDir, `daily-report-${date}.html`);
+      fs.writeFileSync(reportFilePath, consolidated);
 
-      // Send emails with attachments
       await sendEmailToRecipients(
         [{ name: "Jetsetter Capital", email: companyEmail }],
-        `Daily Transaction Summary - ${date}`,
-        html,
-        [{ filename: `Daily_Transaction_Summary_${date}.html`, path: txFilePath }]
+        `Jetsetter Daily Report \u2014 ${date}`,
+        consolidated,
+        [{ filename: `Jetsetter_Daily_Report_${date}.html`, path: reportFilePath }]
       );
-      if (todayTimeReports.length > 0 || todayWorkCreditsForReport.length > 0 || todayFlatRatesForReport.length > 0) {
-        await sendEmailToRecipients(
-          [{ name: "Jetsetter Capital", email: companyEmail }],
-          `Daily Work Report - ${date}`,
-          timeHtml,
-          [{ filename: `Daily_Work_Report_${date}.html`, path: wrFilePath }]
-        );
-      }
       sentTo.push(companyEmail);
 
-      // Upload report files to shared Drive folders for company access
+      // Upload to Drive (single folder now, but also keep the legacy folders populated
+      // so existing links/automations don't break).
       if (isGoogleEnabled()) {
         try {
-          // Create "Daily Transaction Summary" folder, share with company, upload
+          const dailyFolder = await ensureDriveFolder("Jetsetter Daily Reports");
+          if (dailyFolder) {
+            await shareFolderWithEmail(dailyFolder, companyEmail);
+            await uploadToDrive(reportFilePath, `Jetsetter_Daily_Report_${date}.html`, dailyFolder);
+          }
+          // Legacy folders — keep them populated for any existing automations
           const txFolder = await ensureDriveFolder("Daily Transaction Summary");
           if (txFolder) {
             await shareFolderWithEmail(txFolder, companyEmail);
-            await uploadToDrive(txFilePath, `Daily_Transaction_Summary_${date}.html`, txFolder);
+            await uploadToDrive(reportFilePath, `Jetsetter_Daily_Report_${date}.html`, txFolder);
           }
-          // Create "Daily Work Report" folder, share with company, upload
           const wrFolder = await ensureDriveFolder("Daily Work Report");
           if (wrFolder) {
             await shareFolderWithEmail(wrFolder, companyEmail);
-            await uploadToDrive(wrFilePath, `Daily_Work_Report_${date}.html`, wrFolder);
+            await uploadToDrive(reportFilePath, `Jetsetter_Daily_Report_${date}.html`, wrFolder);
           }
         } catch (e) { console.error("[daily-report] Drive folder upload failed:", e); }
       }
 
-      // Clean up temp files
-      try { fs.unlinkSync(txFilePath); } catch {}
-      try { fs.unlinkSync(wrFilePath); } catch {}
+      try { fs.unlinkSync(reportFilePath); } catch {}
     } catch (e) { console.error("[daily-report] Failed to send to company email:", e); }
 
-    // Send work credits report to workCreditReport subscribers
-    const wcSubscribers = allUsers.filter((u: any) => u.workCreditReport && u.email);
-    const wcRecipients = wcSubscribers.map(u => ({ name: u.displayName, email: u.email! }));
-    if (wcRecipients.length > 0 && todayWorkCredits.length > 0) {
-      await sendEmailToRecipients(wcRecipients, `Daily Work Credits Report - ${date}`, wcHtml);
-      sentTo.push(...wcRecipients.map(r => r.email));
-    }
+    // The consolidated email replaces the old per-flag tx/time/work-credit emails.
 
     // Update document tracking spreadsheet
     try { await updateDocTrackingSheet(); } catch (e) { console.error("[doc-tracking] Daily update failed:", e); }

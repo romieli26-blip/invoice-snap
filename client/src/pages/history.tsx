@@ -65,6 +65,10 @@ export default function HistoryPage() {
     queryKey: ["/api/work-credits"],
   });
 
+  const { data: flatRates } = useQuery<any[]>({
+    queryKey: ["/api/flat-rate-assignments"],
+  });
+
   // ---- User filter (admins + PMs with managed properties) ----
   // Build list of distinct users who appear in any of the four lists.
   const [userFilter, setUserFilter] = useState<string>("all");
@@ -81,12 +85,13 @@ export default function HistoryPage() {
     add(cashTxs);
     add(timeReports);
     add(workCredits);
+    add(flatRates);
     // Always include the viewer themselves
     if (user?.id && user?.displayName) set.set(user.id, user.displayName);
     return Array.from(set.entries())
       .map(([id, name]) => ({ id, name }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [invoices, cashTxs, timeReports, workCredits, user?.id, user?.displayName]);
+  }, [invoices, cashTxs, timeReports, workCredits, flatRates, user?.id, user?.displayName]);
 
   // Show the filter only when there's more than one unique user represented.
   const showUserFilter = filterOptions.length > 1;
@@ -99,6 +104,7 @@ export default function HistoryPage() {
   const filteredCashTxs = useMemo(() => cashTxs?.filter(matchesFilter), [cashTxs, userFilter]);
   const filteredTimeReports = useMemo(() => timeReports?.filter(matchesFilter), [timeReports, userFilter]);
   const filteredWorkCredits = useMemo(() => workCredits?.filter(matchesFilter), [workCredits, userFilter]);
+  const filteredFlatRates = useMemo(() => flatRates?.filter(matchesFilter), [flatRates, userFilter]);
 
   // Cash transaction edit state
   const [editingCashTx, setEditingCashTx] = useState<any | null>(null);
@@ -718,6 +724,66 @@ export default function HistoryPage() {
             <p className="text-sm text-muted-foreground text-center py-4">No work reports yet.</p>
           )}
         </div>
+
+        {/* ---- FLAT RATE ASSIGNMENTS SECTION ---- */}
+        {filteredFlatRates && filteredFlatRates.length > 0 && (
+          <div className="space-y-2">
+            <h2 className="text-sm font-medium text-muted-foreground">Flat Rate Assignments</h2>
+            <div className="space-y-2">
+              {filteredFlatRates.map((fr: any) => {
+                let accs: string[] = [];
+                try { accs = JSON.parse(fr.accomplishments || "[]"); } catch {}
+                const rateNum = parseFloat(fr.rate || "0");
+                return (
+                  <Card key={fr.id}>
+                    <CardContent className="py-3 flex gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-pink-50 flex items-center justify-center flex-shrink-0">
+                        <Wallet className="w-5 h-5 text-pink-600" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-medium">
+                              <span className="text-pink-700">${rateNum.toFixed(2)}</span> · {fr.property} — {fr.date}
+                            </p>
+                            {fr.submittedBy && (
+                              <p className="text-xs text-muted-foreground">by {fr.submittedBy}</p>
+                            )}
+                          </div>
+                          <button
+                            className="text-muted-foreground hover:text-destructive p-0.5"
+                            onClick={async () => {
+                              if (!window.confirm("Delete this flat-rate entry?")) return;
+                              try {
+                                await apiRequest("DELETE", `/api/flat-rate-assignments/${fr.id}`);
+                                queryClient.invalidateQueries({ queryKey: ["/api/flat-rate-assignments"] });
+                                toast({ title: "Entry deleted" });
+                              } catch {
+                                toast({ title: "Failed to delete", variant: "destructive" });
+                              }
+                            }}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        {accs.length > 0 && (
+                          <div className="mt-1">
+                            {accs.map((a, i) => (
+                              <p key={i} className="text-xs text-muted-foreground">• {a}</p>
+                            ))}
+                          </div>
+                        )}
+                        {fr.notes && (
+                          <p className="text-xs text-muted-foreground italic mt-1">{fr.notes}</p>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* ---- WORK CREDITS SECTION ---- */}
         {filteredWorkCredits && filteredWorkCredits.length > 0 && (
