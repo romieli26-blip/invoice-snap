@@ -340,8 +340,8 @@ export default function HistoryPage() {
           );
         })()}
 
-        {/* Flat Rate Assignment — visible to any user (any role) with the flag on. */}
-        {((user as any)?.allowFlatRate || user?.role === "admin" || user?.role === "super_admin") && (
+        {/* Flat Rate Assignment — visible to any user with the allowFlatRate flag on. */}
+        {!!(user as any)?.allowFlatRate && (
           <Button
             className="w-full h-12 text-sm gap-1.5 bg-pink-600 hover:bg-pink-700 text-white"
             onClick={() => setLocation("/flat-rate-assignment")}
