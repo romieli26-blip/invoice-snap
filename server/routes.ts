@@ -628,7 +628,9 @@ export async function registerRoutes(
     const session = await requireAdmin(req, res);
     if (!session) return;
     const renames: { from: string; to: string }[] = [];
+    const dbReconciled: { from: string; to: string; rows: number }[] = [];
     try {
+      // ---- Pass 1: scan disk, rename files whose extension doesn't match content
       const files = fs.readdirSync(uploadsDir);
       for (const f of files) {
         const full = path.resolve(uploadsDir, f);
@@ -649,7 +651,6 @@ export async function registerRoutes(
           console.error(`[heal] Failed to rename ${f}:`, e.message?.slice(0, 100));
         }
       }
-      // Update DB references via storage helper (added below)
       let updatedRows = 0;
       for (const r of renames) {
         const oldPath = `/api/uploads/${r.from}`;
@@ -657,7 +658,85 @@ export async function registerRoutes(
         const n = await (storage as any).rewriteUploadPath?.(oldPath, newPath);
         updatedRows += n || 0;
       }
-      res.json({ ok: true, renamed: renames.length, dbRowsUpdated: updatedRows, renames });
+
+      // ---- Pass 2: reconcile DB rows whose photoPath references a file that
+      // no longer exists at that exact name, but a same-base file with a different
+      // extension does exist on disk. Catches the case where the disk was already
+      // renamed by an earlier run but the DB rewrite failed.
+      const filesNow = new Set(fs.readdirSync(uploadsDir));
+      const findRealName = (filename: string): string | null => {
+        if (filesNow.has(filename)) return null; // exists -> nothing to do
+        const base = path.basename(filename, path.extname(filename));
+        for (const candidate of filesNow) {
+          if (path.basename(candidate, path.extname(candidate)) === base) {
+            return candidate;
+          }
+        }
+        return null;
+      };
+
+      // Walk every photo-bearing DB row and try to repoint missing files
+      const allInvoices = await storage.getAllInvoices();
+      for (const inv of allInvoices) {
+        if (inv.photoPath?.startsWith("/api/uploads/")) {
+          const fname = inv.photoPath.slice("/api/uploads/".length);
+          const real = findRealName(fname);
+          if (real) {
+            const oldPath = `/api/uploads/${fname}`;
+            const newPath = `/api/uploads/${real}`;
+            const n = await (storage as any).rewriteUploadPath?.(oldPath, newPath);
+            if (n) dbReconciled.push({ from: fname, to: real, rows: n });
+          }
+        }
+        // Same for photoPaths array
+        if (inv.photoPaths) {
+          try {
+            const arr = JSON.parse(inv.photoPaths);
+            if (Array.isArray(arr)) {
+              for (const p of arr) {
+                if (typeof p === "string" && p.startsWith("/api/uploads/")) {
+                  const fname = p.slice("/api/uploads/".length);
+                  const real = findRealName(fname);
+                  if (real) {
+                    const oldPath = `/api/uploads/${fname}`;
+                    const newPath = `/api/uploads/${real}`;
+                    const n = await (storage as any).rewriteUploadPath?.(oldPath, newPath);
+                    if (n && !dbReconciled.find(d => d.from === fname)) {
+                      dbReconciled.push({ from: fname, to: real, rows: n });
+                    }
+                  }
+                }
+              }
+            }
+          } catch { /* ignore malformed */ }
+        }
+      }
+      const allCash = await storage.getAllCashTransactions();
+      for (const tx of allCash) {
+        if (tx.photoPath?.startsWith("/api/uploads/")) {
+          const fname = tx.photoPath.slice("/api/uploads/".length);
+          const real = findRealName(fname);
+          if (real) {
+            const oldPath = `/api/uploads/${fname}`;
+            const newPath = `/api/uploads/${real}`;
+            const n = await (storage as any).rewriteUploadPath?.(oldPath, newPath);
+            if (n && !dbReconciled.find(d => d.from === fname)) {
+              dbReconciled.push({ from: fname, to: real, rows: n });
+            }
+          }
+        }
+      }
+
+      const reconciledRows = dbReconciled.reduce((s, d) => s + d.rows, 0);
+      res.json({
+        ok: true,
+        renamed: renames.length,
+        dbRowsUpdated: updatedRows,
+        renames,
+        dbReconciled: dbReconciled.length,
+        dbReconciledRows: reconciledRows,
+        reconciliations: dbReconciled.slice(0, 20),
+      });
     } catch (e: any) {
       console.error("[heal] Failed:", e);
       res.status(500).json({ error: e.message?.slice(0, 200) || "heal failed" });
