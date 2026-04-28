@@ -477,6 +477,93 @@ export async function renameDriveFolder(
 /**
  * Get a public-ish web view link for a Drive folder by name. Returns null if not found.
  */
+/**
+ * Hide a sheet tab in a Google Sheet (sets properties.hidden = true).
+ * Returns true if hidden, false if the tab wasn't found or call failed.
+ */
+export async function hideSheetTab(spreadsheetId: string, tabTitle: string): Promise<boolean> {
+  if (!sheetsApi) return false;
+  try {
+    const spreadsheet = await sheetsApi.spreadsheets.get({ spreadsheetId });
+    const sheet = spreadsheet.data.sheets?.find(s => s.properties?.title === tabTitle);
+    if (!sheet?.properties?.sheetId) {
+      console.log(`[google-api] Sheet tab "${tabTitle}" not found, cannot hide`);
+      return false;
+    }
+    await sheetsApi.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          updateSheetProperties: {
+            properties: { sheetId: sheet.properties.sheetId, hidden: true },
+            fields: "hidden",
+          },
+        }],
+      },
+    });
+    console.log(`[google-api] Hid sheet tab "${tabTitle}"`);
+    return true;
+  } catch (err: any) {
+    console.error(`[google-api] Failed to hide tab "${tabTitle}":`, err.message?.slice(0, 200));
+    return false;
+  }
+}
+
+/**
+ * Show a previously hidden sheet tab again (sets properties.hidden = false).
+ */
+export async function unhideSheetTab(spreadsheetId: string, tabTitle: string): Promise<boolean> {
+  if (!sheetsApi) return false;
+  try {
+    const spreadsheet = await sheetsApi.spreadsheets.get({ spreadsheetId });
+    const sheet = spreadsheet.data.sheets?.find(s => s.properties?.title === tabTitle);
+    if (!sheet?.properties?.sheetId) return false;
+    await sheetsApi.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          updateSheetProperties: {
+            properties: { sheetId: sheet.properties.sheetId, hidden: false },
+            fields: "hidden",
+          },
+        }],
+      },
+    });
+    return true;
+  } catch (err: any) {
+    console.error(`[google-api] Failed to unhide tab "${tabTitle}":`, err.message?.slice(0, 200));
+    return false;
+  }
+}
+
+/**
+ * Permanently delete a sheet tab. Returns true if deleted, false if not found.
+ */
+export async function deleteSheetTab(spreadsheetId: string, tabTitle: string): Promise<boolean> {
+  if (!sheetsApi) return false;
+  try {
+    const spreadsheet = await sheetsApi.spreadsheets.get({ spreadsheetId });
+    const sheet = spreadsheet.data.sheets?.find(s => s.properties?.title === tabTitle);
+    if (!sheet?.properties?.sheetId) {
+      console.log(`[google-api] Sheet tab "${tabTitle}" not found, nothing to delete`);
+      return false;
+    }
+    await sheetsApi.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [{
+          deleteSheet: { sheetId: sheet.properties.sheetId },
+        }],
+      },
+    });
+    console.log(`[google-api] Deleted sheet tab "${tabTitle}"`);
+    return true;
+  } catch (err: any) {
+    console.error(`[google-api] Failed to delete tab "${tabTitle}":`, err.message?.slice(0, 200));
+    return false;
+  }
+}
+
 export async function getDriveFolderWebViewLink(folderName: string): Promise<string | null> {
   if (!driveApi) return null;
   try {

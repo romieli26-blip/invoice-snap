@@ -12,7 +12,7 @@ import { apiRequest, queryClient, setAuthToken } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Plus, Trash2, UserCircle, Shield, Loader2, Building2, Settings, Pencil, LogIn, Clock } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, UserCircle, Shield, Loader2, Building2, Settings, Pencil, LogIn, Clock, Archive, ArchiveRestore } from "lucide-react";
 import { LogoBackground } from "@/components/LogoBackground";
 
 interface UserItem {
@@ -25,6 +25,7 @@ interface UserItem {
   dailyTransactionReport?: number;
   reconciliationReport?: number;
   assignedProperties: string[];
+  archived?: number;
 }
 
 interface PropertyItem {
@@ -107,8 +108,15 @@ export default function AdminPage() {
   const [newPropertyName, setNewPropertyName] = useState("");
 
   // ---- Users queries/mutations ----
+  // useState for showArchived is hoisted so it can drive the query key.
+  const [showArchivedToggle, setShowArchivedToggle] = useState(false);
   const { data: users, isLoading: usersLoading } = useQuery<UserItem[]>({
-    queryKey: ["/api/users"],
+    queryKey: ["/api/users", showArchivedToggle ? "with-archived" : "active-only"],
+    queryFn: async () => {
+      const url = showArchivedToggle ? "/api/users?includeArchived=1" : "/api/users";
+      const res = await apiRequest("GET", url);
+      return res.json();
+    },
   });
 
   const createUserMutation = useMutation({
@@ -151,16 +159,57 @@ export default function AdminPage() {
 
   const deleteUserMutation = useMutation({
     mutationFn: async (id: number) => {
-      return apiRequest("DELETE", `/api/users/${id}`);
+      const res = await apiRequest("DELETE", `/api/users/${id}`);
+      return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      toast({ title: "User removed" });
+      toast({
+        title: "User deleted",
+        description: data?.tabRemoved
+          ? `Their tab was removed from the time-tracking spreadsheet. Cash, receipts, and work credits are kept.`
+          : `Their cash, receipts, and work credits are kept.`,
+      });
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     },
   });
+
+  const archiveUserMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("POST", `/api/users/${id}/archive`);
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({
+        title: "User archived",
+        description: data?.tabHidden
+          ? `They no longer appear in the user list and their spreadsheet tab has been hidden. All historical data is preserved.`
+          : `They no longer appear in the user list. All historical data is preserved.`,
+      });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const unarchiveUserMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("POST", `/api/users/${id}/unarchive`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({ title: "User restored" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+
 
   const saveUserPropsMutation = useMutation({
     mutationFn: async () => {
@@ -698,6 +747,18 @@ export default function AdminPage() {
             </Dialog>
           </div>
 
+          {/* Show archived toggle */}
+          <div className="flex items-center gap-2 mb-2">
+            <Checkbox
+              id="show-archived"
+              checked={showArchivedToggle}
+              onCheckedChange={(v) => setShowArchivedToggle(v === true)}
+            />
+            <Label htmlFor="show-archived" className="text-sm text-muted-foreground cursor-pointer">
+              Show archived users
+            </Label>
+          </div>
+
           {usersLoading ? (
             <div className="space-y-2">
               {[1, 2, 3].map(i => (
@@ -709,7 +770,7 @@ export default function AdminPage() {
           ) : (
             <div className="space-y-2">
               {users?.map(u => (
-                <Card key={u.id} data-testid={`card-user-${u.id}`}>
+                <Card key={u.id} data-testid={`card-user-${u.id}`} className={u.archived ? "opacity-60 border-amber-500/40" : ""}>
                   <CardContent className="py-3 flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
                       {(u.role === "admin" || u.role === "super_admin") ? (
@@ -719,7 +780,12 @@ export default function AdminPage() {
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium">{u.displayName}</p>
+                      <p className="text-sm font-medium flex items-center gap-1.5">
+                        {u.displayName}
+                        {!!u.archived && (
+                          <Badge variant="outline" className="text-[10px] py-0 h-4 border-amber-500/60 text-amber-700 dark:text-amber-400">Archived</Badge>
+                        )}
+                      </p>
                       <p className="text-xs text-muted-foreground">@{u.username} · {u.role === "super_admin" ? "Super Admin" : u.role === "admin" ? "Admin" : u.role === "contractor" ? "Contractor" : "Manager"}</p>
                       {u.email && (
                         <p className="text-xs text-muted-foreground">{u.email}</p>
@@ -820,12 +886,47 @@ export default function AdminPage() {
                             <Settings className="w-4 h-4" />
                           </Button>
                         )}
+                        {u.id !== user?.id && !u.archived && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Archive user (hides them from list, keeps all data)"
+                            className="text-muted-foreground hover:text-amber-600"
+                            onClick={() => {
+                              if (window.confirm(`Archive ${u.displayName}?\n\nThey will be hidden from the user list and unable to log in, but all their cash transactions, receipts, work credits, and time reports will be kept. Their tab on the time-tracking spreadsheet will be hidden (not deleted). You can restore them later.`)) {
+                                archiveUserMutation.mutate(u.id);
+                              }
+                            }}
+                            disabled={archiveUserMutation.isPending}
+                            data-testid={`button-archive-user-${u.id}`}
+                          >
+                            <Archive className="w-4 h-4" />
+                          </Button>
+                        )}
+                        {u.id !== user?.id && u.archived && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Restore archived user"
+                            className="text-muted-foreground hover:text-green-600"
+                            onClick={() => unarchiveUserMutation.mutate(u.id)}
+                            disabled={unarchiveUserMutation.isPending}
+                            data-testid={`button-unarchive-user-${u.id}`}
+                          >
+                            <ArchiveRestore className="w-4 h-4" />
+                          </Button>
+                        )}
                         {u.id !== user?.id && (
                           <Button
                             variant="ghost"
                             size="icon"
+                            title="Delete user permanently (cash/receipts/work credits are kept; spreadsheet tab is removed)"
                             className="text-muted-foreground hover:text-destructive"
-                            onClick={() => deleteUserMutation.mutate(u.id)}
+                            onClick={() => {
+                              if (window.confirm(`Permanently delete ${u.displayName}?\n\nThis removes the user account itself. Their cash transactions, credit-card receipts, and work credits will be kept under their name. Their tab on the time-tracking spreadsheet will be REMOVED.\n\nIf you just want to hide them, use Archive instead.`)) {
+                                deleteUserMutation.mutate(u.id);
+                              }
+                            }}
                             disabled={deleteUserMutation.isPending}
                             data-testid={`button-delete-user-${u.id}`}
                           >

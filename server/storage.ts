@@ -99,6 +99,7 @@ try { sqlite.exec("ALTER TABLE users ADD COLUMN created_by_user_id INTEGER"); } 
 try { sqlite.exec("ALTER TABLE users ADD COLUMN allow_miles INTEGER DEFAULT 1"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN daily_reminder_enabled INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN allow_flat_rate INTEGER DEFAULT 0"); } catch {}
+try { sqlite.exec("ALTER TABLE users ADD COLUMN archived INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN work_credit_report INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN doc_reminder_enabled INTEGER DEFAULT 0"); } catch {}
 try { sqlite.exec("ALTER TABLE users ADD COLUMN doc_reminder_days INTEGER DEFAULT 3"); } catch {}
@@ -306,6 +307,10 @@ export class DatabaseStorage implements IStorage {
 
   async deleteUser(id: number): Promise<void> {
     db.delete(users).where(eq(users.id, id)).run();
+  }
+
+  async setUserArchived(id: number, archived: boolean): Promise<void> {
+    db.update(users).set({ archived: archived ? 1 : 0 } as any).where(eq(users.id, id)).run();
   }
 
   async updateUser(id: number, data: Partial<InsertUser>): Promise<User | undefined> {
@@ -580,6 +585,62 @@ export class DatabaseStorage implements IStorage {
   }
   async deleteFlatRate(id: number): Promise<void> {
     db.delete(flatRateAssignments).where(eq(flatRateAssignments.id, id)).run();
+  }
+
+  /**
+   * Replace `oldPath` with `newPath` everywhere it appears as an upload reference.
+   * Touches: invoices.photoPath / photoPaths (JSON array of strings),
+   *          cashTransactions.photoPath / photoPaths,
+   *          userDocuments.filePath, contractorDocuments.filePath,
+   *          ccStatements.filePath.
+   * Returns the total number of rows updated.
+   */
+  async rewriteUploadPath(oldPath: string, newPath: string): Promise<number> {
+    let count = 0;
+
+    // Single-path columns (simple equality match)
+    const singlePathUpdates: { table: any; column: any }[] = [
+      { table: invoices, column: invoices.photoPath },
+      { table: cashTransactions, column: cashTransactions.photoPath },
+      { table: userDocuments, column: userDocuments.filePath },
+      { table: contractorDocuments, column: contractorDocuments.filePath },
+      { table: ccStatements, column: ccStatements.filePath },
+    ];
+    for (const { table, column } of singlePathUpdates) {
+      const r = db.update(table).set({ [column.name as any]: newPath } as any).where(eq(column, oldPath)).run();
+      count += r.changes || 0;
+    }
+
+    // JSON-array columns: scan rows and patch in place
+    const jsonArrayUpdates: { table: any; column: any; idCol: any }[] = [
+      { table: invoices, column: invoices.photoPaths, idCol: invoices.id },
+      { table: cashTransactions, column: cashTransactions.photoPaths, idCol: cashTransactions.id },
+    ];
+    for (const { table, column, idCol } of jsonArrayUpdates) {
+      const rows = db.select().from(table).all();
+      for (const row of rows) {
+        const raw = (row as any)[column.name];
+        if (!raw || typeof raw !== "string") continue;
+        if (!raw.includes(oldPath)) continue;
+        try {
+          const arr = JSON.parse(raw);
+          if (!Array.isArray(arr)) continue;
+          let changed = false;
+          const next = arr.map(p => {
+            if (p === oldPath) { changed = true; return newPath; }
+            return p;
+          });
+          if (changed) {
+            const r = db.update(table)
+              .set({ [column.name as any]: JSON.stringify(next) } as any)
+              .where(eq(idCol, (row as any).id))
+              .run();
+            count += r.changes || 0;
+          }
+        } catch { /* ignore malformed JSON */ }
+      }
+    }
+    return count;
   }
 
   async getCashBalanceByProperty(property: string): Promise<number> {

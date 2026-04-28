@@ -28,6 +28,49 @@ function authImgUrl(photoPath: string) {
   return `${API_BASE}${photoPath}${token ? `?token=${token}` : ""}`;
 }
 
+// Files whose contents the <img> tag can render directly
+function isImagePath(photoPath: string | undefined | null): boolean {
+  if (!photoPath) return false;
+  const ext = photoPath.split(".").pop()?.toLowerCase().split("?")[0] || "";
+  return ["jpg", "jpeg", "png", "webp", "gif", "heic", "heif"].includes(ext);
+}
+function isPdfPath(photoPath: string | undefined | null): boolean {
+  if (!photoPath) return false;
+  return photoPath.toLowerCase().endsWith(".pdf");
+}
+
+// Compact thumbnail used in receipt cards. Shows the image when possible,
+// or a labeled placeholder for PDFs and other non-image attachments.
+function PhotoThumb({ paths, onClick }: { paths: string[]; onClick: () => void }) {
+  const first = paths[0];
+  const extra = paths.length > 1 ? paths.length : 0;
+  const isPdf = isPdfPath(first);
+  const isImg = isImagePath(first);
+  return (
+    <div
+      className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center flex-shrink-0 overflow-hidden cursor-pointer relative"
+      onClick={onClick}
+    >
+      {isImg ? (
+        <img src={authImgUrl(first)} alt="Receipt" className="w-full h-full object-cover" />
+      ) : isPdf ? (
+        <div className="w-full h-full flex flex-col items-center justify-center bg-red-50 dark:bg-red-950/30">
+          <FileText className="w-5 h-5 text-red-600 dark:text-red-400" />
+          <span className="text-[8px] font-bold text-red-700 dark:text-red-300 mt-0.5">PDF</span>
+        </div>
+      ) : (
+        <div className="w-full h-full flex flex-col items-center justify-center">
+          <FileText className="w-5 h-5 text-muted-foreground" />
+          <span className="text-[7px] text-muted-foreground mt-0.5">FILE</span>
+        </div>
+      )}
+      {extra > 1 && (
+        <span className="absolute bottom-0 right-0 bg-black/60 text-white text-[8px] px-1 rounded-tl">{extra}</span>
+      )}
+    </div>
+  );
+}
+
 export default function HistoryPage() {
   const { user, logout } = useAuth();
   const [, setLocation] = useLocation();
@@ -442,15 +485,10 @@ export default function HistoryPage() {
             {filteredInvoices.map(inv => (
               <Card key={inv.id} data-testid={`card-invoice-${inv.id}`}>
                 <CardContent className="py-3 flex gap-3">
-                  <div
-                    className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center flex-shrink-0 overflow-hidden cursor-pointer relative"
+                  <PhotoThumb
+                    paths={(inv as any).photoPaths || [inv.photoPath]}
                     onClick={() => setViewingPhotos((inv as any).photoPaths || [inv.photoPath])}
-                  >
-                    <img src={authImgUrl(((inv as any).photoPaths || [inv.photoPath])[0])} alt="Receipt" className="w-full h-full object-cover" />
-                    {(inv as any).photoPaths?.length > 1 && (
-                      <span className="absolute bottom-0 right-0 bg-black/60 text-white text-[8px] px-1 rounded-tl">{(inv as any).photoPaths.length}</span>
-                    )}
-                  </div>
+                  />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-sm font-medium truncate">{inv.description}</p>
@@ -554,14 +592,12 @@ export default function HistoryPage() {
               {filteredCashTxs.map((tx: any) => (
                 <Card key={tx.id}>
                   <CardContent className="py-3 flex gap-3">
-                    {/* Photo thumbnail */}
+                    {/* Photo thumbnail (image, PDF, or other) */}
                     {tx.photoPath && (
-                      <div
-                        className="w-12 h-12 rounded-lg bg-muted flex-shrink-0 overflow-hidden cursor-pointer"
+                      <PhotoThumb
+                        paths={tx.photoPaths || [tx.photoPath]}
                         onClick={() => setViewingPhotos(tx.photoPaths || [tx.photoPath])}
-                      >
-                        <img src={authImgUrl((tx.photoPaths || [tx.photoPath])[0])} alt="" className="w-full h-full object-cover" />
-                      </div>
+                      />
                     )}
                     <div className="flex items-start justify-between gap-2 flex-1">
                       <div className="min-w-0 flex-1">
@@ -979,21 +1015,65 @@ export default function HistoryPage() {
           onClick={() => { setViewingPhotos(null); setViewPhotoIdx(0); setPhotoZoom(1); }}
         >
           <div className="relative max-w-lg w-full" onClick={e => e.stopPropagation()}>
-            <div className="overflow-auto max-h-[80vh] rounded-lg" style={{ cursor: photoZoom > 1 ? "grab" : "default" }}>
-              <img
-                src={authImgUrl(viewingPhotos[viewPhotoIdx])}
-                alt="Receipt"
-                className="w-full rounded-lg transition-transform"
-                style={{ transform: `scale(${photoZoom})`, transformOrigin: "center center" }}
-                onDoubleClick={() => setPhotoZoom(z => z === 1 ? 2.5 : 1)}
-              />
-            </div>
-            {/* Zoom controls */}
-            <div className="absolute top-2 left-2 flex gap-1">
-              <button className="w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center text-lg font-bold" onClick={() => setPhotoZoom(z => Math.min(z + 0.5, 4))}>+</button>
-              <button className="w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center text-lg font-bold" onClick={() => setPhotoZoom(z => Math.max(z - 0.5, 1))}>-</button>
-              {photoZoom > 1 && <button className="h-8 px-2 rounded-full bg-black/50 text-white flex items-center justify-center text-xs" onClick={() => setPhotoZoom(1)}>Reset</button>}
-            </div>
+            {(() => {
+              const cur = viewingPhotos[viewPhotoIdx];
+              if (isPdfPath(cur)) {
+                return (
+                  <div className="bg-white rounded-lg overflow-hidden" style={{ height: "80vh" }}>
+                    <embed
+                      src={authImgUrl(cur)}
+                      type="application/pdf"
+                      className="w-full h-full"
+                    />
+                    <div className="absolute bottom-12 left-1/2 -translate-x-1/2">
+                      <a
+                        href={authImgUrl(cur)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="bg-white text-black text-xs px-3 py-1.5 rounded-full font-medium shadow"
+                      >
+                        Open PDF in new tab
+                      </a>
+                    </div>
+                  </div>
+                );
+              }
+              if (!isImagePath(cur)) {
+                return (
+                  <div className="bg-white rounded-lg p-8 flex flex-col items-center gap-3">
+                    <FileText className="w-12 h-12 text-muted-foreground" />
+                    <p className="text-sm text-center">This receipt is a file, not an image.</p>
+                    <a
+                      href={authImgUrl(cur)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="bg-primary text-primary-foreground text-sm px-4 py-2 rounded-md font-medium"
+                    >
+                      Open in new tab
+                    </a>
+                  </div>
+                );
+              }
+              return (
+                <>
+                  <div className="overflow-auto max-h-[80vh] rounded-lg" style={{ cursor: photoZoom > 1 ? "grab" : "default" }}>
+                    <img
+                      src={authImgUrl(cur)}
+                      alt="Receipt"
+                      className="w-full rounded-lg transition-transform"
+                      style={{ transform: `scale(${photoZoom})`, transformOrigin: "center center" }}
+                      onDoubleClick={() => setPhotoZoom(z => z === 1 ? 2.5 : 1)}
+                    />
+                  </div>
+                  {/* Zoom controls */}
+                  <div className="absolute top-2 left-2 flex gap-1">
+                    <button className="w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center text-lg font-bold" onClick={() => setPhotoZoom(z => Math.min(z + 0.5, 4))}>+</button>
+                    <button className="w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center text-lg font-bold" onClick={() => setPhotoZoom(z => Math.max(z - 0.5, 1))}>-</button>
+                    {photoZoom > 1 && <button className="h-8 px-2 rounded-full bg-black/50 text-white flex items-center justify-center text-xs" onClick={() => setPhotoZoom(1)}>Reset</button>}
+                  </div>
+                </>
+              );
+            })()}
             {viewingPhotos.length > 1 && (
               <div className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-black/60 text-white text-xs px-2 py-0.5 rounded-full">
                 {viewPhotoIdx + 1} / {viewingPhotos.length}

@@ -8,7 +8,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
 import pdfParse from "pdf-parse";
-import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, getDriveFolderWebViewLink } from "./google-api";
+import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, getDriveFolderWebViewLink, hideSheetTab, unhideSheetTab, deleteSheetTab } from "./google-api";
 // nodemailer removed — using Gmail API instead (SMTP blocked on Railway)
 
 // Ensure uploads directory exists
@@ -314,6 +314,80 @@ const upload = multer({
   },
 });
 
+/**
+ * Sniff the first bytes of a file to detect its real type, regardless of what
+ * extension the client sent. Returns a normalized extension string (e.g. "pdf",
+ * "jpg", "png", "heic", "webp") or null if unrecognized.
+ *
+ * Why this exists: iOS share-sheets and "Save as image" flows sometimes send
+ * a PDF with a `.jpg` filename. The browser's <img> tag can't render PDFs,
+ * so we'd display a broken-image icon. We rewrite the saved filename to use
+ * the correct extension based on actual bytes.
+ */
+function sniffFileExt(filePath: string): string | null {
+  try {
+    const fd = fs.openSync(filePath, "r");
+    const buf = Buffer.alloc(16);
+    fs.readSync(fd, buf, 0, 16, 0);
+    fs.closeSync(fd);
+    // PDF: %PDF-
+    if (buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46) return "pdf";
+    // JPEG: FF D8 FF
+    if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "jpg";
+    // PNG: 89 50 4E 47 0D 0A 1A 0A
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return "png";
+    // WebP: "RIFF" .... "WEBP"
+    if (buf.slice(0, 4).toString("ascii") === "RIFF" && buf.slice(8, 12).toString("ascii") === "WEBP") return "webp";
+    // HEIC / HEIF: bytes 4..11 contain "ftyp" followed by major brand (heic, heix, mif1, msf1, hevc)
+    if (buf.slice(4, 8).toString("ascii") === "ftyp") {
+      const brand = buf.slice(8, 12).toString("ascii");
+      if (["heic", "heix", "hevc", "hevx", "heim", "heis", "mif1", "msf1"].includes(brand)) return "heic";
+    }
+    // GIF
+    if (buf.slice(0, 6).toString("ascii") === "GIF87a" || buf.slice(0, 6).toString("ascii") === "GIF89a") return "gif";
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * After-upload middleware: if the saved filename's extension doesn't match the
+ * actual file content, rename the file on disk and patch req.file so downstream
+ * handlers see the corrected path/filename.
+ */
+function fixUploadedExtension(req: any, _res: any, next: any) {
+  const file = req.file;
+  if (!file) return next();
+  const fullPath = path.resolve(uploadsDir, file.filename);
+  if (!fs.existsSync(fullPath)) return next();
+  const realExt = sniffFileExt(fullPath);
+  if (!realExt) return next(); // unknown -> leave as-is
+  const currentExt = path.extname(file.filename).slice(1).toLowerCase();
+  // Treat jpg/jpeg as the same.
+  const norm = (e: string) => (e === "jpeg" ? "jpg" : e);
+  if (norm(currentExt) === norm(realExt)) return next();
+  const base = path.basename(file.filename, path.extname(file.filename));
+  const newName = `${base}.${realExt}`;
+  const newPath = path.resolve(uploadsDir, newName);
+  try {
+    fs.renameSync(fullPath, newPath);
+    file.filename = newName;
+    file.path = newPath;
+    file.mimetype =
+      realExt === "pdf" ? "application/pdf" :
+      realExt === "png" ? "image/png" :
+      realExt === "webp" ? "image/webp" :
+      realExt === "heic" ? "image/heic" :
+      realExt === "gif" ? "image/gif" :
+      "image/jpeg";
+    console.log(`[upload] Fixed extension: "${currentExt}" -> "${realExt}" for ${newName}`);
+  } catch (e: any) {
+    console.error(`[upload] Failed to rename ${file.filename}:`, e.message?.slice(0, 100));
+  }
+  next();
+}
+
 // Session tracking via SQLite-backed storage (survives server restarts)
 function generateToken(): string {
   return crypto.randomBytes(32).toString("hex");
@@ -545,6 +619,51 @@ export async function registerRoutes(
     res.json({ folderName: "Daily Reporting", link });
   });
 
+  // ---- One-shot heal: scan all uploaded files and fix wrong extensions ----
+  // Renames `invoice-XXX.jpg` to `invoice-XXX.pdf` (or .png/.heic/etc) when the
+  // file's actual content doesn't match its extension, and updates any DB rows
+  // (invoices.photo_path / photo_paths and user/contractor doc paths) that
+  // reference the renamed files. Idempotent.
+  app.post("/api/admin/heal-photo-extensions", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    const renames: { from: string; to: string }[] = [];
+    try {
+      const files = fs.readdirSync(uploadsDir);
+      for (const f of files) {
+        const full = path.resolve(uploadsDir, f);
+        if (!fs.statSync(full).isFile()) continue;
+        const realExt = sniffFileExt(full);
+        if (!realExt) continue;
+        const currentExt = path.extname(f).slice(1).toLowerCase();
+        const norm = (e: string) => (e === "jpeg" ? "jpg" : e);
+        if (norm(currentExt) === norm(realExt)) continue;
+        const base = path.basename(f, path.extname(f));
+        const newName = `${base}.${realExt}`;
+        const newPath = path.resolve(uploadsDir, newName);
+        try {
+          fs.renameSync(full, newPath);
+          renames.push({ from: f, to: newName });
+          console.log(`[heal] Renamed ${f} -> ${newName}`);
+        } catch (e: any) {
+          console.error(`[heal] Failed to rename ${f}:`, e.message?.slice(0, 100));
+        }
+      }
+      // Update DB references via storage helper (added below)
+      let updatedRows = 0;
+      for (const r of renames) {
+        const oldPath = `/api/uploads/${r.from}`;
+        const newPath = `/api/uploads/${r.to}`;
+        const n = await (storage as any).rewriteUploadPath?.(oldPath, newPath);
+        updatedRows += n || 0;
+      }
+      res.json({ ok: true, renamed: renames.length, dbRowsUpdated: updatedRows, renames });
+    } catch (e: any) {
+      console.error("[heal] Failed:", e);
+      res.status(500).json({ error: e.message?.slice(0, 200) || "heal failed" });
+    }
+  });
+
   // Serve uploaded files (supports both Bearer token and ?token= query param for <img> tags)
   app.use("/api/uploads", async (req, res, next) => {
     // Check Bearer header first
@@ -661,6 +780,9 @@ export async function registerRoutes(
     if (!user || user.password !== parsed.data.password) {
       return res.status(401).json({ error: "Invalid username or password" });
     }
+    if ((user as any).archived) {
+      return res.status(403).json({ error: "This account has been archived. Please contact your administrator." });
+    }
 
     const token = generateToken();
     await storage.createSession(token, user.id, user.role);
@@ -776,7 +898,9 @@ export async function registerRoutes(
   app.get("/api/users", async (req, res) => {
     const session = await requireAdmin(req, res);
     if (!session) return;
-    const allUsers = await storage.getAllUsers();
+    const includeArchived = req.query.includeArchived === "1" || req.query.includeArchived === "true";
+    const allUsersRaw = await storage.getAllUsers();
+    const allUsers = includeArchived ? allUsersRaw : allUsersRaw.filter(u => !(u as any).archived);
     const allProps = await storage.getAllProperties();
     const propMap = new Map(allProps.map(p => [p.id, p.name]));
     const allUsersForNames = new Map(allUsers.map(u => [u.id, u.displayName]));
@@ -825,6 +949,7 @@ export async function registerRoutes(
         createdByUserId: (u as any).createdByUserId || null,
         createdByName: (u as any).createdByUserId ? (allUsersForNames.get((u as any).createdByUserId) || null) : null,
         assignedProperties: propIds.map(pid => propMap.get(pid)).filter(Boolean) as string[],
+        archived: (u as any).archived || 0,
       };
     }));
     res.json(enriched);
@@ -1144,6 +1269,16 @@ export async function registerRoutes(
     res.json(filtered);
   });
 
+  // Helper: load the time-tracking spreadsheet config (spreadsheetId etc.)
+  function getTimeTrackingConfig(): { spreadsheetId: string } | null {
+    try {
+      const trConfigPath = path.resolve(dataDir, "time-tracking-config.json");
+      if (!fs.existsSync(trConfigPath)) return null;
+      const cfg = JSON.parse(fs.readFileSync(trConfigPath, "utf-8"));
+      return cfg?.spreadsheetId ? cfg : null;
+    } catch { return null; }
+  }
+
   app.delete("/api/users/:id", async (req, res) => {
     const session = await requireAdmin(req, res);
     if (!session) return;
@@ -1151,8 +1286,75 @@ export async function registerRoutes(
     const id = parseInt(req.params.id);
     if (id === session.userId) return res.status(400).json({ error: "Cannot delete yourself" });
 
+    // Capture the user's name BEFORE deletion so we can clean up their
+    // spreadsheet tab. Their cash transactions, credit-card receipts, work
+    // credits, time reports, and flat-rate assignments are kept untouched.
+    const target = await storage.getUser(id);
+    const tabName = target?.displayName || `User ${id}`;
+
     await storage.deleteUser(id);
-    res.json({ ok: true });
+
+    // Remove the user's tab from the time-tracking spreadsheet.
+    let tabRemoved = false;
+    const trConfig = getTimeTrackingConfig();
+    if (trConfig && isGoogleEnabled()) {
+      try {
+        tabRemoved = await deleteSheetTab(trConfig.spreadsheetId, tabName);
+      } catch (e: any) {
+        console.error("[user-delete] Failed to delete sheet tab:", e.message?.slice(0, 100));
+      }
+    }
+    res.json({ ok: true, tabRemoved, tabName });
+  });
+
+  // Archive a user: hide them from the admin user list and block login,
+  // but keep all their cash/CC/work-credit/time-report data intact and
+  // hide (not delete) their tab on the time-tracking spreadsheet so the
+  // historical entries remain accessible if needed.
+  app.post("/api/users/:id/archive", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    const id = parseInt(req.params.id);
+    if (id === session.userId) return res.status(400).json({ error: "Cannot archive yourself" });
+    const target = await storage.getUser(id);
+    if (!target) return res.status(404).json({ error: "User not found" });
+    const tabName = target.displayName || `User ${id}`;
+
+    await storage.setUserArchived(id, true);
+
+    let tabHidden = false;
+    const trConfig = getTimeTrackingConfig();
+    if (trConfig && isGoogleEnabled()) {
+      try {
+        tabHidden = await hideSheetTab(trConfig.spreadsheetId, tabName);
+      } catch (e: any) {
+        console.error("[user-archive] Failed to hide sheet tab:", e.message?.slice(0, 100));
+      }
+    }
+    res.json({ ok: true, tabHidden, tabName });
+  });
+
+  // Restore a previously archived user.
+  app.post("/api/users/:id/unarchive", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    const id = parseInt(req.params.id);
+    const target = await storage.getUser(id);
+    if (!target) return res.status(404).json({ error: "User not found" });
+    const tabName = target.displayName || `User ${id}`;
+
+    await storage.setUserArchived(id, false);
+
+    let tabUnhidden = false;
+    const trConfig = getTimeTrackingConfig();
+    if (trConfig && isGoogleEnabled()) {
+      try {
+        tabUnhidden = await unhideSheetTab(trConfig.spreadsheetId, tabName);
+      } catch (e: any) {
+        console.error("[user-unarchive] Failed to unhide sheet tab:", e.message?.slice(0, 100));
+      }
+    }
+    res.json({ ok: true, tabUnhidden, tabName });
   });
 
   app.put("/api/users/:id", async (req, res) => {
@@ -1329,7 +1531,7 @@ export async function registerRoutes(
     const session = await getSession(req);
     if (!session) return res.status(401).json({ error: "Unauthorized" });
     next();
-  }, upload.single("photo"), (req: any, res) => {
+  }, upload.single("photo"), fixUploadedExtension, (req: any, res) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
     res.json({ filename: req.file.filename, path: `/api/uploads/${req.file.filename}` });
   });
@@ -2543,7 +2745,7 @@ export async function registerRoutes(
     return rows;
   }
 
-  app.post("/api/admin/upload-statement", upload.single("statement"), async (req: any, res) => {
+  app.post("/api/admin/upload-statement", upload.single("statement"), fixUploadedExtension, async (req: any, res) => {
     const session = await requireAdmin(req, res);
     if (!session) return;
 
@@ -3449,7 +3651,7 @@ export async function registerRoutes(
   });
 
   // ---- User Documents ----
-  app.post("/api/user-documents", upload.single("document"), async (req, res) => {
+  app.post("/api/user-documents", upload.single("document"), fixUploadedExtension, async (req, res) => {
     const session = await requireAuth(req, res);
     if (!session) return;
     const { docType, bankName, routingNumber, accountNumber } = req.body;
@@ -3592,7 +3794,7 @@ export async function registerRoutes(
   });
 
   // ---- Contractor Documents ----
-  app.post("/api/contractor-documents", upload.single("document"), async (req, res) => {
+  app.post("/api/contractor-documents", upload.single("document"), fixUploadedExtension, async (req, res) => {
     const session = await requireAuth(req, res);
     if (!session) return;
     // Check permission

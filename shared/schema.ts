@@ -64,6 +64,11 @@ export const users = sqliteTable("users", {
   allowFlatRate: integer("allow_flat_rate").default(0),
   docReminderEnabled: integer("doc_reminder_enabled").default(0),
   docReminderDays: integer("doc_reminder_days").default(3),
+  // Archived users are hidden from the admin user list and cannot log in,
+  // but their existing receipts, cash transactions, work credits, time reports,
+  // and flat-rate assignments are preserved untouched. The corresponding
+  // user-named tab on the time-tracking spreadsheet is hidden (not deleted).
+  archived: integer("archived").default(0),
 });
 
 export const workCredits = sqliteTable("work_credits", {
