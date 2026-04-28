@@ -598,46 +598,60 @@ export class DatabaseStorage implements IStorage {
   async rewriteUploadPath(oldPath: string, newPath: string): Promise<number> {
     let count = 0;
 
-    // Single-path columns (simple equality match)
-    const singlePathUpdates: { table: any; column: any }[] = [
-      { table: invoices, column: invoices.photoPath },
-      { table: cashTransactions, column: cashTransactions.photoPath },
-      { table: userDocuments, column: userDocuments.filePath },
-      { table: contractorDocuments, column: contractorDocuments.filePath },
-      { table: ccStatements, column: ccStatements.filePath },
-    ];
-    for (const { table, column } of singlePathUpdates) {
-      const r = db.update(table).set({ [column.name as any]: newPath } as any).where(eq(column, oldPath)).run();
-      count += r.changes || 0;
-    }
+    // Single-path columns: do an explicit update per table so Drizzle's typed
+    // .set({...}) works without runtime reflection (which previously produced
+    // the SQL column name instead of the JS field key and broke the query).
+    const r1 = db.update(invoices).set({ photoPath: newPath }).where(eq(invoices.photoPath, oldPath)).run();
+    count += r1.changes || 0;
+    const r2 = db.update(cashTransactions).set({ photoPath: newPath }).where(eq(cashTransactions.photoPath, oldPath)).run();
+    count += r2.changes || 0;
+    const r3 = db.update(userDocuments).set({ filePath: newPath }).where(eq(userDocuments.filePath, oldPath)).run();
+    count += r3.changes || 0;
+    const r4 = db.update(contractorDocuments).set({ filePath: newPath }).where(eq(contractorDocuments.filePath, oldPath)).run();
+    count += r4.changes || 0;
+    const r5 = db.update(ccStatements).set({ filePath: newPath }).where(eq(ccStatements.filePath, oldPath)).run();
+    count += r5.changes || 0;
 
-    // JSON-array columns: scan rows and patch in place
-    const jsonArrayUpdates: { table: any; column: any; idCol: any }[] = [
-      { table: invoices, column: invoices.photoPaths, idCol: invoices.id },
-      { table: cashTransactions, column: cashTransactions.photoPaths, idCol: cashTransactions.id },
-    ];
-    for (const { table, column, idCol } of jsonArrayUpdates) {
-      const rows = db.select().from(table).all();
+    // JSON-array columns: scan rows and patch in place. Each table is its own
+    // pass so we can use the strongly-typed Drizzle column refs directly.
+    {
+      const rows = db.select().from(invoices).all();
       for (const row of rows) {
-        const raw = (row as any)[column.name];
-        if (!raw || typeof raw !== "string") continue;
-        if (!raw.includes(oldPath)) continue;
+        const raw = row.photoPaths;
+        if (!raw || typeof raw !== "string" || !raw.includes(oldPath)) continue;
         try {
           const arr = JSON.parse(raw);
           if (!Array.isArray(arr)) continue;
           let changed = false;
-          const next = arr.map(p => {
-            if (p === oldPath) { changed = true; return newPath; }
-            return p;
-          });
+          const next = arr.map(p => { if (p === oldPath) { changed = true; return newPath; } return p; });
           if (changed) {
-            const r = db.update(table)
-              .set({ [column.name as any]: JSON.stringify(next) } as any)
-              .where(eq(idCol, (row as any).id))
+            const r = db.update(invoices)
+              .set({ photoPaths: JSON.stringify(next) })
+              .where(eq(invoices.id, row.id))
               .run();
             count += r.changes || 0;
           }
-        } catch { /* ignore malformed JSON */ }
+        } catch { /* ignore */ }
+      }
+    }
+    {
+      const rows = db.select().from(cashTransactions).all();
+      for (const row of rows) {
+        const raw = (row as any).photoPaths as string | null;
+        if (!raw || typeof raw !== "string" || !raw.includes(oldPath)) continue;
+        try {
+          const arr = JSON.parse(raw);
+          if (!Array.isArray(arr)) continue;
+          let changed = false;
+          const next = arr.map(p => { if (p === oldPath) { changed = true; return newPath; } return p; });
+          if (changed) {
+            const r = db.update(cashTransactions)
+              .set({ photoPaths: JSON.stringify(next) } as any)
+              .where(eq(cashTransactions.id, row.id))
+              .run();
+            count += r.changes || 0;
+          }
+        } catch { /* ignore */ }
       }
     }
     return count;
