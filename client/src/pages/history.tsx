@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
-import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, DollarSign, Clock, UserPlus, UsersRound, Wallet } from "lucide-react";
+import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, DollarSign, Clock, UserPlus, UsersRound, Wallet, BookOpen } from "lucide-react";
 import { apiRequest, queryClient, getAuthToken } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
@@ -37,6 +37,86 @@ function isImagePath(photoPath: string | undefined | null): boolean {
 function isPdfPath(photoPath: string | undefined | null): boolean {
   if (!photoPath) return false;
   return photoPath.toLowerCase().endsWith(".pdf");
+}
+
+// Property Manager Playbook button + dialog. Visible to managers, admins,
+// and super_admins when a playbook PDF has been uploaded by an admin.
+function PlaybookButton({ role }: { role: string | undefined }) {
+  const [open, setOpen] = useState(false);
+  const eligible = role === "manager" || role === "admin" || role === "super_admin";
+  const { data: info } = useQuery<any>({
+    queryKey: ["/api/playbook/info"],
+    enabled: eligible,
+  });
+  if (!eligible || !info) return null;
+  const token = getAuthToken();
+  const previewUrl = `${API_BASE}/api/playbook/file?token=${token}`;
+  const downloadUrl = `${API_BASE}/api/playbook/file?download=1&token=${token}`;
+  return (
+    <>
+      <Button
+        variant="outline"
+        className="w-full h-11 text-sm gap-2 border-amber-500/50 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+        onClick={() => setOpen(true)}
+        data-testid="button-playbook"
+      >
+        <BookOpen className="w-4 h-4" />
+        Property Manager Playbook
+      </Button>
+      {open && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+          onClick={() => setOpen(false)}
+        >
+          <div
+            className="bg-card rounded-lg max-w-md w-full p-5 space-y-4"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-amber-100 dark:bg-amber-950/40 flex items-center justify-center">
+                  <BookOpen className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="font-semibold">Property Manager Playbook</h3>
+                  <p className="text-xs text-muted-foreground">
+                    {info.sizeMB ? `${info.sizeMB} MB` : ""}
+                    {info.updatedAt ? ` · Updated ${new Date(info.updatedAt).toLocaleDateString()}` : ""}
+                  </p>
+                </div>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => setOpen(false)}>
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              The Property Manager Playbook is a guide to running a Jetsetter property. Preview it in your browser or download it for offline use.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <a
+                href={previewUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-1.5 h-10 rounded-md border text-sm font-medium hover:bg-accent"
+                data-testid="link-playbook-preview"
+              >
+                <FileText className="w-4 h-4" />
+                Preview
+              </a>
+              <a
+                href={downloadUrl}
+                className="flex items-center justify-center gap-1.5 h-10 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90"
+                data-testid="link-playbook-download"
+              >
+                <Download className="w-4 h-4" />
+                Download
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
 }
 
 // Compact thumbnail used in receipt cards. Shows the image when possible,
@@ -247,6 +327,9 @@ export default function HistoryPage() {
       </div>
 
       <div className="max-w-lg mx-auto p-4 space-y-4">
+        {/* Property Manager Playbook (hidden for contractors and when no playbook is uploaded) */}
+        <PlaybookButton role={user?.role} />
+
         {/* Action Buttons */}
         {user?.role !== "contractor" && (
           <div className="grid grid-cols-2 gap-3">

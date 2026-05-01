@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,11 +8,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
-import { apiRequest, queryClient, setAuthToken } from "@/lib/queryClient";
+import { apiRequest, queryClient, setAuthToken, getAuthToken } from "@/lib/queryClient";
+
+const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
 import { useToast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Plus, Trash2, UserCircle, Shield, Loader2, Building2, Settings, Pencil, LogIn, Clock, Archive, ArchiveRestore } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, UserCircle, Shield, Loader2, Building2, Settings, Pencil, LogIn, Clock, Archive, ArchiveRestore, BookOpen, Upload, Download, FileText } from "lucide-react";
 import { LogoBackground } from "@/components/LogoBackground";
 
 interface UserItem {
@@ -574,6 +576,9 @@ export default function AdminPage() {
             </div>
           )}
         </section>
+
+        {/* ---- PROPERTY MANAGER PLAYBOOK SECTION ---- */}
+        <PlaybookAdminSection />
 
         {/* ---- USERS SECTION ---- */}
         <section className="space-y-3">
@@ -1235,5 +1240,150 @@ export default function AdminPage() {
       </div>
       </div>
     </LogoBackground>
+  );
+}
+
+// ==== Property Manager Playbook admin section ====
+// Shows the currently-active playbook (size, last-updated date) and lets an admin
+// upload a replacement. Each upload is also archived as a versioned snapshot on
+// the server so old welcome-email attachments are never broken.
+function PlaybookAdminSection() {
+  const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const { data: info } = useQuery<any>({
+    queryKey: ["/api/playbook/info"],
+  });
+  const { data: versions } = useQuery<any>({
+    queryKey: ["/api/admin/playbook/versions"],
+  });
+
+  const onPick = () => fileInputRef.current?.click();
+
+  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (!f.name.toLowerCase().endsWith(".pdf") && f.type !== "application/pdf") {
+      toast({ title: "Wrong file type", description: "Please choose a PDF file.", variant: "destructive" });
+      return;
+    }
+    if (f.size > 10 * 1024 * 1024) {
+      toast({ title: "File too large", description: "Maximum size is 10 MB.", variant: "destructive" });
+      return;
+    }
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("playbook", f);
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE}/api/admin/playbook`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body: fd,
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "Upload failed");
+      queryClient.invalidateQueries({ queryKey: ["/api/playbook/info"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/playbook/versions"] });
+      toast({
+        title: "Playbook updated",
+        description: "All property managers will see the new version next time they open the dashboard. New PMs will receive this version in their welcome email.",
+      });
+    } catch (err: any) {
+      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const previewUrl = info ? `${API_BASE}/api/playbook/file?token=${getAuthToken()}` : null;
+  const downloadUrl = info ? `${API_BASE}/api/playbook/file?download=1&token=${getAuthToken()}` : null;
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-semibold flex items-center gap-2">
+          <BookOpen className="w-4 h-4 text-amber-600" />
+          Property Manager Playbook
+        </h2>
+      </div>
+      <Card>
+        <CardContent className="py-4 space-y-3">
+          {info ? (
+            <>
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-lg bg-amber-100 dark:bg-amber-950/40 flex items-center justify-center flex-shrink-0">
+                  <FileText className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium">{info.filename}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {info.sizeMB} MB · Updated {new Date(info.updatedAt).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {previewUrl && (
+                  <a
+                    href={previewUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-1.5 h-9 rounded-md border text-sm font-medium hover:bg-accent"
+                  >
+                    <FileText className="w-4 h-4" />
+                    Preview
+                  </a>
+                )}
+                {downloadUrl && (
+                  <a
+                    href={downloadUrl}
+                    className="flex items-center justify-center gap-1.5 h-9 rounded-md border text-sm font-medium hover:bg-accent"
+                  >
+                    <Download className="w-4 h-4" />
+                    Download
+                  </a>
+                )}
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              No playbook uploaded yet. Upload a PDF to make it available to property managers from their dashboard and to attach to future welcome emails.
+            </p>
+          )}
+          <Button
+            variant="outline"
+            className="w-full gap-2"
+            onClick={onPick}
+            disabled={uploading}
+          >
+            {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+            {info ? "Replace with new version" : "Upload Playbook PDF"}
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,application/pdf"
+            className="hidden"
+            onChange={onFile}
+          />
+          {versions?.versions?.length > 0 && (
+            <details className="text-xs text-muted-foreground">
+              <summary className="cursor-pointer hover:text-foreground">
+                {versions.versions.length} previous version{versions.versions.length === 1 ? "" : "s"} archived on the server
+              </summary>
+              <ul className="mt-2 space-y-1 ml-4">
+                {versions.versions.slice(0, 5).map((v: any) => (
+                  <li key={v.filename}>
+                    {new Date(v.savedAt).toLocaleString()} · {(v.sizeBytes / 1024 / 1024).toFixed(2)} MB
+                  </li>
+                ))}
+                {versions.versions.length > 5 && <li>… and {versions.versions.length - 5} older</li>}
+              </ul>
+            </details>
+          )}
+        </CardContent>
+      </Card>
+    </section>
   );
 }

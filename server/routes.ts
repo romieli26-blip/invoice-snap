@@ -743,6 +743,112 @@ export async function registerRoutes(
     }
   });
 
+  // ---- Property Manager Playbook ----
+  // Stable, admin-replaceable PDF served from the persistent data volume.
+  // Path layout:
+  //   {dataDir}/playbook.pdf          → the active file (always served as `playbook.pdf`)
+  //   {dataDir}/playbook-versions/    → snapshots of every version we've ever served,
+  //                                     so old welcome-email attachments are never broken
+  const playbookActivePath = () => path.resolve(dataDir, "playbook.pdf");
+  const playbookVersionsDir = () => path.resolve(dataDir, "playbook-versions");
+
+  function ensurePlaybookDirs() {
+    const verDir = playbookVersionsDir();
+    if (!fs.existsSync(verDir)) fs.mkdirSync(verDir, { recursive: true });
+  }
+
+  // Returns metadata about the currently-active playbook (or null if none uploaded yet).
+  function getPlaybookInfo() {
+    const p = playbookActivePath();
+    if (!fs.existsSync(p)) return null;
+    const stat = fs.statSync(p);
+    return {
+      filename: "Property-Manager-Playbook.pdf",
+      sizeBytes: stat.size,
+      sizeMB: +(stat.size / 1024 / 1024).toFixed(2),
+      updatedAt: stat.mtime.toISOString(),
+    };
+  }
+
+  // Anyone signed in (any role) can fetch metadata so the dashboard button knows
+  // whether to render and what to show.
+  app.get("/api/playbook/info", async (req, res) => {
+    const session = await getSession(req);
+    if (!session) return res.status(401).json({ error: "Unauthorized" });
+    res.json(getPlaybookInfo());
+  });
+
+  // Stream the active PDF. Supports Bearer header OR ?token= query param so the
+  // browser's native PDF viewer / direct download can use a regular <a href>.
+  app.get("/api/playbook/file", async (req, res) => {
+    const tokenFromQuery = (req.query.token as string) || "";
+    const headerAuth = req.headers.authorization || "";
+    const tokenFromHeader = headerAuth.startsWith("Bearer ") ? headerAuth.slice(7) : "";
+    const token = tokenFromQuery || tokenFromHeader;
+    if (!token) return res.status(401).json({ error: "Unauthorized" });
+    const session = await storage.getSession(token);
+    if (!session) return res.status(401).json({ error: "Unauthorized" });
+
+    const p = playbookActivePath();
+    if (!fs.existsSync(p)) return res.status(404).json({ error: "Playbook not uploaded yet" });
+
+    const isDownload = req.query.download === "1" || req.query.download === "true";
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `${isDownload ? "attachment" : "inline"}; filename="Property-Manager-Playbook.pdf"`
+    );
+    res.sendFile(p);
+  });
+
+  // Admin: replace the playbook with a new PDF. Saves a snapshot under
+  // {dataDir}/playbook-versions/playbook-{ISO}.pdf for audit & rollback.
+  app.post("/api/admin/playbook", upload.single("playbook"), fixUploadedExtension, async (req: any, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+    // Verify it's actually a PDF (multer may have allowed image/* through)
+    const realExt = sniffFileExt(req.file.path);
+    if (realExt !== "pdf") {
+      try { fs.unlinkSync(req.file.path); } catch {}
+      return res.status(400).json({ error: "File must be a PDF" });
+    }
+
+    ensurePlaybookDirs();
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const versionPath = path.resolve(playbookVersionsDir(), `playbook-${stamp}.pdf`);
+
+    try {
+      // Copy the upload to BOTH the active path and a versioned snapshot.
+      fs.copyFileSync(req.file.path, playbookActivePath());
+      fs.copyFileSync(req.file.path, versionPath);
+      try { fs.unlinkSync(req.file.path); } catch {}
+      console.log(`[playbook] Replaced active. Snapshot: ${versionPath}`);
+      res.json({ ok: true, info: getPlaybookInfo() });
+    } catch (e: any) {
+      console.error("[playbook] Failed to save:", e);
+      res.status(500).json({ error: e.message?.slice(0, 200) || "failed to save" });
+    }
+  });
+
+  // Admin: list version snapshots
+  app.get("/api/admin/playbook/versions", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    ensurePlaybookDirs();
+    const verDir = playbookVersionsDir();
+    const files = fs.readdirSync(verDir)
+      .filter(f => f.endsWith(".pdf"))
+      .map(f => {
+        const fp = path.resolve(verDir, f);
+        const st = fs.statSync(fp);
+        return { filename: f, sizeBytes: st.size, savedAt: st.mtime.toISOString() };
+      })
+      .sort((a, b) => b.savedAt.localeCompare(a.savedAt));
+    res.json({ versions: files });
+  });
+
   // Serve uploaded files (supports both Bearer token and ?token= query param for <img> tags)
   app.use("/api/uploads", async (req, res, next) => {
     // Check Bearer header first
@@ -1098,7 +1204,21 @@ export async function registerRoutes(
 
           // Try to attach the tutorial video directly so users don't need Drive access.
           const videoAttachment = await getTutorialVideoAttachment();
-          const attachments = videoAttachment ? [videoAttachment] : undefined;
+          const attachments: { filename: string; path: string }[] = [];
+          if (videoAttachment) attachments.push(videoAttachment);
+
+          // For property managers, also attach the current Property Manager Playbook PDF
+          // (if one has been uploaded). Each new PM gets the latest version at the time
+          // their account is created.
+          const isManager = role === "manager";
+          let playbookAttached = false;
+          if (isManager) {
+            const playbookPath = path.resolve(dataDir, "playbook.pdf");
+            if (fs.existsSync(playbookPath)) {
+              attachments.push({ filename: "Property-Manager-Playbook.pdf", path: playbookPath });
+              playbookAttached = true;
+            }
+          }
 
           const tutorialBlock = videoAttachment
             ? `<p>The tutorial video is <b>attached to this email</b>. Open the attachment to watch it on any device.</p>
@@ -1106,6 +1226,12 @@ export async function registerRoutes(
             : `<p>Watch this short video to learn how to install and use the app on your mobile device:</p>
                <p style="text-align:center;"><a href="${videoUrl}" style="display:inline-block;background:#01696F;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold;">Watch Tutorial Video</a></p>
                <p style="color:#666;font-size:12px;text-align:center;">If the link asks for permission, contact your administrator to be added.</p>`;
+
+          const playbookBlock = playbookAttached
+            ? `<h3 style="color:#01696F;">Property Manager Playbook</h3>
+               <p>The <b>Property Manager Playbook</b> is attached to this email. It walks you through everything you need to know about running a Jetsetter property.</p>
+               <p style="color:#666;font-size:12px;">You can also access the latest version any time from the <b>Property Manager Playbook</b> button at the top of your dashboard.</p>`
+            : "";
 
           await sendEmailToRecipients(
             [{ name: displayName, email }],
@@ -1124,12 +1250,13 @@ export async function registerRoutes(
                 <p>4. <b>Add the app to your home screen</b> for easy access — it works like a native app.</p>
                 <h3 style="color:#01696F;">Watch the Tutorial</h3>
                 ${tutorialBlock}
+                ${playbookBlock}
                 <p style="color:#888;font-size:12px;margin-top:30px;">If you have any questions, please contact your administrator.<br>- Jetsetter Reporting</p>
               </div>
             </body></html>`,
-            attachments
+            attachments.length > 0 ? attachments : undefined
           );
-          console.log(`[welcome] Sent welcome email to ${email} (video attached: ${!!videoAttachment})`);
+          console.log(`[welcome] Sent welcome email to ${email} (video attached: ${!!videoAttachment}, playbook attached: ${playbookAttached})`);
         } catch (e) { console.error("[welcome] Failed to send welcome email:", e); }
       });
     }
