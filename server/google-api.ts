@@ -478,6 +478,85 @@ export async function renameDriveFolder(
  * Get a public-ish web view link for a Drive folder by name. Returns null if not found.
  */
 /**
+ * List the immediate children of a Drive folder. Returns an array of
+ * {id, name, mimeType, parents}. Skips trashed files.
+ */
+export async function listDriveFolderChildren(
+  folderId: string
+): Promise<Array<{ id: string; name: string; mimeType: string; parents: string[] }>> {
+  if (!driveApi) return [];
+  const out: Array<{ id: string; name: string; mimeType: string; parents: string[] }> = [];
+  try {
+    let pageToken: string | undefined = undefined;
+    do {
+      const resp = await driveApi.files.list({
+        q: `'${folderId}' in parents and trashed = false`,
+        fields: "nextPageToken, files(id, name, mimeType, parents)",
+        spaces: "drive",
+        pageSize: 1000,
+        pageToken,
+      });
+      for (const f of resp.data.files || []) {
+        if (!f.id || !f.name) continue;
+        out.push({
+          id: f.id,
+          name: f.name,
+          mimeType: f.mimeType || "",
+          parents: f.parents || [],
+        });
+      }
+      pageToken = resp.data.nextPageToken || undefined;
+    } while (pageToken);
+  } catch (err: any) {
+    console.error(`[google-api] listDriveFolderChildren failed:`, err.message?.slice(0, 200));
+  }
+  return out;
+}
+
+/**
+ * Move a Drive file (any type, including folders) so its sole parent becomes
+ * `newParentId`. Removes all previous parents.
+ */
+export async function moveDriveFile(
+  fileId: string,
+  newParentId: string
+): Promise<boolean> {
+  if (!driveApi) return false;
+  try {
+    // Look up current parents so we can remove them in the same call.
+    const meta = await driveApi.files.get({ fileId, fields: "parents" });
+    const oldParents = (meta.data.parents || []).join(",");
+    await driveApi.files.update({
+      fileId,
+      addParents: newParentId,
+      removeParents: oldParents || undefined,
+      fields: "id, parents",
+    });
+    return true;
+  } catch (err: any) {
+    console.error(`[google-api] moveDriveFile failed for ${fileId}:`, err.message?.slice(0, 200));
+    return false;
+  }
+}
+
+/**
+ * Send a Drive file or folder to the Trash. Idempotent.
+ */
+export async function trashDriveFile(fileId: string): Promise<boolean> {
+  if (!driveApi) return false;
+  try {
+    await driveApi.files.update({
+      fileId,
+      requestBody: { trashed: true },
+    });
+    return true;
+  } catch (err: any) {
+    console.error(`[google-api] trashDriveFile failed for ${fileId}:`, err.message?.slice(0, 200));
+    return false;
+  }
+}
+
+/**
  * Hide a sheet tab in a Google Sheet (sets properties.hidden = true).
  * Returns true if hidden, false if the tab wasn't found or call failed.
  */

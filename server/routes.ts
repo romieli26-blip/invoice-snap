@@ -8,7 +8,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
 import pdfParse from "pdf-parse";
-import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, getDriveFolderWebViewLink, hideSheetTab, unhideSheetTab, deleteSheetTab } from "./google-api";
+import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, getDriveFolderWebViewLink, hideSheetTab, unhideSheetTab, deleteSheetTab, listDriveFolderChildren, moveDriveFile, trashDriveFile } from "./google-api";
 // nodemailer removed — using Gmail API instead (SMTP blocked on Railway)
 
 // Ensure uploads directory exists
@@ -472,10 +472,60 @@ async function updateDocTrackingSheet() {
       ]);
     }
 
+    // Standalone contractors (non-login) tracked in `contractor_documents`. They
+    // don't have a user_id, so we group rows by full name + email.
+    try {
+      const allContractorDocs = await storage.getAllContractorDocuments();
+      // group key: lowercased "firstname|lastname|email"
+      const groups = new Map<string, {
+        firstName: string;
+        lastName: string;
+        email: string;
+        docs: any[];
+      }>();
+      for (const d of allContractorDocs as any[]) {
+        const fn = (d.contractorFirstName || "").trim();
+        const ln = (d.contractorLastName || "").trim();
+        const em = (d.contractorEmail || "").trim();
+        const key = `${fn.toLowerCase()}|${ln.toLowerCase()}|${em.toLowerCase()}`;
+        const existing = groups.get(key);
+        if (existing) {
+          existing.docs.push(d);
+        } else {
+          groups.set(key, { firstName: fn, lastName: ln, email: em, docs: [d] });
+        }
+      }
+      for (const g of groups.values()) {
+        const photoId = g.docs.find((d: any) => d.docType === "photo_id");
+        const banking = g.docs.find((d: any) => d.docType === "banking");
+        const w9 = g.docs.find((d: any) => d.docType === "w9");
+        const allUploaded = !!(photoId && banking && w9);
+        const fullName = `${g.firstName} ${g.lastName}`.trim() || "(unnamed contractor)";
+        rows.push([
+          fullName,
+          "contractor (no login)",
+          g.email || "N/A",
+          photoId ? "\u2705 Uploaded" : "\u274c Missing",
+          photoId ? new Date(photoId.createdAt).toLocaleDateString() : "",
+          banking ? "\u2705 Uploaded" : "\u274c Missing",
+          banking ? new Date(banking.createdAt).toLocaleDateString() : "",
+          w9 ? "\u2705 Uploaded" : "\u274c Missing",
+          w9 ? new Date(w9.createdAt).toLocaleDateString() : "",
+          allUploaded ? "\u2705 Yes" : "\u274c No",
+          "N/A",            // Admin Approved — not applicable to non-login contractors
+          "N/A",            // Reminder Enabled — no account to remind
+          "N/A",            // Reminder Frequency
+          new Date().toLocaleString(),
+        ]);
+      }
+    } catch (e) {
+      console.error("[doc-tracking] Failed to add standalone contractors:", e);
+    }
+
     // Clear and rewrite the sheet
     await clearSheet(config.spreadsheetId, "Sheet1!A:Z");
     await updateSheetRange(config.spreadsheetId, "Sheet1!A1", rows);
-    console.log(`[doc-tracking] Updated spreadsheet with ${rows.length - 1} users`);
+    console.log(`[doc-tracking] Updated spreadsheet with ${rows.length - 1} entries (users + standalone contractors)`);
   } catch (e) {
     console.error("[doc-tracking] Failed to update:", e);
   }
@@ -740,6 +790,66 @@ export async function registerRoutes(
     } catch (e: any) {
       console.error("[heal] Failed:", e);
       res.status(500).json({ error: e.message?.slice(0, 200) || "heal failed" });
+    }
+  });
+
+  // ---- One-time merge: move everything from "Contractor Documents" into "User Documents" ----
+  // Idempotent: if the source folder is empty or already trashed, returns ok:true with 0 moves.
+  // Skips any child whose name already exists at the destination, so re-running won't duplicate.
+  app.post("/api/admin/merge-contractor-folder", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    if (!isGoogleEnabled()) return res.status(503).json({ error: "Google APIs not configured" });
+    try {
+      const sourceId = (req.body?.sourceFolderId as string) || "1H8GRnQ_DmH_lELtfNIGYC3D_dc3tX35_";
+      const destFolderId = await ensureDriveFolder("User Documents");
+      if (!destFolderId) return res.status(500).json({ error: "Could not resolve User Documents folder" });
+
+      const [sourceChildren, destChildren] = await Promise.all([
+        listDriveFolderChildren(sourceId),
+        listDriveFolderChildren(destFolderId),
+      ]);
+      const destNames = new Set(destChildren.map(c => c.name.toLowerCase()));
+
+      const moved: { id: string; name: string }[] = [];
+      const skipped: { id: string; name: string; reason: string }[] = [];
+      for (const child of sourceChildren) {
+        if (destNames.has(child.name.toLowerCase())) {
+          // A folder/file with that exact name already exists at the destination.
+          // Skip to avoid silently merging unrelated content; the admin can resolve manually.
+          skipped.push({ id: child.id, name: child.name, reason: "name already exists at destination" });
+          continue;
+        }
+        const ok = await moveDriveFile(child.id, destFolderId);
+        if (ok) moved.push({ id: child.id, name: child.name });
+        else skipped.push({ id: child.id, name: child.name, reason: "move failed" });
+      }
+
+      // If the source folder is now empty, trash it (saves a click for the user).
+      let sourceTrashed = false;
+      if (skipped.length === 0) {
+        const remaining = await listDriveFolderChildren(sourceId);
+        if (remaining.length === 0) {
+          sourceTrashed = await trashDriveFile(sourceId);
+        }
+      }
+
+      // Refresh the doc-tracking spreadsheet so the new "contractor (no login)" rows appear.
+      try { await updateDocTrackingSheet(); } catch (e) { console.error("[merge] Failed to refresh tracking sheet:", e); }
+
+      const destLink = `https://drive.google.com/drive/folders/${destFolderId}`;
+      res.json({
+        ok: true,
+        movedCount: moved.length,
+        skippedCount: skipped.length,
+        sourceTrashed,
+        destFolder: { id: destFolderId, link: destLink, name: "User Documents" },
+        moved,
+        skipped,
+      });
+    } catch (e: any) {
+      console.error("[merge-contractor-folder] failed:", e);
+      res.status(500).json({ error: e.message?.slice(0, 200) || "merge failed" });
     }
   });
 
@@ -4035,8 +4145,10 @@ export async function registerRoutes(
       try {
         if (isGoogleEnabled()) {
           const contractorName = `${contractorFirstName}_${contractorLastName}`;
-          // Upload to Contractor Documents > {ContractorName} folder
-          const mainFolder = await ensureDriveFolder("Contractor Documents");
+          // All document uploads (login users + standalone contractors) now live
+          // under "User Documents". Each standalone contractor gets their own
+          // subfolder named after them inside that combined folder.
+          const mainFolder = await ensureDriveFolder("User Documents");
           if (mainFolder) {
             const contractorFolder = await ensureDriveFolder(contractorName, mainFolder);
             if (contractorFolder) {
