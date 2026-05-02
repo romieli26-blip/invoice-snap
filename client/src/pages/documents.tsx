@@ -9,7 +9,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient, getAuthToken } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, Upload, Trash2, Loader2, FileText, Eye, Camera, X, ChevronLeft, ChevronRight, Plus, ZoomIn } from "lucide-react";
+import { ArrowLeft, Upload, Trash2, Loader2, FileText, Eye, Camera, X, ChevronLeft, ChevronRight, Plus, ZoomIn, IdCard, Landmark, Download, CheckCircle2, AlertCircle } from "lucide-react";
 import { useRef } from "react";
 import { LogoBackground } from "@/components/LogoBackground";
 import { compressImage } from "@/lib/compress-image";
@@ -213,161 +213,223 @@ export default function DocumentsPage() {
             <h1 className="text-xl font-semibold">My Documents</h1>
           </div>
 
-          {/* Upload form */}
-          <Card>
-            <CardContent className="py-4">
-              <form onSubmit={handleSubmit} className="space-y-3">
-                <div className="space-y-2">
-                  <Label>Document Type</Label>
-                  <Select value={docType} onValueChange={setDocType}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="photo_id">Photo ID</SelectItem>
-                      <SelectItem value="banking">Banking Info</SelectItem>
-                      <SelectItem value="w9">W-9 Form</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+          {/* Top-line guidance */}
+          <p className="text-sm text-muted-foreground">
+            All three documents below are required. Tap a card to expand and upload.
+          </p>
 
-                {docType === "photo_id" && hasPhotoId && (
-                <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-md p-3">
-                  <p className="text-sm text-amber-800 dark:text-amber-300">You already have a Photo ID on file. Delete the existing one below before uploading a new one.</p>
-                </div>
-              )}
+          {/* ---- Three boxes: one per required doc ---- */}
+          {([
+            { key: "photo_id", label: "Photo ID", subtitle: "Driver's license, passport, or government ID", icon: IdCard, has: hasPhotoId },
+            { key: "banking", label: "Banking Info", subtitle: "Voided check or direct deposit form", icon: Landmark, has: hasBanking },
+            { key: "w9", label: "W-9 Form", subtitle: "Tax form for U.S. contractors", icon: FileText, has: hasW9 },
+          ] as const).map(item => {
+            const isActive = docType === item.key;
+            const existingDocs = documents?.filter(d => d.docType === item.key) || [];
+            const Icon = item.icon;
+            return (
+              <Card
+                key={item.key}
+                className={`overflow-hidden transition-colors ${item.has ? "border-emerald-500/40" : "border-amber-500/40"}`}
+              >
+                <CardContent className="py-4 space-y-3">
+                  {/* Header row — always visible */}
+                  <button
+                    type="button"
+                    className="flex items-start gap-3 w-full text-left"
+                    onClick={() => {
+                      // Toggle: tapping the active card collapses it
+                      if (isActive) {
+                        setDocType("");
+                        clearFiles();
+                      } else {
+                        setDocType(item.key);
+                        clearFiles();
+                        setShowReplaceConfirm(null);
+                        setShowDocsCompleteWarning(false);
+                      }
+                    }}
+                  >
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${item.has ? "bg-emerald-100 dark:bg-emerald-950/40" : "bg-amber-100 dark:bg-amber-950/40"}`}>
+                      <Icon className={`w-5 h-5 ${item.has ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-semibold">{item.label}</p>
+                        {item.has ? (
+                          <span className="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            Uploaded
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400">
+                            <AlertCircle className="w-3.5 h-3.5" />
+                            Required
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">{item.subtitle}</p>
+                      {item.has && existingDocs[0] && (
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Uploaded {new Date(existingDocs[0].createdAt).toLocaleDateString()}
+                        </p>
+                      )}
+                    </div>
+                    <ChevronRight
+                      className={`w-4 h-4 text-muted-foreground flex-shrink-0 transition-transform ${isActive ? "rotate-90" : ""}`}
+                    />
+                  </button>
 
-              {docType === "banking" && (
-                  <>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Bank Name</Label>
-                      <Input value={bankName} onChange={e => setBankName(e.target.value)} placeholder="e.g. Chase" />
+                  {/* W-9 helper: blank form download — always visible inside the W-9 card */}
+                  {item.key === "w9" && (
+                    <div className="rounded-md bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/60 p-3">
+                      <p className="text-xs font-medium text-blue-900 dark:text-blue-300">Need a blank W-9?</p>
+                      <p className="text-[11px] text-blue-800 dark:text-blue-400 mt-0.5">
+                        Download the blank IRS form, fill it out, then either print &amp; scan it, or take a clear photo, and upload below.
+                      </p>
+                      <a
+                        href="/fw9-blank.pdf"
+                        download="fw9-blank.pdf"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-blue-700 dark:text-blue-400 hover:underline"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        Download blank W-9 (PDF)
+                      </a>
                     </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Routing Number</Label>
-                      <Input
-                        value={routingNumber}
-                        onChange={e => {
-                          const v = e.target.value.replace(/\D/g, "");
-                          setRoutingNumber(v);
-                        }}
-                        placeholder="9-digit routing"
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Account Number</Label>
-                      <Input
-                        value={accountNumber}
-                        onChange={e => {
-                          const v = e.target.value.replace(/\D/g, "");
-                          setAccountNumber(v);
-                        }}
-                        placeholder="Account number"
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                      />
-                    </div>
-                  </>
-                )}
+                  )}
 
-                {docType && (
-                  <div className="space-y-2">
-                    <Label>{docType === "banking" ? "Voided Check / Direct Deposit Form" : "Upload Photo(s) or Scan"}</Label>
-                    
-                    {/* Photo carousel preview */}
-                    {previews.length > 0 && (
-                      <div className="relative rounded-lg overflow-hidden bg-muted">
-                        <img src={previews[viewIdx]} alt="Preview" className="w-full max-h-40 object-contain cursor-pointer" onClick={() => setZoomOpen(true)} />
-                        {previews.length > 1 && (
-                          <div className="absolute bottom-1 left-1/2 -translate-x-1/2 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded-full">
-                            {viewIdx + 1} / {previews.length}
+                  {/* Expanded upload UI — only when this card is the active one */}
+                  {isActive && (
+                    <form onSubmit={handleSubmit} className="space-y-3">
+                      {item.key === "photo_id" && item.has && (
+                        <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-md p-3">
+                          <p className="text-sm text-amber-800 dark:text-amber-300">You already have a Photo ID on file. Delete the existing one below before uploading a new one.</p>
+                        </div>
+                      )}
+
+                      {item.key === "banking" && (
+                        <>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Bank Name</Label>
+                            <Input value={bankName} onChange={e => setBankName(e.target.value)} placeholder="e.g. Chase" />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Routing Number</Label>
+                            <Input
+                              value={routingNumber}
+                              onChange={e => setRoutingNumber(e.target.value.replace(/\D/g, ""))}
+                              placeholder="9-digit routing"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Account Number</Label>
+                            <Input
+                              value={accountNumber}
+                              onChange={e => setAccountNumber(e.target.value.replace(/\D/g, ""))}
+                              placeholder="Account number"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                            />
+                          </div>
+                        </>
+                      )}
+
+                      <div className="space-y-2">
+                        <Label>
+                          {item.key === "banking"
+                            ? "Voided Check / Direct Deposit Form (optional if you fill in numbers above)"
+                            : "Upload photo or scan"}
+                        </Label>
+
+                        {previews.length > 0 && (
+                          <div className="relative rounded-lg overflow-hidden bg-muted">
+                            <img src={previews[viewIdx]} alt="Preview" className="w-full max-h-40 object-contain cursor-pointer" onClick={() => setZoomOpen(true)} />
+                            {previews.length > 1 && (
+                              <div className="absolute bottom-1 left-1/2 -translate-x-1/2 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded-full">
+                                {viewIdx + 1} / {previews.length}
+                              </div>
+                            )}
+                            {previews.length > 1 && viewIdx > 0 && (
+                              <button type="button" className="absolute left-1 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-black/40 text-white flex items-center justify-center" onClick={() => setViewIdx(i => i - 1)}>
+                                <ChevronLeft className="w-3 h-3" />
+                              </button>
+                            )}
+                            {previews.length > 1 && viewIdx < previews.length - 1 && (
+                              <button type="button" className="absolute right-1 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-black/40 text-white flex items-center justify-center" onClick={() => setViewIdx(i => i + 1)}>
+                                <ChevronRight className="w-3 h-3" />
+                              </button>
+                            )}
+                            <button type="button" className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/50 text-white flex items-center justify-center" onClick={() => removeFile(viewIdx)}>
+                              <X className="w-3 h-3" />
+                            </button>
+                            <button type="button" className="absolute top-1 left-1 w-6 h-6 rounded-full bg-black/50 text-white flex items-center justify-center" onClick={() => setZoomOpen(true)}>
+                              <ZoomIn className="w-3 h-3" />
+                            </button>
                           </div>
                         )}
-                        {previews.length > 1 && viewIdx > 0 && (
-                          <button type="button" className="absolute left-1 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-black/40 text-white flex items-center justify-center" onClick={() => setViewIdx(i => i - 1)}>
-                            <ChevronLeft className="w-3 h-3" />
-                          </button>
-                        )}
-                        {previews.length > 1 && viewIdx < previews.length - 1 && (
-                          <button type="button" className="absolute right-1 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-black/40 text-white flex items-center justify-center" onClick={() => setViewIdx(i => i + 1)}>
-                            <ChevronRight className="w-3 h-3" />
-                          </button>
-                        )}
-                        <button type="button" className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/50 text-white flex items-center justify-center" onClick={() => removeFile(viewIdx)}>
-                          <X className="w-3 h-3" />
-                        </button>
-                        <button type="button" className="absolute top-1 left-1 w-6 h-6 rounded-full bg-black/50 text-white flex items-center justify-center" onClick={() => setZoomOpen(true)}>
-                          <ZoomIn className="w-3 h-3" />
-                        </button>
+
+                        <div className="flex gap-2">
+                          <label className="flex-1 cursor-pointer">
+                            <span className="inline-flex items-center justify-center w-full whitespace-nowrap rounded-md text-sm font-medium border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-3 gap-1">
+                              <Camera className="w-3.5 h-3.5" /> {previews.length > 0 ? "Add Photo" : "Take Photo"}
+                            </span>
+                            <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e => { addFile(e.target.files?.[0] || null); e.target.value = ""; }} />
+                          </label>
+                          <label className="flex-1 cursor-pointer">
+                            <span className="inline-flex items-center justify-center w-full whitespace-nowrap rounded-md text-sm font-medium border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-3 gap-1">
+                              <Upload className="w-3.5 h-3.5" /> {previews.length > 0 ? "Add File" : "Upload File"}
+                            </span>
+                            <input type="file" accept="image/*,.pdf" className="hidden" onChange={e => { addFile(e.target.files?.[0] || null); e.target.value = ""; }} />
+                          </label>
+                        </div>
                       </div>
-                    )}
 
-                    {/* Add photo buttons */}
-                    <div className="flex gap-2">
-                      <label className="flex-1 cursor-pointer">
-                        <span className="inline-flex items-center justify-center w-full whitespace-nowrap rounded-md text-sm font-medium border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-3 gap-1">
-                          <Camera className="w-3.5 h-3.5" /> {previews.length > 0 ? "Add Photo" : "Take Photo"}
-                        </span>
-                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e => { addFile(e.target.files?.[0] || null); e.target.value = ""; }} />
-                      </label>
-                      <label className="flex-1 cursor-pointer">
-                        <span className="inline-flex items-center justify-center w-full whitespace-nowrap rounded-md text-sm font-medium border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-3 gap-1">
-                          <Upload className="w-3.5 h-3.5" /> {previews.length > 0 ? "Add File" : "Upload File"}
-                        </span>
-                        <input type="file" accept="image/*,.pdf" className="hidden" onChange={e => { addFile(e.target.files?.[0] || null); e.target.value = ""; }} />
-                      </label>
-                    </div>
-                    {previews.length > 0 && (
-                      <p className="text-[10px] text-muted-foreground text-center">
-                        {previews.length} photo(s) added. Tap photo to zoom. Use arrows to navigate.
-                      </p>
-                    )}
-                  </div>
-                )}
+                      {showReplaceConfirm === item.key && (
+                        <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-md p-3 space-y-2">
+                          <p className="text-sm text-amber-800 dark:text-amber-300 font-medium">
+                            You already have {item.key === "banking" ? "banking info" : "a W-9"} on file.
+                          </p>
+                          <p className="text-xs text-amber-700 dark:text-amber-400">
+                            Continuing will erase your previous record and replace it. Are you sure?
+                          </p>
+                          <div className="flex gap-2">
+                            <Button type="button" variant="outline" size="sm" className="flex-1" onClick={() => setShowReplaceConfirm(null)}>Cancel</Button>
+                            <Button type="submit" size="sm" className="flex-1">Yes, replace it</Button>
+                          </div>
+                        </div>
+                      )}
 
-                {/* Replace confirmation for banking/w9 */}
-                {showReplaceConfirm && (
-                  <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-md p-3 space-y-2">
-                    <p className="text-sm text-amber-800 dark:text-amber-300 font-medium">
-                      You already have {showReplaceConfirm === "banking" ? "banking info" : "a W-9"} on file.
-                    </p>
-                    <p className="text-xs text-amber-700 dark:text-amber-400">
-                      Continuing will erase your previous record and replace it. Are you sure?
-                    </p>
-                    <div className="flex gap-2">
-                      <Button type="button" variant="outline" size="sm" className="flex-1" onClick={() => setShowReplaceConfirm(null)}>Cancel</Button>
-                      <Button type="submit" size="sm" className="flex-1">Yes, replace it</Button>
-                    </div>
-                  </div>
-                )}
+                      {showDocsCompleteWarning && showReplaceConfirm !== item.key && (
+                        <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-md p-3 space-y-2">
+                          <p className="text-sm text-amber-800 dark:text-amber-300 font-medium">
+                            Your documents have been reviewed and approved by admin.
+                          </p>
+                          <p className="text-xs text-amber-700 dark:text-amber-400">
+                            Uploading a new document will require admin re-approval. Are you sure?
+                          </p>
+                          <div className="flex gap-2">
+                            <Button type="button" variant="outline" size="sm" className="flex-1" onClick={() => setShowDocsCompleteWarning(false)}>Cancel</Button>
+                            <Button type="submit" size="sm" className="flex-1">Yes, proceed</Button>
+                          </div>
+                        </div>
+                      )}
 
-                {/* Docs complete warning */}
-                {showDocsCompleteWarning && !showReplaceConfirm && (
-                  <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-md p-3 space-y-2">
-                    <p className="text-sm text-amber-800 dark:text-amber-300 font-medium">
-                      Your documents have been reviewed and approved by admin.
-                    </p>
-                    <p className="text-xs text-amber-700 dark:text-amber-400">
-                      Uploading a new document will require admin re-approval. Are you sure you want to proceed?
-                    </p>
-                    <div className="flex gap-2">
-                      <Button type="button" variant="outline" size="sm" className="flex-1" onClick={() => setShowDocsCompleteWarning(false)}>Cancel</Button>
-                      <Button type="submit" size="sm" className="flex-1">Yes, proceed</Button>
-                    </div>
-                  </div>
-                )}
-
-                {!showReplaceConfirm && !showDocsCompleteWarning && (
-                  <Button type="submit" className="w-full gap-2" disabled={submitting || !docType}>
-                    {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                    Upload Document
-                  </Button>
-                )}
-              </form>
-            </CardContent>
-          </Card>
+                      {showReplaceConfirm !== item.key && !showDocsCompleteWarning && (
+                        <Button type="submit" className="w-full gap-2" disabled={submitting}>
+                          {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                          {item.has ? "Replace" : "Upload"} {item.label}
+                        </Button>
+                      )}
+                    </form>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
 
           {/* Existing documents */}
           <h2 className="text-sm font-medium text-muted-foreground">Uploaded Documents</h2>
