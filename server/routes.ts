@@ -705,6 +705,126 @@ export async function registerRoutes(
     }
   });
 
+  // Admin: rewrite every per-property tab of the CC and cash spreadsheets
+  // from the database, in chronological order. Replaces the existing data rows
+  // (keeps row 1 headers) with the canonical state including the new
+  // "Receipt Identification" property-code values. Run this AFTER backfilling
+  // property codes so historical rows show TE-1, TE-2, ... instead of 1, 2, ...
+  //
+  // Body: { dryRun?: boolean, propertyName?: string } — propertyName limits to
+  // one tab so you can test on a single property first.
+  app.post("/api/admin/resync-sheets", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    if (!isGoogleEnabled()) return res.status(503).json({ error: "Google APIs not configured" });
+
+    const dryRun = req.body?.dryRun === true;
+    const onlyProperty: string | undefined = req.body?.propertyName;
+    const summary: any[] = [];
+
+    try {
+      const allProps = await storage.getAllProperties();
+      const targetProps = onlyProperty ? allProps.filter(p => p.name === onlyProperty) : allProps;
+
+      const allUsers = await storage.getAllUsers();
+      const userById = new Map(allUsers.map(u => [u.id, u.displayName]));
+
+      // ---- CC invoices spreadsheet ----
+      if (sheetsConfig) {
+        const allInvoices = await storage.getAllInvoices();
+        for (const prop of targetProps) {
+          if (!sheetsConfig.tabs[prop.name]) continue;
+          const propInvoices = allInvoices
+            .filter(inv => inv.property === prop.name)
+            .sort((a, b) => {
+              if (a.purchaseDate !== b.purchaseDate) return a.purchaseDate < b.purchaseDate ? -1 : 1;
+              return a.createdAt < b.createdAt ? -1 : 1;
+            });
+
+          const rows: string[][] = propInvoices.map(inv => {
+            const submittedBy = userById.get(inv.userId) || "Unknown";
+            const receiptId = (inv as any).propertyCode || String(inv.recordNumber || "");
+            return [
+              inv.purchaseDate,
+              inv.description,
+              inv.purpose,
+              inv.amount,
+              inv.boughtBy,
+              inv.paymentMethod === "cc" ? "Credit Card" : "Cash",
+              inv.lastFourDigits || "",
+              submittedBy,
+              inv.createdAt,
+              receiptId,
+              inv.rentManagerIssue || "",
+              inv.receiptType || "expense",
+            ];
+          });
+
+          summary.push({ sheet: "CC", tab: prop.name, rowsWritten: rows.length });
+          if (!dryRun && rows.length > 0) {
+            // Clear the data rows (keep header in row 1), then write fresh.
+            await clearSheet(sheetsConfig.spreadsheetId, `${prop.name}!A2:L`);
+            await updateSheetRange(sheetsConfig.spreadsheetId, `${prop.name}!A2`, rows);
+          }
+        }
+      }
+
+      // ---- Cash transactions spreadsheet ----
+      if (cashSheetsConfig) {
+        const allCash = await storage.getAllCashTransactions();
+        for (const prop of targetProps) {
+          if (!cashSheetsConfig.tabs[prop.name]) continue;
+          const propCash = allCash
+            .filter(tx => tx.property === prop.name)
+            .sort((a, b) => {
+              if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+              return a.createdAt < b.createdAt ? -1 : 1;
+            });
+
+          // Cash sheet column layout (12 cols, A..L), matching the per-row
+          // append used in /api/cash-transactions:
+          //   A Date  B Type  C Category  D Amount  E Unit/Lot  F Tenant/From
+          //   G Bank  H Description/Notes  I Submitted By  J Submitted At
+          //   K Receipt Identification  L Balance
+          // Running balance is recomputed by chronological order.
+          let runningBalance = 0;
+          const rows: string[][] = [];
+          for (const tx of propCash) {
+            const submittedBy = userById.get(tx.userId) || "Unknown";
+            const receiptId = (tx as any).propertyCode || String(tx.recordNumber || "");
+            const amt = parseFloat(tx.amount || "0");
+            runningBalance += tx.type === "income" ? amt : -amt;
+            rows.push([
+              tx.date,
+              tx.type,
+              tx.category,
+              tx.amount,
+              tx.unitLotNumber || "",
+              tx.tenantName || (tx as any).payerName || "",
+              tx.bankName || "",
+              tx.description || (tx as any).notes || "",
+              submittedBy,
+              tx.createdAt,
+              receiptId,
+              runningBalance.toFixed(2),
+            ]);
+          }
+
+          summary.push({ sheet: "Cash", tab: prop.name, rowsWritten: rows.length });
+          if (!dryRun && rows.length > 0) {
+            await clearSheet(cashSheetsConfig.spreadsheetId, `${prop.name}!A2:L`);
+            await updateSheetRange(cashSheetsConfig.spreadsheetId, `${prop.name}!A2`, rows);
+          }
+        }
+      }
+
+      res.json({ ok: true, dryRun, summary });
+    } catch (e: any) {
+      console.error("[resync-sheets] failed:", e);
+      res.status(500).json({ error: e.message?.slice(0, 200) || "resync failed" });
+    }
+  });
+
   // Admin: audit every invoice's photo references. Returns a list of rows whose
   // photoPath / photoPaths point to file(s) that don't exist on disk, plus rows
   // with no photoPath at all. Useful for spotting missing receipts.
