@@ -14,7 +14,7 @@ const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
 import { useToast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Plus, Trash2, UserCircle, Shield, Loader2, Building2, Settings, Pencil, LogIn, Clock, Archive, ArchiveRestore, BookOpen, Upload, Download, FileText } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, UserCircle, Shield, Loader2, Building2, Settings, Pencil, LogIn, Clock, Archive, ArchiveRestore, BookOpen, Upload, Download, FileText, ChevronRight } from "lucide-react";
 import { LogoBackground } from "@/components/LogoBackground";
 
 interface UserItem {
