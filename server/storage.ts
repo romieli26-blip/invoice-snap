@@ -219,6 +219,15 @@ sqlite.exec(`
   );
 `);
 try { sqlite.exec("ALTER TABLE invoices ADD COLUMN edit_history TEXT"); } catch {}
+// Per-property human-readable receipt IDs (e.g. "TE-1")
+try { sqlite.exec("ALTER TABLE invoices ADD COLUMN property_code TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE cash_transactions ADD COLUMN property_code TEXT"); } catch {}
+// Cash income "Check" category extra fields
+try { sqlite.exec("ALTER TABLE cash_transactions ADD COLUMN payer_name TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE cash_transactions ADD COLUMN notes TEXT"); } catch {}
+// Property short code + Marketing URL
+try { sqlite.exec("ALTER TABLE properties ADD COLUMN code TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE properties ADD COLUMN marketing_url TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE cash_transactions ADD COLUMN edit_history TEXT"); } catch {}
 
 // Cash transactions table
@@ -271,6 +280,10 @@ export interface IStorage {
   createProperty(property: InsertProperty): Promise<Property>;
   deleteProperty(id: number): Promise<void>;
   updatePropertySheetsTabId(id: number, tabId: number): Promise<void>;
+  updatePropertyCode(id: number, code: string | null): Promise<void>;
+  updatePropertyMarketingUrl(id: number, marketingUrl: string | null): Promise<void>;
+  getNextPropertyCode(propertyName: string): Promise<string>;
+  backfillPropertyCodes(dryRun: boolean): Promise<Array<{ table: string; id: number; property: string; newCode: string }>>;
   // User-property assignment methods
   getPropertiesForUser(userId: number): Promise<Property[]>;
   setUserProperties(userId: number, propertyIds: number[]): Promise<void>;
@@ -389,6 +402,95 @@ export class DatabaseStorage implements IStorage {
 
   async updatePropertySheetsTabId(id: number, tabId: number): Promise<void> {
     db.update(properties).set({ sheetsTabId: tabId }).where(eq(properties.id, id)).run();
+  }
+
+  async updatePropertyCode(id: number, code: string | null): Promise<void> {
+    db.update(properties).set({ code } as any).where(eq(properties.id, id)).run();
+  }
+
+  async updatePropertyMarketingUrl(id: number, marketingUrl: string | null): Promise<void> {
+    db.update(properties).set({ marketingUrl } as any).where(eq(properties.id, id)).run();
+  }
+
+  /**
+   * Allocate the next per-property receipt identifier (e.g. "TE-7").
+   * The numeric counter is the max suffix already used in EITHER invoices or
+   * cash_transactions for this property, plus one. Falls back to using just
+   * the number (no prefix) when the property has no code set yet.
+   */
+  /**
+   * Backfill: assign property_code to every invoice/cash row that doesn't have one yet.
+   * Walks each property in date order (purchase_date for invoices, date for cash,
+   * tiebreak by created_at) and labels rows 1..N (or PREFIX-1..PREFIX-N if the
+   * property has a code). Idempotent — rows that already have a property_code
+   * are skipped. Returns the list of changes that were (or would be) applied.
+   */
+  async backfillPropertyCodes(dryRun: boolean): Promise<Array<{ table: string; id: number; property: string; newCode: string }>> {
+    const allProps = await this.getAllProperties();
+    const updates: Array<{ table: string; id: number; property: string; newCode: string }> = [];
+
+    for (const prop of allProps) {
+      const propName = prop.name;
+      const codePrefix = (prop as any).code as string | null;
+
+      const invs = sqlite.prepare("SELECT id, purchase_date, created_at, property_code FROM invoices WHERE property = ?").all(propName) as Array<any>;
+      const cashes = sqlite.prepare("SELECT id, date, created_at, property_code FROM cash_transactions WHERE property = ?").all(propName) as Array<any>;
+
+      type Row = { table: "invoices" | "cash_transactions"; id: number; date: string; createdAt: string; propertyCode: string | null };
+      const merged: Row[] = [
+        ...invs.map((r: any): Row => ({ table: "invoices", id: r.id, date: r.purchase_date, createdAt: r.created_at, propertyCode: r.property_code })),
+        ...cashes.map((r: any): Row => ({ table: "cash_transactions", id: r.id, date: r.date, createdAt: r.created_at, propertyCode: r.property_code })),
+      ].sort((a, b) => {
+        if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+        return a.createdAt < b.createdAt ? -1 : 1;
+      });
+
+      let maxN = 0;
+      for (const r of merged) {
+        const m = r.propertyCode?.match(/(\d+)\s*$/);
+        if (m) maxN = Math.max(maxN, parseInt(m[1], 10));
+      }
+      let nextN = maxN + 1;
+
+      for (const r of merged) {
+        if (r.propertyCode) continue;
+        const newCode = codePrefix ? `${codePrefix}-${nextN}` : String(nextN);
+        updates.push({ table: r.table, id: r.id, property: propName, newCode });
+        if (!dryRun) {
+          if (r.table === "invoices") {
+            db.update(invoices).set({ propertyCode: newCode } as any).where(eq(invoices.id, r.id)).run();
+          } else {
+            db.update(cashTransactions).set({ propertyCode: newCode } as any).where(eq(cashTransactions.id, r.id)).run();
+          }
+        }
+        nextN++;
+      }
+    }
+
+    return updates;
+  }
+
+  async getNextPropertyCode(propertyName: string): Promise<string> {
+    const prop = await this.getPropertyByName(propertyName);
+    const code = (prop as any)?.code as string | undefined | null;
+
+    // Pull all existing property_code values for this property and find the
+    // highest numeric suffix. We tolerate a mix of prefixed ("TE-3") and
+    // un-prefixed ("3") values from past data.
+    const invRows = sqlite.prepare("SELECT property_code FROM invoices WHERE property = ?").all(propertyName) as Array<{ property_code: string | null }>;
+    const cashRows = sqlite.prepare("SELECT property_code FROM cash_transactions WHERE property = ?").all(propertyName) as Array<{ property_code: string | null }>;
+    let maxN = 0;
+    for (const row of [...invRows, ...cashRows]) {
+      const raw = row.property_code;
+      if (!raw) continue;
+      const m = String(raw).match(/(\d+)\s*$/);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (!isNaN(n) && n > maxN) maxN = n;
+      }
+    }
+    const nextN = maxN + 1;
+    return code ? `${code}-${nextN}` : String(nextN);
   }
 
   // ---- User-Property assignments ----

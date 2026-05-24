@@ -20,6 +20,13 @@ export const properties = sqliteTable("properties", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull().unique(),
   sheetsTabId: integer("sheets_tab_id"), // Google Sheets worksheet ID for this property
+  // Short 2–4 letter code used as the prefix on receipt identifiers.
+  // Example: Trails End -> "TE", Bonifay -> "BO". Property managers see this
+  // suffixed on every receipt they create (e.g. "TE-7"). Set by admins.
+  code: text("code"),
+  // Per-property URL the Marketing button opens for property managers. Editable
+  // by admins via the Marketing Links section. May be empty.
+  marketingUrl: text("marketing_url"),
 });
 
 export const users = sqliteTable("users", {
@@ -148,6 +155,11 @@ export const invoices = sqliteTable("invoices", {
   paymentMethod: text("payment_method").notNull(), // "cash" or "cc"
   lastFourDigits: text("last_four_digits"),
   recordNumber: integer("record_number"),
+  // Stable, human-readable identifier shown to users and written to the
+  // 'Receipt Identification' column in Sheets. Format: '<property-code>-<n>'
+  // where <n> is per-property and 1-based (e.g. "TE-1", "TE-2"). Falls back to
+  // just the number when the property has no code set yet.
+  propertyCode: text("property_code"),
   rentManagerIssue: text("rent_manager_issue"),
   photoPaths: text("photo_paths"), // JSON array of photo paths for multi-photo receipts
   receiptType: text("receipt_type").default("expense"), // "expense" or "refund"
@@ -177,6 +189,11 @@ export const cashTransactions = sqliteTable("cash_transactions", {
   photoPaths: text("photo_paths"),
   // Record tracking
   recordNumber: integer("record_number"),
+  // Same convention as invoices.propertyCode — per-property human-readable ID.
+  propertyCode: text("property_code"),
+  // Income-Check specific fields (category="check")
+  payerName: text("payer_name"),     // "From" field on a check
+  notes: text("notes"),               // free-form notes
   editHistory: text("edit_history"), // JSON array of edits: [{by, at, changes}]
   syncedToSheets: integer("synced_to_sheets").notNull().default(0),
   syncedToDrive: integer("synced_to_drive").notNull().default(0),

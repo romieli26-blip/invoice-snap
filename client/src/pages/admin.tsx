@@ -580,29 +580,12 @@ export default function AdminPage() {
           ) : (
             <div className="space-y-2">
               {propertiesList?.map(prop => (
-                <Card key={prop.id} data-testid={`card-property-${prop.id}`}>
-                  <CardContent className="py-3 flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0">
-                      <Building2 className="w-4 h-4 text-primary" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium">{prop.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {prop.sheetsTabId ? "Sheets tab linked" : "No Sheets tab"}
-                      </p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="text-muted-foreground hover:text-destructive flex-shrink-0"
-                      onClick={() => deletePropMutation.mutate(prop.id)}
-                      disabled={deletePropMutation.isPending}
-                      data-testid={`button-delete-property-${prop.id}`}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </CardContent>
-                </Card>
+                <PropertyAdminCard
+                  key={prop.id}
+                  prop={prop}
+                  onDelete={() => deletePropMutation.mutate(prop.id)}
+                  deletePending={deletePropMutation.isPending}
+                />
               ))}
               {propertiesList?.length === 0 && (
                 <p className="text-sm text-muted-foreground text-center py-4">No properties yet.</p>
@@ -1419,5 +1402,134 @@ function PlaybookAdminSection() {
         </CardContent>
       </Card>
     </section>
+  );
+}
+
+// ==== PropertyAdminCard ===================================================
+// Single property row in the admin Properties section. Shows the property name
+// and Sheets-tab status by default; expand to edit the short code (used as the
+// prefix on receipt IDs, e.g. "TE") and the Marketing URL the dashboard
+// Marketing button opens for property managers.
+function PropertyAdminCard({
+  prop,
+  onDelete,
+  deletePending,
+}: {
+  prop: any;
+  onDelete: () => void;
+  deletePending: boolean;
+}) {
+  const { toast } = useToast();
+  const [expanded, setExpanded] = useState(false);
+  const [code, setCode] = useState<string>(prop.code || "");
+  const [marketingUrl, setMarketingUrl] = useState<string>(prop.marketingUrl || "");
+
+  const saveMutation = useMutation({
+    mutationFn: async (body: { code?: string | null; marketingUrl?: string | null }) => {
+      const res = await apiRequest("PUT", `/api/properties/${prop.id}`, body);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/properties"] });
+      toast({ title: "Saved", description: `${prop.name} updated.` });
+    },
+    onError: (err: any) => {
+      toast({ title: "Save failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const handleSave = () => {
+    saveMutation.mutate({
+      code: code.trim() === "" ? null : code.trim().toUpperCase(),
+      marketingUrl: marketingUrl.trim() === "" ? null : marketingUrl.trim(),
+    });
+  };
+
+  return (
+    <Card data-testid={`card-property-${prop.id}`}>
+      <CardContent className="py-3 space-y-3">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            className="flex items-center gap-3 flex-1 text-left min-w-0"
+            onClick={() => setExpanded(e => !e)}
+          >
+            <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center flex-shrink-0">
+              <Building2 className="w-4 h-4 text-primary" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <p className="text-sm font-medium">{prop.name}</p>
+                {prop.code && (
+                  <Badge variant="outline" className="text-[10px] py-0 h-4 font-mono">
+                    {prop.code}
+                  </Badge>
+                )}
+                {prop.marketingUrl && (
+                  <Badge variant="outline" className="text-[10px] py-0 h-4 border-orange-500/60 text-orange-700 dark:text-orange-400">
+                    Marketing link set
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {prop.sheetsTabId ? "Sheets tab linked" : "No Sheets tab"}
+              </p>
+            </div>
+            <ChevronRight
+              className={`w-4 h-4 text-muted-foreground flex-shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
+            />
+          </button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-muted-foreground hover:text-destructive flex-shrink-0"
+            onClick={onDelete}
+            disabled={deletePending}
+            data-testid={`button-delete-property-${prop.id}`}
+          >
+            <Trash2 className="w-4 h-4" />
+          </Button>
+        </div>
+
+        {expanded && (
+          <div className="space-y-3 pl-11 pr-1">
+            <div className="space-y-1">
+              <Label className="text-xs">Short code (receipt prefix)</Label>
+              <Input
+                value={code}
+                onChange={e => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))}
+                placeholder="e.g. TE"
+                className="h-8 text-sm font-mono"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                1–6 letters/digits. Used as the prefix on receipt identifiers (e.g. <code>TE-7</code>). Leave blank to use numeric IDs only.
+              </p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Marketing URL</Label>
+              <Input
+                value={marketingUrl}
+                onChange={e => setMarketingUrl(e.target.value)}
+                placeholder="https://example.com/listing"
+                className="h-8 text-sm"
+                type="url"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Where the dashboard Marketing button takes property managers. Must start with <code>http://</code> or <code>https://</code>. Leave blank to hide.
+              </p>
+            </div>
+            <Button
+              size="sm"
+              className="w-full gap-2"
+              onClick={handleSave}
+              disabled={saveMutation.isPending}
+            >
+              {saveMutation.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+              Save
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

@@ -25,6 +25,7 @@ interface PropertyItem { id: number; name: string; sheetsTabId: number | null; }
 
 const INCOME_CATEGORIES = [
   { value: "rental_income", label: "Rental Income" },
+  { value: "check", label: "Check" },
   { value: "washer", label: "Washer" },
   { value: "dryer", label: "Dryer" },
   { value: "vending", label: "Vending" },
@@ -57,6 +58,9 @@ export default function CashTransactionPage() {
   const [tenantName, setTenantName] = useState("");
   const [bankName, setBankName] = useState("");
   const [description, setDescription] = useState("");
+  // Check-category specific fields (income with category === "check")
+  const [payerName, setPayerName] = useState("");
+  const [notes, setNotes] = useState("");
 
   const [contractorHasReceipt, setContractorHasReceipt] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -119,6 +123,10 @@ export default function CashTransactionPage() {
       if (!unitLotNumber.trim()) return "Please enter the unit/lot number for rental income.";
       if (!tenantName.trim()) return "Please enter the tenant name for rental income.";
     }
+    if (txType === "income" && category === "check") {
+      if (!payerName.trim()) return "Please enter who the check is from.";
+      if (!photoPath) return "Please take or upload a photo of the check.";
+    }
     if (txType === "spent" && category === "bank_deposit") {
       if (!bankName.trim()) return "Please enter the bank name for deposits.";
     }
@@ -167,6 +175,8 @@ export default function CashTransactionPage() {
         tenantName: tenantName || undefined,
         bankName: bankName || undefined,
         description: description || undefined,
+        payerName: payerName || undefined,
+        notes: notes || undefined,
         photoPath: photoPath || undefined,
         photoPaths: photoPath ? JSON.stringify([photoPath]) : undefined,
       });
@@ -342,8 +352,46 @@ export default function CashTransactionPage() {
                   </>
                 )}
 
+                {/* Income / Check: From + optional Unit/Lot + Notes + photo */}
+                {txType === "income" && category === "check" && (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="payer-name">
+                        From <span className="text-destructive">*</span>
+                      </Label>
+                      <Input
+                        id="payer-name"
+                        value={payerName}
+                        onChange={e => setPayerName(e.target.value)}
+                        placeholder="Who is the check from?"
+                        data-testid="input-payer-name"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="unit-lot">Unit / Lot Number (optional)</Label>
+                      <Input
+                        id="unit-lot"
+                        value={unitLotNumber}
+                        onChange={e => setUnitLotNumber(e.target.value)}
+                        placeholder="e.g. Unit 4B, Lot 12"
+                        data-testid="input-unit-lot"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="notes">Notes (optional)</Label>
+                      <Input
+                        id="notes"
+                        value={notes}
+                        onChange={e => setNotes(e.target.value)}
+                        placeholder="Anything to add?"
+                        data-testid="input-notes"
+                      />
+                    </div>
+                  </>
+                )}
+
                 {/* Income other categories can still have unit/lot and tenant optionally */}
-                {txType === "income" && category && category !== "rental_income" && (
+                {txType === "income" && category && category !== "rental_income" && category !== "check" && (
                   <>
                     <div className="space-y-2">
                       <Label htmlFor="unit-lot">Unit / Lot Number (optional)</Label>
@@ -372,11 +420,12 @@ export default function CashTransactionPage() {
                   </div>
                 )}
 
-                {/* Photo upload for ALL cash spent categories */}
-                {txType === "spent" && (
+                {/* Photo upload for ALL cash spent categories AND income/check */}
+                {(txType === "spent" || (txType === "income" && category === "check")) && (
                   <div className="space-y-2">
                     <Label>
-                      Photo / Receipt {category !== "contractor_pay" && <span className="text-destructive">*</span>}
+                      {category === "check" ? "Check Photo" : "Photo / Receipt"}
+                      {(category !== "contractor_pay") && <span className="text-destructive"> *</span>}
                       {category === "contractor_pay" && <span className="text-muted-foreground text-xs ml-1">(optional)</span>}
                     </Label>
                     {photoPreview ? (

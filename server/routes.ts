@@ -265,11 +265,15 @@ async function syncToSheets(invoice: any, submittedByName: string): Promise<bool
     return false;
   }
 
+  // Column J = "Receipt Identification". Prefer the new property-prefixed code
+  // (e.g. "TE-7"); fall back to the legacy numeric record number for rows that
+  // pre-date the property-code feature.
+  const receiptId = invoice.propertyCode || String(invoice.recordNumber || "");
   const row = [
     invoice.purchaseDate, invoice.description, invoice.purpose, invoice.amount,
     invoice.boughtBy, invoice.paymentMethod === "cc" ? "Credit Card" : "Cash",
     invoice.lastFourDigits || "", submittedByName, invoice.createdAt,
-    String(invoice.recordNumber || ""), invoice.rentManagerIssue || "",
+    receiptId, invoice.rentManagerIssue || "",
     invoice.receiptType || "expense",
   ];
 
@@ -570,13 +574,16 @@ async function syncToDrive(invoice: any): Promise<boolean> {
         propertyFolderId = await ensureDriveFolder(invoice.property, ccReceiptsFolder);
         if (propertyFolderId) propertyFolderCache.set("cc_" + invoice.property, propertyFolderId);
       }
+      // Append the per-property receipt code at the END of the filename so it's
+      // searchable and visually grouped per property (e.g. "Trails End - 2026-03-24 ... TE-7.jpg").
+      const codeSuffix = invoice.propertyCode ? ` ${invoice.propertyCode}` : "";
       for (let i = 0; i < allPaths.length; i++) {
         const p = allPaths[i];
         const filePath = path.resolve(dataDir, "uploads", p.replace(/^\/api\/uploads\//, ""));
         if (!fs.existsSync(filePath)) continue;
         const ext = path.extname(filePath).slice(1) || "jpg";
-        const suffix = allPaths.length > 1 ? ` (${i + 1} of ${allPaths.length})` : "";
-        const fileName = `${invoice.property} - ${invoice.purchaseDate} ${safeDesc}${suffix}.${ext}`;
+        const partSuffix = allPaths.length > 1 ? ` (${i + 1} of ${allPaths.length})` : "";
+        const fileName = `${invoice.property} - ${invoice.purchaseDate} ${safeDesc}${partSuffix}${codeSuffix}.${ext}`;
         await uploadToDrive(filePath, fileName, propertyFolderId || ccReceiptsFolder || undefined);
       }
       return true;
@@ -591,7 +598,8 @@ async function syncToDrive(invoice: any): Promise<boolean> {
     const filePath = path.resolve(dataDir, "uploads", invoice.photoPath.replace(/^\/api\/uploads\//, ""));
     if (!fs.existsSync(filePath)) return false;
     const ext = path.extname(filePath).slice(1) || "jpg";
-    const fileName = `${invoice.property} - ${invoice.purchaseDate} ${safeDesc}.${ext}`;
+    const codeSuffix = invoice.propertyCode ? ` ${invoice.propertyCode}` : "";
+    const fileName = `${invoice.property} - ${invoice.purchaseDate} ${safeDesc}${codeSuffix}.${ext}`;
     const base64 = fs.readFileSync(filePath).toString("base64");
     callExternalTool("google_drive", "export_files", {
       file_urls: [`data:image/${ext};base64,${base64}`],
@@ -674,6 +682,74 @@ export async function registerRoutes(
   // file's actual content doesn't match its extension, and updates any DB rows
   // (invoices.photo_path / photo_paths and user/contractor doc paths) that
   // reference the renamed files. Idempotent.
+  // Admin: assign property_code values to existing rows that don't have one yet.
+  // Walks every property's invoices + cash transactions in date order and labels
+  // them 1..N (or PREFIX-1..PREFIX-N if the property has a code). Idempotent:
+  // rows that already have a property_code are left untouched.
+  app.post("/api/admin/backfill-property-codes", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    const dryRun = req.body?.dryRun === true;
+    try {
+      const updates = await storage.backfillPropertyCodes(dryRun);
+      res.json({ ok: true, dryRun, updates: updates.length, sample: updates.slice(0, 20) });
+    } catch (e: any) {
+      console.error("[backfill] failed:", e);
+      res.status(500).json({ error: e.message?.slice(0, 200) || "backfill failed" });
+    }
+  });
+
+  // Admin: audit every invoice's photo references. Returns a list of rows whose
+  // photoPath / photoPaths point to file(s) that don't exist on disk, plus rows
+  // with no photoPath at all. Useful for spotting missing receipts.
+  app.get("/api/admin/audit-invoice-photos", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+
+    const propertyFilter = (req.query.property as string) || "";
+    const allInvoices = await storage.getAllInvoices();
+    const issues: any[] = [];
+
+    for (const inv of allInvoices) {
+      if (propertyFilter && inv.property !== propertyFilter) continue;
+      const paths: string[] = [];
+      try {
+        if (inv.photoPaths) {
+          const arr = JSON.parse(inv.photoPaths);
+          if (Array.isArray(arr)) for (const p of arr) if (typeof p === "string") paths.push(p);
+        } else if (inv.photoPath) {
+          paths.push(inv.photoPath);
+        }
+      } catch { /* ignore */ }
+
+      const missing: string[] = [];
+      for (const p of paths) {
+        if (!p.startsWith("/api/uploads/")) continue;
+        const fp = path.resolve(uploadsDir, p.slice("/api/uploads/".length));
+        if (!fs.existsSync(fp)) missing.push(p);
+      }
+
+      if (paths.length === 0 || missing.length > 0) {
+        issues.push({
+          id: inv.id,
+          property: inv.property,
+          propertyCode: (inv as any).propertyCode || null,
+          recordNumber: inv.recordNumber,
+          purchaseDate: inv.purchaseDate,
+          description: inv.description,
+          amount: inv.amount,
+          paymentMethod: inv.paymentMethod,
+          submittedBy: inv.userId,
+          allPaths: paths,
+          missingPaths: missing,
+          reason: paths.length === 0 ? "no_photo_path" : "file_not_on_disk",
+        });
+      }
+    }
+
+    res.json({ totalInvoices: allInvoices.length, issuesFound: issues.length, issues });
+  });
+
   app.post("/api/admin/heal-photo-extensions", async (req, res) => {
     const session = await requireAdmin(req, res);
     if (!session) return;
@@ -1796,6 +1872,44 @@ export async function registerRoutes(
     res.json(prop);
   });
 
+  // Admin: set or clear a property's short code (e.g. "TE") and/or marketing URL.
+  // Body: { code?: string|null, marketingUrl?: string|null }. Either may be omitted.
+  app.put("/api/properties/:id", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+
+    const allProps = await storage.getAllProperties();
+    const prop = allProps.find(p => p.id === id);
+    if (!prop) return res.status(404).json({ error: "Property not found" });
+
+    if ("code" in req.body) {
+      const raw = req.body.code;
+      const code = raw == null || raw === "" ? null : String(raw).trim().toUpperCase();
+      if (code && !/^[A-Z0-9]{1,6}$/.test(code)) {
+        return res.status(400).json({ error: "Code must be 1\u20136 letters or digits (e.g. 'TE')" });
+      }
+      // Enforce uniqueness so two properties don't share the same prefix.
+      if (code) {
+        const conflict = allProps.find(p => p.id !== id && (p as any).code?.toUpperCase() === code);
+        if (conflict) return res.status(409).json({ error: `Code already used by '${conflict.name}'` });
+      }
+      await storage.updatePropertyCode(id, code);
+    }
+    if ("marketingUrl" in req.body) {
+      const raw = req.body.marketingUrl;
+      const url = raw == null || raw === "" ? null : String(raw).trim();
+      if (url && !/^https?:\/\//i.test(url)) {
+        return res.status(400).json({ error: "Marketing URL must start with http:// or https://" });
+      }
+      await storage.updatePropertyMarketingUrl(id, url);
+    }
+
+    const updated = (await storage.getAllProperties()).find(p => p.id === id);
+    res.json(updated);
+  });
+
   app.delete("/api/properties/:id", async (req, res) => {
     const session = await requireAdmin(req, res);
     if (!session) return;
@@ -1865,6 +1979,9 @@ export async function registerRoutes(
 
     const user = await storage.getUser(session.userId);
     const recordNumber = await storage.getNextRecordNumber(parsed.data.property);
+    // Per-property human-readable code, e.g. "TE-7". Used in Sheets'
+    // "Receipt Identification" column AND appended to the Drive filename.
+    const propertyCode = await storage.getNextPropertyCode(parsed.data.property);
     const invoice = await storage.createInvoice({
       userId: session.userId,
       photoPath,
@@ -1878,12 +1995,13 @@ export async function registerRoutes(
       paymentMethod: parsed.data.paymentMethod,
       lastFourDigits: parsed.data.paymentMethod === "cc" ? (parsed.data.lastFourDigits || null) : null,
       recordNumber,
+      propertyCode,
       rentManagerIssue: parsed.data.rentManagerIssue || null,
       receiptType: req.body.receiptType || "expense",
       syncedToDrive: 0,
       syncedToSheets: 0,
       createdAt: new Date().toISOString(),
-    });
+    } as any);
 
     res.json(invoice);
 
@@ -2654,7 +2772,7 @@ export async function registerRoutes(
     const session = await requireAuth(req, res);
     if (!session) return;
 
-    const { property, type, category, amount, date, unitLotNumber, tenantName, bankName, description, photoPath, photoPaths } = req.body;
+    const { property, type, category, amount, date, unitLotNumber, tenantName, bankName, description, photoPath, photoPaths, payerName, notes } = req.body;
     if (!property || !type || !category || !amount || !date) {
       return res.status(400).json({ error: "property, type, category, amount, and date are required" });
     }
@@ -2664,6 +2782,7 @@ export async function registerRoutes(
 
     const user = await storage.getUser(session.userId);
     const recordNumber = await storage.getNextCashRecordNumber(property);
+    const propertyCode = await storage.getNextPropertyCode(property);
     const tx = await storage.createCashTransaction({
       userId: session.userId,
       property,
@@ -2675,13 +2794,16 @@ export async function registerRoutes(
       tenantName: tenantName || null,
       bankName: bankName || null,
       description: description || null,
+      payerName: payerName || null,
+      notes: notes || null,
       photoPath: photoPath || null,
       photoPaths: photoPaths || null,
       recordNumber,
+      propertyCode,
       syncedToSheets: 0,
       syncedToDrive: 0,
       createdAt: new Date().toISOString(),
-    });
+    } as any);
 
     res.json(tx);
 
@@ -2692,7 +2814,11 @@ export async function registerRoutes(
       if (isGoogleEnabled() && cashSheetsConfig && cashSheetsConfig.tabs[property]) {
         try {
           const balance = await storage.getCashBalanceByProperty(property);
-          const row = [date, type, category, amount, unitLotNumber || "", tenantName || "", bankName || "", description || "", submittedByName, new Date().toISOString(), String(recordNumber), String(balance.toFixed(2))];
+          // Column K (was String(recordNumber)) now carries the per-property
+          // receipt identifier (e.g. "TE-7"). Keep the column index the same so
+          // existing column letters in the spreadsheet keep their meaning.
+          const receiptId = propertyCode || String(recordNumber);
+          const row = [date, type, category, amount, unitLotNumber || "", tenantName || payerName || "", bankName || "", description || notes || "", submittedByName, new Date().toISOString(), receiptId, String(balance.toFixed(2))];
           const ok = await appendSheetRow(cashSheetsConfig.spreadsheetId, property, row);
           if (ok) await storage.updateCashTransactionSyncStatus(tx.id, "sheets", true);
         } catch (e) { console.error("[cash-sheets] Sync error:", e); }
@@ -2718,7 +2844,8 @@ export async function registerRoutes(
               if (propFolder) propertyFolderCache.set("cash_" + property, propFolder);
             }
             const ext = path.extname(filePath).slice(1) || "jpg";
-            const driveFileName = `Cash ${typeLabel}_${property}_${date}.${ext}`;
+            const codeSuffix = propertyCode ? ` ${propertyCode}` : "";
+            const driveFileName = `Cash ${typeLabel}_${property}_${date}${codeSuffix}.${ext}`;
             await uploadToDrive(filePath, driveFileName, propFolder || cashFolder || undefined);
             await storage.updateCashTransactionSyncStatus(tx.id, "drive", true);
           }

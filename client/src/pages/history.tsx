@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
-import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, DollarSign, Clock, UserPlus, UsersRound, Wallet, BookOpen } from "lucide-react";
+import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, DollarSign, Clock, UserPlus, UsersRound, Wallet, BookOpen, Megaphone } from "lucide-react";
 import { apiRequest, queryClient, getAuthToken } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
@@ -111,6 +111,84 @@ function PlaybookButton({ role }: { role: string | undefined }) {
                 <Download className="w-4 h-4" />
                 Download
               </a>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// Marketing button — visible to property managers, admins, and super_admins.
+// For PMs who manage exactly one property with a Marketing URL set, it opens
+// that URL directly. For PMs/admins covering multiple properties, it opens a
+// small picker so they can choose which property's marketing page to visit.
+// Hidden entirely when no property they manage has a URL configured.
+function MarketingButton({ role }: { role: string | undefined }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const eligible = role === "manager" || role === "admin" || role === "super_admin";
+  const { data: properties } = useQuery<any[]>({
+    queryKey: ["/api/properties"],
+    enabled: eligible,
+  });
+  if (!eligible || !properties) return null;
+
+  const withUrl = properties.filter(p => !!p.marketingUrl);
+  if (withUrl.length === 0) return null;
+
+  const handleClick = () => {
+    if (withUrl.length === 1) {
+      window.open(withUrl[0].marketingUrl, "_blank", "noopener,noreferrer");
+    } else {
+      setPickerOpen(true);
+    }
+  };
+
+  return (
+    <>
+      <Button
+        className="w-full h-12 text-sm gap-1.5 bg-orange-500 hover:bg-orange-600 text-white"
+        onClick={handleClick}
+        data-testid="button-marketing"
+      >
+        <Megaphone className="w-4 h-4" />
+        Marketing
+      </Button>
+      {pickerOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+          onClick={() => setPickerOpen(false)}
+        >
+          <div
+            className="bg-card rounded-lg max-w-md w-full p-5 space-y-3"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-lg bg-orange-100 dark:bg-orange-950/40 flex items-center justify-center">
+                  <Megaphone className="w-4 h-4 text-orange-600 dark:text-orange-400" />
+                </div>
+                <h3 className="font-semibold">Marketing</h3>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => setPickerOpen(false)}>
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">Choose a property:</p>
+            <div className="space-y-2">
+              {withUrl.map(p => (
+                <a
+                  key={p.id}
+                  href={p.marketingUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-md border hover:bg-accent text-sm"
+                  onClick={() => setPickerOpen(false)}
+                >
+                  <span className="font-medium">{p.name}</span>
+                  <span className="text-xs text-muted-foreground truncate max-w-[60%]">{p.marketingUrl}</span>
+                </a>
+              ))}
             </div>
           </div>
         </div>
@@ -362,6 +440,11 @@ export default function HistoryPage() {
             CC Statement Reconciliation
           </Button>
         )}
+
+        {/* Marketing — visible to managers/admins/super_admins when any property
+            they can see has a marketing URL configured. Sits between the CC
+            button row and the Work Report row. */}
+        <MarketingButton role={user?.role} />
 
         {user?.role === "contractor" && (
           <div className="grid grid-cols-2 gap-3">
