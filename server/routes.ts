@@ -84,10 +84,16 @@ async function sendEmailToRecipients(recipients: { name: string; email: string }
       try {
         // Build MIME message
         const boundary = "boundary_" + Date.now();
+        // RFC 2047 encode the Subject so non-ASCII characters (em dashes, accents,
+        // emoji) render correctly in every mail client. Without this, Gmail's web
+        // UI shows the raw bytes as mojibake (e.g. "\u2014" → "\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u20ac\u017d").
+        const encodedSubject = /[^\x20-\x7e]/.test(subject)
+          ? `=?UTF-8?B?${Buffer.from(subject, "utf-8").toString("base64")}?=`
+          : subject;
         let mime = [
           `To: ${recipient.name} <${recipient.email}>`,
           `From: "Jetsetter Reporting" <jetsetterinvoices1@gmail.com>`,
-          `Subject: ${subject}`,
+          `Subject: ${encodedSubject}`,
           `MIME-Version: 1.0`,
         ];
 
@@ -2681,6 +2687,9 @@ export async function registerRoutes(
         u.workCreditReport ||
         u.dailyReport; // legacy flag
       if (!subscribed) continue;
+      // Hard exclude the company inbox — it was previously CC'd separately and
+      // the user has asked for it to be dropped entirely from the daily report.
+      if (u.email.toLowerCase() === "jetsettercapitalllc@gmail.com") continue;
       recipientMap.set(u.email.toLowerCase(), { name: u.displayName, email: u.email });
     }
     const consolidatedRecipients = Array.from(recipientMap.values());
@@ -2694,34 +2703,24 @@ export async function registerRoutes(
       sentTo.push(...consolidatedRecipients.map(r => r.email));
     }
 
-    // Forward to company inbox (with HTML attachment) + upload to Drive folders
-    const companyEmail = "jetsettercapitalllc@gmail.com";
+    // Archive: still upload the daily report HTML to the "Daily Reporting" Drive
+    // folder so the historical archive is preserved, but DO NOT email it to the
+    // company inbox anymore (the subscriber list already covers the right people).
     try {
       const reportFilePath = path.resolve(dataDir, `daily-report-${date}.html`);
       fs.writeFileSync(reportFilePath, consolidated);
 
-      await sendEmailToRecipients(
-        [{ name: "Jetsetter Capital", email: companyEmail }],
-        `Jetsetter Daily Report \u2014 ${date}`,
-        consolidated,
-        [{ filename: `Jetsetter_Daily_Report_${date}.html`, path: reportFilePath }]
-      );
-      sentTo.push(companyEmail);
-
-      // Upload to the single "Daily Reporting" Drive folder.
-      // Legacy folders are renamed at startup (see runDriveFolderMigration).
       if (isGoogleEnabled()) {
         try {
           const dailyFolder = await ensureDriveFolder("Daily Reporting");
           if (dailyFolder) {
-            await shareFolderWithEmail(dailyFolder, companyEmail);
             await uploadToDrive(reportFilePath, `Jetsetter_Daily_Report_${date}.html`, dailyFolder);
           }
         } catch (e) { console.error("[daily-report] Drive folder upload failed:", e); }
       }
 
       try { fs.unlinkSync(reportFilePath); } catch {}
-    } catch (e) { console.error("[daily-report] Failed to send to company email:", e); }
+    } catch (e) { console.error("[daily-report] Failed to archive daily report:", e); }
 
     // The consolidated email replaces the old per-flag tx/time/work-credit emails.
 
