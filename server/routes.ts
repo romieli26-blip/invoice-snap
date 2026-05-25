@@ -1064,6 +1064,33 @@ export async function registerRoutes(
   const playbookActivePath = () => path.resolve(dataDir, "playbook.pdf");
   const playbookVersionsDir = () => path.resolve(dataDir, "playbook-versions");
 
+  // Generic helpers for the other two role manuals (admin / contractor).
+  // Each manual has an active path and a versioned snapshots dir, just like the playbook.
+  const adminManualActivePath = () => path.resolve(dataDir, "admin-manual.pdf");
+  const adminManualVersionsDir = () => path.resolve(dataDir, "admin-manual-versions");
+  const contractorManualActivePath = () => path.resolve(dataDir, "contractor-manual.pdf");
+  const contractorManualVersionsDir = () => path.resolve(dataDir, "contractor-manual-versions");
+
+  // Pick the manual filename + path that matches a given role. Returns null if no
+  // manual is available on disk yet for that role.
+  function manualForRole(role: string): { filename: string; path: string } | null {
+    let active: string, friendly: string;
+    if (role === "manager") {
+      active = playbookActivePath();
+      friendly = "Property-Manager-Manual.pdf";
+    } else if (role === "admin" || role === "super_admin") {
+      active = adminManualActivePath();
+      friendly = "Admin-Manual.pdf";
+    } else if (role === "contractor") {
+      active = contractorManualActivePath();
+      friendly = "Contractor-Manual.pdf";
+    } else {
+      return null;
+    }
+    if (!fs.existsSync(active)) return null;
+    return { filename: friendly, path: active };
+  }
+
   function ensurePlaybookDirs() {
     const verDir = playbookVersionsDir();
     if (!fs.existsSync(verDir)) fs.mkdirSync(verDir, { recursive: true });
@@ -1159,6 +1186,74 @@ export async function registerRoutes(
       })
       .sort((a, b) => b.savedAt.localeCompare(a.savedAt));
     res.json({ versions: files });
+  });
+
+  // ---- Generic manual upload (Admin Manual / Contractor Manual) ----
+  // The PM Playbook keeps its existing endpoint above (used by the dashboard button).
+  // These two endpoints power the welcome-email attachments for admin / contractor roles.
+  async function handleManualUpload(
+    req: any,
+    res: any,
+    activePathFn: () => string,
+    versionsDirFn: () => string,
+    logTag: string,
+  ) {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+    const realExt = sniffFileExt(req.file.path);
+    if (realExt !== "pdf") {
+      try { fs.unlinkSync(req.file.path); } catch {}
+      return res.status(400).json({ error: "File must be a PDF" });
+    }
+    const verDir = versionsDirFn();
+    if (!fs.existsSync(verDir)) fs.mkdirSync(verDir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const versionPath = path.resolve(verDir, `${logTag}-${stamp}.pdf`);
+    try {
+      fs.copyFileSync(req.file.path, activePathFn());
+      fs.copyFileSync(req.file.path, versionPath);
+      try { fs.unlinkSync(req.file.path); } catch {}
+      const st = fs.statSync(activePathFn());
+      console.log(`[${logTag}] Replaced active. Snapshot: ${versionPath}`);
+      res.json({
+        ok: true,
+        info: {
+          sizeBytes: st.size,
+          sizeMB: +(st.size / 1024 / 1024).toFixed(2),
+          updatedAt: st.mtime.toISOString(),
+        },
+      });
+    } catch (e: any) {
+      console.error(`[${logTag}] Failed to save:`, e);
+      res.status(500).json({ error: e.message?.slice(0, 200) || "failed to save" });
+    }
+  }
+
+  app.post("/api/admin/admin-manual", upload.single("manual"), fixUploadedExtension, async (req: any, res) =>
+    handleManualUpload(req, res, adminManualActivePath, adminManualVersionsDir, "admin-manual"));
+
+  app.post("/api/admin/contractor-manual", upload.single("manual"), fixUploadedExtension, async (req: any, res) =>
+    handleManualUpload(req, res, contractorManualActivePath, contractorManualVersionsDir, "contractor-manual"));
+
+  // Metadata endpoint so the admin panel can show which manuals are loaded.
+  app.get("/api/admin/manuals-info", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    function infoFor(p: string) {
+      if (!fs.existsSync(p)) return null;
+      const st = fs.statSync(p);
+      return {
+        sizeBytes: st.size,
+        sizeMB: +(st.size / 1024 / 1024).toFixed(2),
+        updatedAt: st.mtime.toISOString(),
+      };
+    }
+    res.json({
+      playbook: infoFor(playbookActivePath()),       // PM
+      adminManual: infoFor(adminManualActivePath()),
+      contractorManual: infoFor(contractorManualActivePath()),
+    });
   });
 
   // Serve uploaded files (supports both Bearer token and ?token= query param for <img> tags)
@@ -1519,17 +1614,18 @@ export async function registerRoutes(
           const attachments: { filename: string; path: string }[] = [];
           if (videoAttachment) attachments.push(videoAttachment);
 
-          // For property managers, also attach the current Property Manager Playbook PDF
-          // (if one has been uploaded). Each new PM gets the latest version at the time
-          // their account is created.
-          const isManager = role === "manager";
-          let playbookAttached = false;
-          if (isManager) {
-            const playbookPath = path.resolve(dataDir, "playbook.pdf");
-            if (fs.existsSync(playbookPath)) {
-              attachments.push({ filename: "Property-Manager-Playbook.pdf", path: playbookPath });
-              playbookAttached = true;
-            }
+          // Attach the role-appropriate manual (Admin / Property Manager / Contractor)
+          // if one has been uploaded. Each new user gets the latest version on disk
+          // at the time their account is created.
+          const manual = manualForRole(role);
+          let manualAttached = false;
+          let manualLabel = "";
+          if (manual) {
+            attachments.push(manual);
+            manualAttached = true;
+            if (role === "manager") manualLabel = "Property Manager Manual";
+            else if (role === "contractor") manualLabel = "Contractor Manual";
+            else manualLabel = "Admin Manual";
           }
 
           const tutorialBlock = videoAttachment
@@ -1539,10 +1635,10 @@ export async function registerRoutes(
                <p style="text-align:center;"><a href="${videoUrl}" style="display:inline-block;background:#01696F;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold;">Watch Tutorial Video</a></p>
                <p style="color:#666;font-size:12px;text-align:center;">If the link asks for permission, contact your administrator to be added.</p>`;
 
-          const playbookBlock = playbookAttached
-            ? `<h3 style="color:#01696F;">Property Manager Playbook</h3>
-               <p>The <b>Property Manager Playbook</b> is attached to this email. It walks you through everything you need to know about running a Jetsetter property.</p>
-               <p style="color:#666;font-size:12px;">You can also access the latest version any time from the <b>Property Manager Playbook</b> button at the top of your dashboard.</p>`
+          const playbookBlock = manualAttached
+            ? `<h3 style="color:#01696F;">${manualLabel}</h3>
+               <p>The <b>${manualLabel}</b> is attached to this email. It walks you through everything you need to know to get started.</p>
+               ${role === "manager" ? `<p style="color:#666;font-size:12px;">You can also access the latest version any time from the <b>Property Manager Playbook</b> button at the top of your dashboard.</p>` : ""}`
             : "";
 
           await sendEmailToRecipients(
@@ -1568,7 +1664,7 @@ export async function registerRoutes(
             </body></html>`,
             attachments.length > 0 ? attachments : undefined
           );
-          console.log(`[welcome] Sent welcome email to ${email} (video attached: ${!!videoAttachment}, playbook attached: ${playbookAttached})`);
+          console.log(`[welcome] Sent welcome email to ${email} (role: ${role}, video attached: ${!!videoAttachment}, manual attached: ${manualAttached ? manualLabel : "none"})`);
         } catch (e) { console.error("[welcome] Failed to send welcome email:", e); }
       });
     }
@@ -1657,6 +1753,22 @@ export async function registerRoutes(
         try {
           const appUrl = "https://invoice-snap-production.up.railway.app";
           const videoUrl = "https://drive.google.com/file/d/1L2SFfyKK19vpJxuJs99VrIMtywF7ox76/view";
+
+          // Attach the contractor (or other) manual if available
+          const attachments: { filename: string; path: string }[] = [];
+          const manual = manualForRole(user.role);
+          let manualLabel = "";
+          if (manual) {
+            attachments.push(manual);
+            if (user.role === "contractor") manualLabel = "Contractor Manual";
+            else if (user.role === "manager") manualLabel = "Property Manager Manual";
+            else manualLabel = "Admin Manual";
+          }
+          const manualBlock = manualLabel
+            ? `<h3 style="color:#01696F;">${manualLabel}</h3>
+               <p>The <b>${manualLabel}</b> is attached to this email — it covers everything you need to know to get started.</p>`
+            : "";
+
           await sendEmailToRecipients(
             [{ name: displayName, email }],
             `Welcome to Jetsetter Reporting`,
@@ -1673,10 +1785,13 @@ export async function registerRoutes(
                 <p>3. On first login, you'll be asked to <b>change your password</b>.</p>
                 <p>4. <b>Add the app to your home screen</b> for easy access.</p>
                 <p style="text-align:center;margin-top:20px;"><a href="${videoUrl}" style="display:inline-block;background:#01696F;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold;">Watch Tutorial Video</a></p>
+                ${manualBlock}
                 <p style="color:#888;font-size:12px;margin-top:30px;">- Jetsetter Reporting</p>
               </div>
-            </body></html>`
+            </body></html>`,
+            attachments.length > 0 ? attachments : undefined
           );
+          console.log(`[pm-welcome] Sent welcome email to ${email} (role: ${user.role}, manual: ${manualLabel || "none"})`);
         } catch (e) { console.error("[pm-welcome] Failed:", e); }
       });
     }
