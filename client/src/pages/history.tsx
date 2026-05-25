@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
-import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, DollarSign, Clock, UserPlus, UsersRound, Wallet, BookOpen, Megaphone } from "lucide-react";
+import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, ChevronDown, DollarSign, Clock, UserPlus, UsersRound, Wallet, BookOpen, Megaphone } from "lucide-react";
 import { apiRequest, queryClient, getAuthToken } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
@@ -273,6 +273,12 @@ export default function HistoryPage() {
   // ---- User filter (admins + PMs with managed properties) ----
   // Build list of distinct users who appear in any of the four lists.
   const [userFilter, setUserFilter] = useState<string>("all");
+  // Collapsible section state — Recent Receipts open by default, the rest collapsed for a cleaner page.
+  const [showReceipts, setShowReceipts] = useState(true);
+  const [showCashTxs, setShowCashTxs] = useState(false);
+  const [showWorkReports, setShowWorkReports] = useState(false);
+  const [showFlatRates, setShowFlatRates] = useState(false);
+  const [showWorkCredits, setShowWorkCredits] = useState(false);
 
   const filterOptions = useMemo(() => {
     const set = new Map<number, string>();
@@ -622,7 +628,19 @@ export default function HistoryPage() {
 
         {/* Section header */}
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-medium text-muted-foreground">Recent Receipts</h2>
+          <button
+            type="button"
+            onClick={() => setShowReceipts(s => !s)}
+            className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+            data-testid="toggle-receipts"
+            aria-expanded={showReceipts}
+          >
+            <ChevronDown className={`w-4 h-4 transition-transform ${showReceipts ? "" : "-rotate-90"}`} />
+            <span>Recent Receipts</span>
+            {filteredInvoices && filteredInvoices.length > 0 && (
+              <span className="text-xs text-muted-foreground/80 font-normal">({filteredInvoices.length})</span>
+            )}
+          </button>
           {(user?.role === "admin" || user?.role === "super_admin") && invoices && invoices.length > 0 && (
             <Button variant="ghost" size="sm" onClick={handleExport} className="text-xs gap-1" data-testid="button-export">
               <Download className="w-3.5 h-3.5" />
@@ -631,8 +649,8 @@ export default function HistoryPage() {
           )}
         </div>
 
-        {/* Invoice list */}
-        {isLoading ? (
+        {/* Invoice list — collapsible */}
+        {showReceipts && (isLoading ? (
           <div className="space-y-3">
             {[1, 2, 3].map(i => (
               <Card key={i}>
@@ -741,19 +759,31 @@ export default function HistoryPage() {
             <p className="text-sm font-medium">No receipts yet</p>
             <p className="text-xs text-muted-foreground mt-1">Tap "New Receipt" to submit your first one.</p>
           </div>
-        )}
+        ))}
 
-        {/* ---- CASH TRANSACTIONS SECTION ---- */}
+        {/* ---- CASH TRANSACTIONS SECTION (collapsible) ---- */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-medium text-muted-foreground">Cash Transactions</h2>
+            <button
+              type="button"
+              onClick={() => setShowCashTxs(s => !s)}
+              className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+              data-testid="toggle-cash-txs"
+              aria-expanded={showCashTxs}
+            >
+              <ChevronDown className={`w-4 h-4 transition-transform ${showCashTxs ? "" : "-rotate-90"}`} />
+              <span>Cash Transactions</span>
+              {filteredCashTxs && filteredCashTxs.length > 0 && (
+                <span className="text-xs text-muted-foreground/80 font-normal">({filteredCashTxs.length})</span>
+              )}
+            </button>
             {(user?.role === "admin" || user?.role === "super_admin") && cashTxs && cashTxs.length > 0 && (
               <Button variant="ghost" size="sm" onClick={handleCashExport} className="text-xs gap-1">
                 <Download className="w-3.5 h-3.5" /> Export CSV
               </Button>
             )}
           </div>
-          {filteredCashTxs && filteredCashTxs.length > 0 ? (
+          {showCashTxs && (filteredCashTxs && filteredCashTxs.length > 0 ? (
             <div className="space-y-2">
               {filteredCashTxs.map((tx: any) => (
                 <Card key={tx.id}>
@@ -816,14 +846,26 @@ export default function HistoryPage() {
             </div>
           ) : (
             <p className="text-sm text-muted-foreground text-center py-4">No cash transactions yet.</p>
-          )}
+          ))}
         </div>
         </>)}
 
-        {/* ---- TIME REPORTS SECTION ---- */}
+        {/* ---- TIME REPORTS SECTION (collapsible) ---- */}
         <div className="space-y-2">
-          <h2 className="text-sm font-medium text-muted-foreground">Work Reports</h2>
-          {filteredTimeReports && filteredTimeReports.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => setShowWorkReports(s => !s)}
+            className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+            data-testid="toggle-work-reports"
+            aria-expanded={showWorkReports}
+          >
+            <ChevronDown className={`w-4 h-4 transition-transform ${showWorkReports ? "" : "-rotate-90"}`} />
+            <span>Work Reports</span>
+            {filteredTimeReports && filteredTimeReports.length > 0 && (
+              <span className="text-xs text-muted-foreground/80 font-normal">({filteredTimeReports.length})</span>
+            )}
+          </button>
+          {showWorkReports && (filteredTimeReports && filteredTimeReports.length > 0 ? (
             <div className="space-y-2">
               {filteredTimeReports.map((tr: any) => (
                 <Card key={tr.id}>
@@ -924,13 +966,24 @@ export default function HistoryPage() {
             </div>
           ) : (
             <p className="text-sm text-muted-foreground text-center py-4">No work reports yet.</p>
-          )}
+          ))}
         </div>
 
-        {/* ---- FLAT RATE ASSIGNMENTS SECTION ---- */}
+        {/* ---- FLAT RATE ASSIGNMENTS SECTION (collapsible) ---- */}
         {filteredFlatRates && filteredFlatRates.length > 0 && (
           <div className="space-y-2">
-            <h2 className="text-sm font-medium text-muted-foreground">Flat Rate Assignments</h2>
+            <button
+              type="button"
+              onClick={() => setShowFlatRates(s => !s)}
+              className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+              data-testid="toggle-flat-rates"
+              aria-expanded={showFlatRates}
+            >
+              <ChevronDown className={`w-4 h-4 transition-transform ${showFlatRates ? "" : "-rotate-90"}`} />
+              <span>Flat Rate Assignments</span>
+              <span className="text-xs text-muted-foreground/80 font-normal">({filteredFlatRates.length})</span>
+            </button>
+            {showFlatRates && (
             <div className="space-y-2">
               {filteredFlatRates.map((fr: any) => {
                 let accs: string[] = [];
@@ -984,13 +1037,25 @@ export default function HistoryPage() {
                 );
               })}
             </div>
+            )}
           </div>
         )}
 
-        {/* ---- WORK CREDITS SECTION ---- */}
+        {/* ---- WORK CREDITS SECTION (collapsible) ---- */}
         {filteredWorkCredits && filteredWorkCredits.length > 0 && (
           <div className="space-y-2">
-            <h2 className="text-sm font-medium text-muted-foreground">Work Credits</h2>
+            <button
+              type="button"
+              onClick={() => setShowWorkCredits(s => !s)}
+              className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+              data-testid="toggle-work-credits"
+              aria-expanded={showWorkCredits}
+            >
+              <ChevronDown className={`w-4 h-4 transition-transform ${showWorkCredits ? "" : "-rotate-90"}`} />
+              <span>Work Credits</span>
+              <span className="text-xs text-muted-foreground/80 font-normal">({filteredWorkCredits.length})</span>
+            </button>
+            {showWorkCredits && (
             <div className="space-y-2">
               {filteredWorkCredits.map((wc: any) => {
                 let descList: string[] = [];
@@ -1044,6 +1109,7 @@ export default function HistoryPage() {
                 );
               })}
             </div>
+            )}
           </div>
         )}
       </div>
