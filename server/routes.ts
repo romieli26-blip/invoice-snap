@@ -1848,7 +1848,10 @@ export async function registerRoutes(
       return res.status(403).json({ error: "Not authorized" });
     }
 
-    const pmPropIds = new Set(await storage.getUserPropertyIds(session.userId));
+    // A PM only manages contractors whose home base is the same as theirs.
+    // Secondary property assignments don't grant visibility — the home base is
+    // what decides which contractors belong to which PM.
+    const pmHome = (pm as any).homeProperty;
     const allUsers = await storage.getAllUsers();
     const allProps = await storage.getAllProperties();
     const propMap = new Map(allProps.map(p => [p.id, p.name]));
@@ -1857,22 +1860,22 @@ export async function registerRoutes(
     for (const u of allUsers) {
       if (u.role !== "contractor") continue;
       if (u.id === session.userId) continue;
+      // Admins still see every contractor; PMs only see contractors who share their home base.
+      const sameHome = pmHome && (u as any).homeProperty === pmHome;
+      if (!isAdminRole(session.role) && !sameHome) continue;
       const cPropIds = await storage.getUserPropertyIds(u.id);
-      const shared = cPropIds.some(pid => pmPropIds.has(pid));
-      if (shared) {
-        contractors.push({
-          id: u.id,
-          username: u.username,
-          displayName: u.displayName,
-          email: u.email,
-          firstName: (u as any).firstName,
-          lastName: (u as any).lastName,
-          baseRate: (u as any).baseRate,
-          offSiteRate: (u as any).offSiteRate,
-          homeProperty: (u as any).homeProperty,
-          assignedProperties: cPropIds.map(pid => propMap.get(pid)).filter(Boolean),
-        });
-      }
+      contractors.push({
+        id: u.id,
+        username: u.username,
+        displayName: u.displayName,
+        email: u.email,
+        firstName: (u as any).firstName,
+        lastName: (u as any).lastName,
+        baseRate: (u as any).baseRate,
+        offSiteRate: (u as any).offSiteRate,
+        homeProperty: (u as any).homeProperty,
+        assignedProperties: cPropIds.map(pid => propMap.get(pid)).filter(Boolean),
+      });
     }
     res.json(contractors);
   });
@@ -2294,19 +2297,32 @@ export async function registerRoutes(
     });
   });
 
+  // Helper: returns the set of user IDs whose submissions a property manager
+  // is allowed to see. A PM should only see contractors who share the PM's
+  // home base property — even if the PM is also assigned to other properties
+  // for support purposes. The PM always sees their own data.
+  async function getVisibleUserIdsForManager(pmUserId: number): Promise<Set<number>> {
+    const allowed = new Set<number>([pmUserId]);
+    const pm = await storage.getUser(pmUserId);
+    const pmHome = (pm as any)?.homeProperty;
+    if (!pmHome) return allowed; // PM with no home base sees only themselves
+    const allUsers = await storage.getAllUsers();
+    for (const u of allUsers) {
+      if ((u as any).homeProperty === pmHome) {
+        allowed.add(u.id);
+      }
+    }
+    return allowed;
+  }
+
   // Helper: returns invoices a non-admin user is allowed to see —
-  // their own submissions + any invoices for properties they manage.
+  // their own submissions + any submission by a contractor sharing their home base.
   async function getVisibleInvoicesForUser(userId: number) {
-    const ownInvoices = await storage.getInvoicesByUser(userId);
-    const assignedProps = await storage.getPropertiesForUser(userId);
-    const assignedPropNames = new Set(assignedProps.map(p => p.name));
-    if (assignedPropNames.size === 0) return ownInvoices;
+    const allowedUserIds = await getVisibleUserIdsForManager(userId);
     const allInvoices = await storage.getAllInvoices();
-    const propertyInvoices = allInvoices.filter(inv => assignedPropNames.has(inv.property));
-    const byId = new Map<number, typeof allInvoices[number]>();
-    for (const inv of ownInvoices) byId.set(inv.id, inv);
-    for (const inv of propertyInvoices) byId.set(inv.id, inv);
-    return Array.from(byId.values()).sort((a, b) => b.id - a.id);
+    return allInvoices
+      .filter(inv => allowedUserIds.has(inv.userId))
+      .sort((a, b) => b.id - a.id);
   }
 
   app.get("/api/invoices", async (req, res) => {
@@ -3870,26 +3886,13 @@ export async function registerRoutes(
     if (isAdminRole(session.role)) {
       reports = await storage.getAllTimeReports();
     } else {
-      const ownReports = await storage.getTimeReportsByUser(session.userId);
-      // Property managers with allowCreatingContractors see time reports for their assigned properties too
-      const pmUser = await storage.getUser(session.userId);
-      if ((pmUser as any)?.allowCreatingContractors) {
-        const pmPropIds = new Set(await storage.getUserPropertyIds(session.userId));
-        if (pmPropIds.size > 0) {
-          const allProps = await storage.getAllProperties();
-          const pmPropNames = new Set(allProps.filter(p => pmPropIds.has(p.id)).map(p => p.name));
-          const allReports = await storage.getAllTimeReports();
-          const propertyReports = allReports.filter(r => pmPropNames.has(r.property));
-          const byId = new Map<number, typeof allReports[number]>();
-          for (const r of ownReports) byId.set(r.id, r);
-          for (const r of propertyReports) byId.set(r.id, r);
-          reports = Array.from(byId.values()).sort((a, b) => b.id - a.id);
-        } else {
-          reports = ownReports;
-        }
-      } else {
-        reports = ownReports;
-      }
+      // PM sees their own reports + reports from contractors whose home base
+      // matches the PM's home base property.
+      const allowedUserIds = await getVisibleUserIdsForManager(session.userId);
+      const allReports = await storage.getAllTimeReports();
+      reports = allReports
+        .filter(r => allowedUserIds.has(r.userId))
+        .sort((a, b) => b.id - a.id);
     }
     // Enrich with submittedBy
     const allUsers = await storage.getAllUsers();
@@ -4066,19 +4069,12 @@ export async function registerRoutes(
     if (isAdminRole(session.role)) {
       credits = await storage.getAllWorkCredits();
     } else {
-      // Non-admins see their own submissions AND any work credits for properties they manage
-      const ownCredits = await storage.getWorkCreditsByUser(session.userId);
-      const assignedProps = await storage.getPropertiesForUser(session.userId);
-      const assignedPropNames = new Set(assignedProps.map(p => p.name));
-      credits = ownCredits;
-      if (assignedPropNames.size > 0) {
-        const allCredits = await storage.getAllWorkCredits();
-        const propertyCredits = allCredits.filter(c => assignedPropNames.has(c.property));
-        const byId = new Map<number, typeof allCredits[number]>();
-        for (const c of ownCredits) byId.set(c.id, c);
-        for (const c of propertyCredits) byId.set(c.id, c);
-        credits = Array.from(byId.values()).sort((a, b) => b.id - a.id);
-      }
+      // PM sees own + work credits from contractors who share PM's home base property
+      const allowedUserIds = await getVisibleUserIdsForManager(session.userId);
+      const allCredits = await storage.getAllWorkCredits();
+      credits = allCredits
+        .filter(c => allowedUserIds.has(c.userId))
+        .sort((a, b) => b.id - a.id);
     }
     // Enrich with submittedBy (display name)
     const allUsers = await storage.getAllUsers();
@@ -4176,19 +4172,12 @@ export async function registerRoutes(
     if (isAdminRole(session.role)) {
       rows = await storage.getAllFlatRates();
     } else {
-      const ownRows = await storage.getFlatRatesByUser(session.userId);
-      // Property managers also see flat-rate entries on their assigned properties
-      const assignedProps = await storage.getPropertiesForUser(session.userId);
-      const assignedNames = new Set(assignedProps.map(p => p.name));
-      rows = ownRows;
-      if (assignedNames.size > 0) {
-        const all = await storage.getAllFlatRates();
-        const propertyRows = all.filter(r => assignedNames.has(r.property));
-        const byId = new Map<number, typeof all[number]>();
-        for (const r of ownRows) byId.set(r.id, r);
-        for (const r of propertyRows) byId.set(r.id, r);
-        rows = Array.from(byId.values()).sort((a, b) => b.id - a.id);
-      }
+      // PM sees own + flat-rate entries from contractors who share PM's home base
+      const allowedUserIds = await getVisibleUserIdsForManager(session.userId);
+      const all = await storage.getAllFlatRates();
+      rows = all
+        .filter(r => allowedUserIds.has(r.userId))
+        .sort((a, b) => b.id - a.id);
     }
     // Enrich with submittedBy
     const allUsers = await storage.getAllUsers();
