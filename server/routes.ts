@@ -3912,7 +3912,26 @@ export async function registerRoutes(
   app.delete("/api/time-reports/:id", async (req, res) => {
     const session = await requireAuth(req, res);
     if (!session) return;
-    await storage.deleteTimeReport(parseInt(req.params.id));
+    const id = parseInt(req.params.id);
+    // Capture the report BEFORE deleting so we know which user's sheet tab to rebuild.
+    const all = await storage.getAllTimeReports();
+    const existing = all.find(r => r.id === id);
+    await storage.deleteTimeReport(id);
+    // Mirror the deletion to Google Sheets in the background (don't block the response).
+    if (existing) {
+      setImmediate(async () => {
+        try {
+          const result = await rebuildTimeReportSheetForUser(existing.userId);
+          if (!result.ok) {
+            console.log(`[time-reports delete] Skipped sheet rebuild for user ${existing.userId}: ${result.reason}`);
+          } else {
+            console.log(`[time-reports delete] Rebuilt sheet tab for user ${existing.userId} after deleting report ${id}`);
+          }
+        } catch (e) {
+          console.error(`[time-reports delete] Failed to rebuild sheet for user ${existing.userId}:`, e);
+        }
+      });
+    }
     res.json({ ok: true });
   });
 
@@ -4699,6 +4718,8 @@ export async function registerRoutes(
   }
 
   // Helper: determine which user IDs a given viewer may run workforce reports for.
+  // A property manager can only see contractors whose HOME BASE matches their own,
+  // even if the PM is also assigned to other properties for support purposes.
   async function getWorkforceViewableUserIds(viewerId: number, viewerRole: string): Promise<Set<number>> {
     const allowed = new Set<number>([viewerId]);
     if (isAdminRole(viewerRole)) {
@@ -4706,20 +4727,15 @@ export async function registerRoutes(
       for (const u of all) allowed.add(u.id);
       return allowed;
     }
-    // Managers with allowCreatingContractors can see CONTRACTORS whose
-    // assigned properties overlap with theirs. Other managers on the same
-    // property are intentionally excluded — pay is only visible for the
-    // viewer themselves and the contractors they oversee.
     const viewer = await storage.getUser(viewerId);
     if ((viewer as any)?.allowCreatingContractors) {
-      const viewerPropIds = new Set(await storage.getUserPropertyIds(viewerId));
-      if (viewerPropIds.size > 0) {
+      const viewerHome = (viewer as any)?.homeProperty;
+      if (viewerHome) {
         const all = await storage.getAllUsers();
         for (const u of all) {
           if (u.id === viewerId) continue;
           if (u.role !== "contractor") continue;
-          const uPropIds = await storage.getUserPropertyIds(u.id);
-          if (uPropIds.some(pid => viewerPropIds.has(pid))) allowed.add(u.id);
+          if ((u as any).homeProperty === viewerHome) allowed.add(u.id);
         }
       }
     }
@@ -4819,6 +4835,99 @@ export async function registerRoutes(
       reports: enrichedReports,
     });
   });
+
+  // ---- Helper: rebuild one user's tab in the Time Reports spreadsheet ----
+  // Used by both the manual sync endpoint below and the delete-time-report handler
+  // (so deleting a row in the app also removes it from the sheet).
+  async function rebuildTimeReportSheetForUser(userId: number): Promise<{ ok: boolean; reason?: string }> {
+    if (!isGoogleEnabled()) return { ok: false, reason: "google-disabled" };
+    const trConfigPath = path.resolve(dataDir, "time-tracking-config.json");
+    if (!fs.existsSync(trConfigPath)) return { ok: false, reason: "no-config" };
+    let trConfig: any;
+    try { trConfig = JSON.parse(fs.readFileSync(trConfigPath, "utf-8")); }
+    catch { return { ok: false, reason: "bad-config" }; }
+    if (!trConfig?.spreadsheetId) return { ok: false, reason: "no-sheet" };
+
+    const user = await storage.getUser(userId);
+    if (!user) return { ok: false, reason: "no-user" };
+    const tabName = user.displayName || `User ${userId}`;
+
+    const headers = [
+      "Date", "Property", "Time Blocks", "Total Hours", "Rate ($/hr)",
+      "Labor ($)", "Miles", "Mileage Pay ($)", "Special Terms ($)",
+      "Total ($)", "Accomplishments", "Notes", "Submitted At",
+    ];
+    await createSheetTab(trConfig.spreadsheetId, tabName, headers);
+    await clearSheet(trConfig.spreadsheetId, `'${tabName}'!A2:Z`);
+
+    const reports = (await storage.getAllTimeReports()).filter(r => r.userId === userId);
+    const homeProperty = (user as any)?.homeProperty || "";
+    const baseRate = parseFloat((user as any)?.baseRate || "0");
+    const offSiteRate = parseFloat((user as any)?.offSiteRate || "0");
+    const sorted = [...reports].sort((a, b) => a.date.localeCompare(b.date));
+
+    const rows: string[][] = [];
+    for (const r of sorted) {
+      let hours = 0;
+      let timeDisplay = `${r.startTime || ""} - ${r.endTime || ""}`;
+      let blocks: { start: string; end: string }[] = [];
+      try { blocks = r.timeBlocks ? JSON.parse(r.timeBlocks) : []; } catch {}
+      if (blocks.length > 0) {
+        hours = blocks.reduce((sum, b) => {
+          const [bsh, bsm] = b.start.split(":").map(Number);
+          const [beh, bem] = b.end.split(":").map(Number);
+          return sum + ((beh * 60 + bem) - (bsh * 60 + bsm)) / 60;
+        }, 0);
+        timeDisplay = blocks.map(b => `${b.start} - ${b.end}`).join(", ");
+      } else if (r.startTime && r.endTime) {
+        const [sh, sm] = r.startTime.split(":").map(Number);
+        const [eh, em] = r.endTime.split(":").map(Number);
+        hours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+      }
+      const isOffSite = r.property !== homeProperty && (user as any)?.allowOffSite;
+      const rate = isOffSite ? offSiteRate : baseRate;
+      const laborCost = hours * rate;
+      const milesVal = parseFloat(r.miles || "0");
+      const mileageVal = parseFloat(r.mileageAmount || "0");
+      const specialVal = r.specialTerms ? parseFloat(r.specialTermsAmount || "0") : 0;
+      const totalCost = laborCost + mileageVal + specialVal;
+      let accs: string[] = [];
+      try { accs = JSON.parse(r.accomplishments || "[]"); } catch {}
+      if (blocks.length > 1) {
+        for (let bi = 0; bi < blocks.length; bi++) {
+          const blk = blocks[bi];
+          const [bsh, bsm] = blk.start.split(":").map(Number);
+          const [beh, bem] = blk.end.split(":").map(Number);
+          const blockHours = ((beh * 60 + bem) - (bsh * 60 + bsm)) / 60;
+          const blockLabor = blockHours * rate;
+          rows.push([
+            r.date, r.property + (isOffSite ? " (off-site)" : ""),
+            `${blk.start} - ${blk.end}`, blockHours.toFixed(1),
+            `$${rate.toFixed(2)}`, `$${blockLabor.toFixed(2)}`,
+            bi === 0 ? milesVal.toString() : "0",
+            bi === 0 ? `$${mileageVal.toFixed(2)}` : "$0.00",
+            bi === 0 ? `$${specialVal.toFixed(2)}` : "$0.00",
+            bi === 0 ? `$${totalCost.toFixed(2)}` : `$${blockLabor.toFixed(2)}`,
+            bi === 0 ? accs.join("; ") : "(continued)",
+            bi === 0 ? (r.notes || "") : "", r.createdAt,
+          ]);
+        }
+      } else {
+        rows.push([
+          r.date, r.property + (isOffSite ? " (off-site)" : ""),
+          timeDisplay, hours.toFixed(1),
+          `$${rate.toFixed(2)}`, `$${laborCost.toFixed(2)}`,
+          milesVal.toString(), `$${mileageVal.toFixed(2)}`,
+          `$${specialVal.toFixed(2)}`, `$${totalCost.toFixed(2)}`,
+          accs.join("; "), r.notes || "", r.createdAt,
+        ]);
+      }
+    }
+    if (rows.length > 0) {
+      await updateSheetRange(trConfig.spreadsheetId, `'${tabName}'!A2`, rows);
+    }
+    return { ok: true };
+  }
 
   // ---- Sync All Time Reports to Spreadsheet ----
   app.post("/api/admin/sync-time-reports-sheet", async (req, res) => {
