@@ -124,16 +124,22 @@ function PlaybookButton({ role }: { role: string | undefined }) {
 // that URL directly. For PMs/admins covering multiple properties, it opens a
 // small picker so they can choose which property's marketing page to visit.
 // Hidden entirely when no property they manage has a URL configured.
-function MarketingButton({ role }: { role: string | undefined }) {
+function MarketingButton({ role, homeProperty }: { role: string | undefined; homeProperty?: string | null }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const eligible = role === "manager" || role === "admin" || role === "super_admin";
+  const isAdmin = role === "admin" || role === "super_admin";
   const { data: properties } = useQuery<any[]>({
     queryKey: ["/api/properties"],
     enabled: eligible,
   });
   if (!eligible || !properties) return null;
 
-  const withUrl = properties.filter(p => !!p.marketingUrl);
+  // Property managers see the marketing link only for THEIR home base property.
+  // Admins/super_admins still see every property that has a marketing URL set.
+  const scoped = isAdmin
+    ? properties
+    : (homeProperty ? properties.filter(p => p.name === homeProperty) : []);
+  const withUrl = scoped.filter(p => !!p.marketingUrl);
   if (withUrl.length === 0) return null;
 
   const handleClick = () => {
@@ -450,7 +456,7 @@ export default function HistoryPage() {
         {/* Marketing — visible to managers/admins/super_admins when any property
             they can see has a marketing URL configured. Sits between the CC
             button row and the Work Report row. */}
-        <MarketingButton role={user?.role} />
+        <MarketingButton role={user?.role} homeProperty={(user as any)?.homeProperty} />
 
         {user?.role === "contractor" && (
           <div className="grid grid-cols-2 gap-3">
