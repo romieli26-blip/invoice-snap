@@ -4593,17 +4593,34 @@ export async function registerRoutes(
     const reports = await storage.getTimeReportsByUserAndDateRange(userIdNum, startDate, endDate);
     const userObj = await storage.getUser(userIdNum);
 
+    // Precompute per-entry rate so the totals match the sheet (which also
+    // honors positionRate -> offSiteRate -> baseRate). The old code used a
+    // single flat baseRate, which is what caused the Pay Calculator to show
+    // $18 even though the sheet had already used $20 / $15 position rates.
+    const baseRate = parseFloat((userObj as any)?.baseRate || "0");
+    const offSiteRate = parseFloat((userObj as any)?.offSiteRate || "0");
+    const homeProperty = (userObj as any)?.homeProperty || "";
+    const mileageRate = parseFloat((userObj as any)?.mileageRate || "0.50");
+
     let totalHours = 0;
     let totalMiles = 0;
     let totalMileagePay = 0;
     let totalSpecialTerms = 0;
+    let laborCost = 0;
     const daysWorked = new Set<string>();
+
+    function rateFor(r: any) {
+      if (r.positionRate) return parseFloat(r.positionRate);
+      const isOff = r.property !== homeProperty && (userObj as any)?.allowOffSite;
+      return isOff ? offSiteRate : baseRate;
+    }
 
     for (const r of reports) {
       let blocks: { start: string; end: string }[] = [];
       try { blocks = r.timeBlocks ? JSON.parse(r.timeBlocks) : []; } catch {}
+      let entryHours = 0;
       if (blocks.length > 0) {
-        totalHours += blocks.reduce((sum, b) => {
+        entryHours = blocks.reduce((sum, b) => {
           const [bsh, bsm] = b.start.split(":").map(Number);
           const [beh, bem] = b.end.split(":").map(Number);
           return sum + ((beh * 60 + bem) - (bsh * 60 + bsm)) / 60;
@@ -4611,19 +4628,15 @@ export async function registerRoutes(
       } else {
         const [sh, sm] = (r.startTime || "0:0").split(":").map(Number);
         const [eh, em] = (r.endTime || "0:0").split(":").map(Number);
-        totalHours += ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+        entryHours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
       }
+      totalHours += entryHours;
+      laborCost += entryHours * rateFor(r);
       totalMiles += parseFloat(r.miles || "0");
       totalMileagePay += parseFloat(r.mileageAmount || "0");
       if (r.specialTerms) totalSpecialTerms += parseFloat(r.specialTermsAmount || "0");
       daysWorked.add(r.date);
     }
-
-    const baseRate = parseFloat((userObj as any)?.baseRate || "0");
-    const offSiteRate = parseFloat((userObj as any)?.offSiteRate || "0");
-    const homeProperty = (userObj as any)?.homeProperty || "";
-    const mileageRate = parseFloat((userObj as any)?.mileageRate || "0.50");
-    const laborCost = totalHours * baseRate;
 
     // Flat rate assignments contribute additional pay independent of hours.
     const flatRates = await storage.getFlatRatesByUserAndDateRange(userIdNum, startDate, endDate);
@@ -4653,7 +4666,8 @@ export async function registerRoutes(
         hours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
       }
       const isOffSite = r.property !== homeProperty && (userObj as any)?.allowOffSite;
-      const rate = isOffSite ? offSiteRate : baseRate;
+      // Position rate (when set on the report) wins over off-site/base rate.
+      const rate = r.positionRate ? parseFloat(r.positionRate) : (isOffSite ? offSiteRate : baseRate);
       const entryCost = hours * rate;
       const entryMileage = parseFloat(r.mileageAmount || "0");
       const entrySpecial = r.specialTerms ? parseFloat(r.specialTermsAmount || "0") : 0;
@@ -4844,6 +4858,10 @@ export async function registerRoutes(
       "Total ($)", "Accomplishments", "Notes", "Submitted At",
     ];
     await createSheetTab(trConfig.spreadsheetId, tabName, headers);
+    // Force-rewrite row 1 so existing tabs created with the old 13-column layout
+    // pick up the new "Type" column too. createSheetTab only writes headers on
+    // brand-new tabs, so this catch-up step is required.
+    await updateSheetRange(trConfig.spreadsheetId, `'${tabName}'!A1`, [headers]);
     await clearSheet(trConfig.spreadsheetId, `'${tabName}'!A2:Z`);
 
     const reports = (await storage.getAllTimeReports()).filter(r => r.userId === userId);

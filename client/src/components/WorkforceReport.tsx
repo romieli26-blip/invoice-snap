@@ -145,10 +145,29 @@ export function WorkforceReport({
               <div className="text-right font-medium">{wfResult.summary.daysWorked}</div>
               <div className="text-muted-foreground">Total Hours</div>
               <div className="text-right font-medium">{wfResult.summary.totalHours} hrs</div>
-              <div className="text-muted-foreground">Rate</div>
-              <div className="text-right font-medium">${wfResult.summary.baseRate}/hr</div>
-              <div className="text-muted-foreground">Labor ({wfResult.summary.totalHours}h × ${wfResult.summary.baseRate})</div>
-              <div className="text-right font-semibold">${wfResult.summary.laborCost?.toFixed(2)}</div>
+              {/* When position pay or off-site rates are in play, different
+                  entries can use different per-hour rates. Detect that here
+                  so the summary doesn't claim a single misleading rate. */}
+              {(() => {
+                const rates = new Set<number>((wfResult.reports || []).map((r: any) => Number(r.rate || 0)).filter(Boolean));
+                const singleRate = rates.size <= 1
+                  ? (rates.values().next().value ?? Number(wfResult.summary.baseRate))
+                  : null;
+                return (
+                  <>
+                    <div className="text-muted-foreground">Rate</div>
+                    <div className="text-right font-medium">
+                      {singleRate != null ? `$${singleRate}/hr` : "Varies by entry"}
+                    </div>
+                    <div className="text-muted-foreground">
+                      {singleRate != null
+                        ? `Labor (${wfResult.summary.totalHours}h × $${singleRate})`
+                        : "Labor (mixed rates)"}
+                    </div>
+                    <div className="text-right font-semibold">${wfResult.summary.laborCost?.toFixed(2)}</div>
+                  </>
+                );
+              })()}
               <div className="text-muted-foreground">Mileage ({wfResult.summary.totalMiles} mi)</div>
               <div className="text-right">${wfResult.summary.totalMileagePay?.toFixed(2)}</div>
               <div className="text-muted-foreground">Special Terms / Travel</div>
