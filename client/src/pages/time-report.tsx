@@ -10,7 +10,8 @@ import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, Plus, Trash2, Loader2, Clock, AlertTriangle, Pencil, Check } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Loader2, Clock, AlertTriangle, Pencil, Check, Briefcase } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { LogoBackground } from "@/components/LogoBackground";
 
 interface Property {
@@ -67,15 +68,22 @@ export default function TimeReportPage() {
     }
   })() as { name: string; rate: string }[];
   // If the user has ANY positions defined, position pay takes over from
-  // baseRate/offSiteRate. With 1 position we auto-apply it (no need to ask).
-  // With 2+ positions we ask the user which one each time.
+  // baseRate/offSiteRate. Even one position shows a gating picker first,
+  // followed by a confirmation dialog, before the form is rendered.
   const hasAnyPositions = userPositions.length >= 1;
-  const hasMultiplePositions = userPositions.length >= 2;
-  // Default selection: when there's exactly one position, pre-select it ("0").
-  // Otherwise empty until the user picks one.
-  const [selectedPositionIdx, setSelectedPositionIdx] = useState<string>(
-    userPositions.length === 1 ? "0" : ""
+  // We no longer auto-pick — the picker is the front door for every report
+  // when positions exist, so the user explicitly confirms which one each time.
+  const [selectedPositionIdx, setSelectedPositionIdx] = useState<string>("");
+
+  // Position picker stages:
+  //   "choose"    : full-screen choose-a-position view (default when positions exist)
+  //   "confirm"   : confirmation dialog asking "Are you sure?"
+  //   "form"      : the regular Work Report form, with the picked rate locked in
+  // If no positions configured, we start straight at "form" — unchanged behavior.
+  const [pickerStage, setPickerStage] = useState<"choose" | "confirm" | "form">(
+    hasAnyPositions ? "choose" : "form"
   );
+  const [pendingPositionIdx, setPendingPositionIdx] = useState<string>("");
 
   function addTimeBlock() {
     setTimeBlocks(prev => [...prev, { start: "", end: "" }]);
@@ -162,10 +170,8 @@ export default function TimeReportPage() {
       toast({ title: "Please fill in all time blocks", variant: "destructive" });
       return;
     }
-    if (hasMultiplePositions && selectedPositionIdx === "") {
-      toast({ title: "Please select your position for this report", variant: "destructive" });
-      return;
-    }
+    // Note: when positions are configured, the picker runs BEFORE the form,
+    // so selectedPositionIdx is always set here. No extra validation needed.
     // Validate end time is after start time for each block
     for (let i = 0; i < timeBlocks.length; i++) {
       const b = timeBlocks[i];
@@ -191,8 +197,8 @@ export default function TimeReportPage() {
     setSubmitting(true);
     try {
       // Capture the chosen position name+rate on the submission so the sheet,
-      // daily report and pay calculator all see the correct figure.
-      // Works for both single-position auto-pick and multi-position user picks.
+      // daily report and pay calculator all see the correct figure. Picker
+      // runs before the form, so this is set whenever positions are configured.
       const selectedPos = hasAnyPositions && selectedPositionIdx !== ""
         ? userPositions[parseInt(selectedPositionIdx, 10)]
         : null;
@@ -353,6 +359,82 @@ export default function TimeReportPage() {
             <h1 className="text-xl font-semibold">Work Report</h1>
           </div>
 
+          {/* Step 1: Position chooser (only when user has positions configured). */}
+          {pickerStage === "choose" && (
+            <div className="space-y-3">
+              <div className="text-sm text-muted-foreground">
+                You have multiple pay positions. Pick the one you're reporting under for this entry.
+              </div>
+              <div className="space-y-2">
+                {userPositions.map((p, i) => (
+                  <button
+                    key={`${p.name}-${i}`}
+                    type="button"
+                    onClick={() => { setPendingPositionIdx(String(i)); setPickerStage("confirm"); }}
+                    className="w-full flex items-center justify-between gap-3 rounded-md border border-input bg-card hover:bg-muted/40 transition-colors px-4 py-3 text-left"
+                    data-testid={`button-pick-position-${i}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Briefcase className="w-4 h-4 text-primary flex-shrink-0" />
+                      <span className="text-sm">
+                        Proceed as <b>{p.name}</b>
+                        <span className="text-muted-foreground"> • ${p.rate}/hr</span>
+                      </span>
+                    </div>
+                    <span className="text-primary text-sm">Next →</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Step 2: Confirmation modal. */}
+          <Dialog
+            open={pickerStage === "confirm"}
+            onOpenChange={(open) => { if (!open) setPickerStage("choose"); }}
+          >
+            <DialogContent className="sm:max-w-sm">
+              <DialogHeader>
+                <DialogTitle>Confirm your position</DialogTitle>
+                <DialogDescription>
+                  Please make sure you picked the right position. Your hours on this report will be paid at the rate shown.
+                </DialogDescription>
+              </DialogHeader>
+              {pendingPositionIdx !== "" && userPositions[parseInt(pendingPositionIdx, 10)] && (
+                <div className="rounded-md border bg-muted/40 p-3 space-y-1">
+                  <div className="flex items-center gap-2 text-sm">
+                    <Briefcase className="w-4 h-4 text-primary" />
+                    <span>
+                      Reporting as <b>{userPositions[parseInt(pendingPositionIdx, 10)].name}</b>
+                    </span>
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    Rate for this report: <b className="text-foreground">${userPositions[parseInt(pendingPositionIdx, 10)].rate}/hr</b>
+                  </div>
+                </div>
+              )}
+              <div className="flex gap-2 justify-end mt-3">
+                <Button
+                  type="button" variant="outline"
+                  onClick={() => setPickerStage("choose")}
+                  data-testid="button-position-back"
+                >
+                  Back
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => { setSelectedPositionIdx(pendingPositionIdx); setPickerStage("form"); }}
+                  data-testid="button-position-confirm"
+                >
+                  Confirm
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          {/* Step 3: The regular form. Only renders once the user has confirmed
+              a position (or if no positions are configured at all). */}
+          {pickerStage === "form" && (
           <form onSubmit={handleFormSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label>Property</Label>
@@ -371,34 +453,25 @@ export default function TimeReportPage() {
               )}
             </div>
 
-            {hasMultiplePositions && (
-              <div className="space-y-2">
-                <Label>Position</Label>
-                <Select value={selectedPositionIdx} onValueChange={setSelectedPositionIdx} required>
-                  <SelectTrigger data-testid="select-position">
-                    <SelectValue placeholder="Choose the position you're reporting under" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {userPositions.map((p, i) => (
-                      <SelectItem key={`${p.name}-${i}`} value={String(i)}>
-                        {p.name} — ${p.rate}/hr
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {selectedPositionIdx !== "" && (
-                  <p className="text-xs text-blue-600">
-                    Reporting at ${userPositions[parseInt(selectedPositionIdx, 10)]?.rate}/hr
-                  </p>
-                )}
+            {/* Position is now picked on a gating screen BEFORE this form opens.
+               Once the user has confirmed, the selected position is shown as a
+               small inline tag with a "Change" link to go back to the picker. */}
+            {hasAnyPositions && selectedPositionIdx !== "" && (
+              <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <Briefcase className="w-4 h-4 text-primary" />
+                  <span>
+                    Reporting as <b>{userPositions[parseInt(selectedPositionIdx, 10)]?.name}</b>
+                    {" "}at <b>${userPositions[parseInt(selectedPositionIdx, 10)]?.rate}/hr</b>
+                  </span>
+                </div>
+                <Button
+                  type="button" variant="ghost" size="sm" className="h-7 text-xs"
+                  onClick={() => { setPickerStage("choose"); setPendingPositionIdx(""); }}
+                >
+                  Change
+                </Button>
               </div>
-            )}
-
-            {/* Single position: auto-applied; show a small confirmation hint */}
-            {!hasMultiplePositions && userPositions.length === 1 && (
-              <p className="text-xs text-blue-600">
-                Reporting at ${userPositions[0].rate}/hr ({userPositions[0].name})
-              </p>
             )}
 
             <div className="space-y-2">
@@ -549,6 +622,7 @@ export default function TimeReportPage() {
               {requireFinancialConfirm ? "Review & Submit" : "Submit Work Report"}
             </Button>
           </form>
+          )}
         </div>
       </div>
     </LogoBackground>
