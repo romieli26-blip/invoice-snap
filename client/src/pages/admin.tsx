@@ -68,6 +68,8 @@ export default function AdminPage() {
   const [editUserLastName, setEditUserLastName] = useState("");
   const [editUserBaseRate, setEditUserBaseRate] = useState("");
   const [editUserOffSiteRate, setEditUserOffSiteRate] = useState("");
+  // Multi-position pay (item 2). Each entry { name, rate }. Empty array = legacy single-rate mode.
+  const [editUserPositions, setEditUserPositions] = useState<{ name: string; rate: string }[]>([]);
   const [editUserHomeProperty, setEditUserHomeProperty] = useState("");
   const [editUserAllowOffSite, setEditUserAllowOffSite] = useState(false);
   const [editUserMileageRate, setEditUserMileageRate] = useState("0.50");
@@ -296,25 +298,8 @@ export default function AdminPage() {
 
         <h1 className="text-xl font-semibold" data-testid="text-admin-title">Admin Panel</h1>
 
-        {/* ---- SYNC BUTTON ---- */}
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full gap-2"
-          data-testid="button-resync"
-          onClick={async () => {
-            try {
-              const res = await apiRequest("POST", "/api/admin/resync");
-              const data = await res.json();
-              toast({ title: "Sync complete", description: `${data.sheetsSync} rows synced to Sheets, ${data.driveSync} photos synced to Drive (${data.total} total receipts).` });
-            } catch (e: any) {
-              toast({ title: "Sync failed", description: e.message || "Check Google API configuration.", variant: "destructive" });
-            }
-          }}
-        >
-          Re-sync All Receipts to Google
-        </Button>
-
+        {/* Re-sync / Sync buttons removed — these run automatically on every
+           create, edit and delete now, so the manual triggers were redundant. */}
         <Button
           variant="outline"
           size="sm"
@@ -330,21 +315,6 @@ export default function AdminPage() {
           }}
         >
           Send Daily Report
-        </Button>
-        <Button
-          variant="outline"
-          className="w-full"
-          onClick={async () => {
-            try {
-              toast({ title: "Syncing time reports to Google Sheet..." });
-              await apiRequest("POST", "/api/admin/sync-time-reports-sheet");
-              toast({ title: "Time reports spreadsheet updated", description: "Check Time Reporting folder on Google Drive" });
-            } catch (e: any) {
-              toast({ title: "Sync failed", description: e.message, variant: "destructive" });
-            }
-          }}
-        >
-          Sync All Time Reports to Sheet
         </Button>
 
         {/* ---- WORKFORCE REPORT SECTION ---- */}
@@ -869,6 +839,18 @@ export default function AdminPage() {
                             setEditUserLastName((u as any).lastName || "");
                             setEditUserBaseRate((u as any).baseRate || "");
                             setEditUserOffSiteRate((u as any).offSiteRate || "");
+                            // Parse the JSON positions list if it exists.
+                            try {
+                              const raw = (u as any).positions;
+                              if (raw) {
+                                const parsed = JSON.parse(raw);
+                                setEditUserPositions(Array.isArray(parsed)
+                                  ? parsed.map((p: any) => ({ name: String(p.name || ""), rate: String(p.rate || "") }))
+                                  : []);
+                              } else {
+                                setEditUserPositions([]);
+                              }
+                            } catch { setEditUserPositions([]); }
                             setEditUserHomeProperty((u as any).homeProperty || "");
                             setEditUserAllowOffSite((u as any).allowOffSite === 1);
                             setEditUserMileageRate((u as any).mileageRate || "0.50");
@@ -1053,6 +1035,45 @@ export default function AdminPage() {
                       <Input type="number" step="0.01" value={editUserOffSiteRate} onChange={e => setEditUserOffSiteRate(e.target.value)} placeholder="0.00" />
                     </div>
                   </div>
+
+                  {/* Multi-position pay (optional) */}
+                  <div className="space-y-1 border rounded-md p-2 bg-muted/30">
+                    <Label className="text-xs font-medium">Positions (optional)</Label>
+                    <p className="text-[11px] text-muted-foreground">
+                      Add 2 or more positions if this user reports at different rates depending on the work.
+                      When filled in, the Work Report screen will ask them to pick a position.
+                    </p>
+                    {editUserPositions.map((p, i) => (
+                      <div key={i} className="grid grid-cols-[1fr_90px_28px] gap-1 items-center">
+                        <Input
+                          value={p.name}
+                          onChange={e => setEditUserPositions(prev => prev.map((x, idx) => idx === i ? { ...x, name: e.target.value } : x))}
+                          placeholder="e.g. Property Manager"
+                          className="h-8 text-xs"
+                        />
+                        <Input
+                          type="number" step="0.01"
+                          value={p.rate}
+                          onChange={e => setEditUserPositions(prev => prev.map((x, idx) => idx === i ? { ...x, rate: e.target.value } : x))}
+                          placeholder="Rate"
+                          className="h-8 text-xs"
+                        />
+                        <Button
+                          type="button" variant="ghost" size="icon" className="h-7 w-7"
+                          onClick={() => setEditUserPositions(prev => prev.filter((_, idx) => idx !== i))}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                    <Button
+                      type="button" variant="outline" size="sm" className="h-7 text-xs gap-1 w-full"
+                      onClick={() => setEditUserPositions(prev => [...prev, { name: "", rate: "" }])}
+                    >
+                      <Plus className="w-3 h-3" /> Add position
+                    </Button>
+                  </div>
+
                   <div className="space-y-1">
                     <Label className="text-xs">Home Property</Label>
                     <Select value={editUserHomeProperty} onValueChange={setEditUserHomeProperty}>
@@ -1180,6 +1201,7 @@ export default function AdminPage() {
                     lastName: editUserLastName || undefined,
                     baseRate: editUserBaseRate || undefined,
                     offSiteRate: editUserOffSiteRate || undefined,
+                    positions: editUserPositions.filter(p => p.name.trim() && p.rate.trim()),
                     homeProperty: editUserHomeProperty || undefined,
                     allowOffSite: editUserAllowOffSite,
                     mileageRate: editUserMileageRate || undefined,

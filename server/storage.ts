@@ -219,6 +219,10 @@ sqlite.exec(`
   );
 `);
 try { sqlite.exec("ALTER TABLE invoices ADD COLUMN edit_history TEXT"); } catch {}
+// Multi-position support (item 2 in June 2026 update)
+try { sqlite.exec("ALTER TABLE users ADD COLUMN positions TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE time_reports ADD COLUMN position_name TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE time_reports ADD COLUMN position_rate TEXT"); } catch {}
 // Per-property human-readable receipt IDs (e.g. "TE-1")
 try { sqlite.exec("ALTER TABLE invoices ADD COLUMN property_code TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE cash_transactions ADD COLUMN property_code TEXT"); } catch {}

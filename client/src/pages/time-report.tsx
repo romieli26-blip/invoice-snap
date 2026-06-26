@@ -52,6 +52,23 @@ export default function TimeReportPage() {
   const [submitting, setSubmitting] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
+  // Multi-position support — parse the JSON list on the user object.
+  // Each entry is { name: string, rate: string }. Empty list = legacy single-rate user.
+  const userPositions = (() => {
+    try {
+      const raw = (user as any)?.positions;
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr)
+        ? arr.filter((p: any) => p && p.name && p.rate)
+        : [];
+    } catch {
+      return [];
+    }
+  })() as { name: string; rate: string }[];
+  const hasMultiplePositions = userPositions.length >= 2;
+  const [selectedPositionIdx, setSelectedPositionIdx] = useState<string>("");
+
   function addTimeBlock() {
     setTimeBlocks(prev => [...prev, { start: "", end: "" }]);
   }
@@ -91,7 +108,11 @@ export default function TimeReportPage() {
   const offSiteRate = user?.offSiteRate || "";
 
   const isOffSite = property && property !== homeProperty;
-  const currentRate = isOffSite && allowOffSite ? offSiteRate : baseRate;
+  // If user picked a Position, its rate overrides everything else.
+  const positionRate = hasMultiplePositions && selectedPositionIdx !== ""
+    ? userPositions[parseInt(selectedPositionIdx, 10)]?.rate
+    : undefined;
+  const currentRate = positionRate || (isOffSite && allowOffSite ? offSiteRate : baseRate);
 
   const mileageAmount = miles ? (parseFloat(miles) * mileageRate).toFixed(2) : "";
   const requireFinancialConfirm = (user as any)?.requireFinancialConfirm === 1 || (user as any)?.requireFinancialConfirm === true;
@@ -131,6 +152,10 @@ export default function TimeReportPage() {
       toast({ title: "Please fill in all time blocks", variant: "destructive" });
       return;
     }
+    if (hasMultiplePositions && selectedPositionIdx === "") {
+      toast({ title: "Please select your position for this report", variant: "destructive" });
+      return;
+    }
     // Validate end time is after start time for each block
     for (let i = 0; i < timeBlocks.length; i++) {
       const b = timeBlocks[i];
@@ -155,6 +180,9 @@ export default function TimeReportPage() {
     const endTime = timeBlocks[timeBlocks.length - 1].end;
     setSubmitting(true);
     try {
+      const selectedPos = hasMultiplePositions && selectedPositionIdx !== ""
+        ? userPositions[parseInt(selectedPositionIdx, 10)]
+        : null;
       await apiRequest("POST", "/api/time-reports", {
         property,
         date,
@@ -167,6 +195,8 @@ export default function TimeReportPage() {
         specialTerms,
         specialTermsAmount: specialTerms ? specialTermsAmount : undefined,
         notes: notes || undefined,
+        positionName: selectedPos?.name,
+        positionRate: selectedPos?.rate,
       });
       queryClient.invalidateQueries({ queryKey: ["/api/time-reports"] });
       toast({ title: "Time report submitted" });
@@ -323,10 +353,33 @@ export default function TimeReportPage() {
                   ))}
                 </SelectContent>
               </Select>
-              {isOffSite && allowOffSite && (
+              {isOffSite && allowOffSite && !positionRate && (
                 <p className="text-xs text-blue-600">Off-site rate: ${offSiteRate}/hr</p>
               )}
             </div>
+
+            {hasMultiplePositions && (
+              <div className="space-y-2">
+                <Label>Position</Label>
+                <Select value={selectedPositionIdx} onValueChange={setSelectedPositionIdx} required>
+                  <SelectTrigger data-testid="select-position">
+                    <SelectValue placeholder="Choose the position you're reporting under" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {userPositions.map((p, i) => (
+                      <SelectItem key={`${p.name}-${i}`} value={String(i)}>
+                        {p.name} — ${p.rate}/hr
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {selectedPositionIdx !== "" && (
+                  <p className="text-xs text-blue-600">
+                    Reporting at ${userPositions[parseInt(selectedPositionIdx, 10)]?.rate}/hr
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label>Date</Label>

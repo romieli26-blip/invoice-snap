@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -205,6 +205,89 @@ function MarketingButton({ role, homeProperty }: { role: string | undefined; hom
 
 // Compact thumbnail used in receipt cards. Shows the image when possible,
 // or a labeled placeholder for PDFs and other non-image attachments.
+// Receipt photo viewer with drag-to-pan in all directions (item 6 in June 2026 update).
+// Uses pointer events so it works for mouse, touch and pen. The transform is
+// applied via translate so panning is exactly under the cursor/finger.
+function ZoomablePhoto({ src, zoom, onZoomChange }: { src: string; zoom: number; onZoomChange: (z: number) => void }) {
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const drag = useRef<{ startX: number; startY: number; baseX: number; baseY: number; pointerId: number } | null>(null);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+
+  // Reset pan when zoom returns to 1.
+  useEffect(() => {
+    if (zoom === 1) setOffset({ x: 0, y: 0 });
+  }, [zoom]);
+
+  function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (zoom <= 1) return;
+    drag.current = {
+      startX: e.clientX, startY: e.clientY,
+      baseX: offset.x, baseY: offset.y,
+      pointerId: e.pointerId,
+    };
+    (e.target as Element).setPointerCapture?.(e.pointerId);
+  }
+  function onPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!drag.current) return;
+    setOffset({
+      x: drag.current.baseX + (e.clientX - drag.current.startX),
+      y: drag.current.baseY + (e.clientY - drag.current.startY),
+    });
+  }
+  function onPointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    if (drag.current) {
+      (e.target as Element).releasePointerCapture?.(drag.current.pointerId);
+      drag.current = null;
+    }
+  }
+
+  return (
+    <>
+      <div
+        ref={wrapperRef}
+        className="overflow-hidden max-h-[80vh] rounded-lg select-none"
+        style={{
+          cursor: zoom > 1 ? (drag.current ? "grabbing" : "grab") : "default",
+          touchAction: zoom > 1 ? "none" : "auto",
+        }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+      >
+        <img
+          src={src}
+          alt="Receipt"
+          className="w-full rounded-lg transition-transform pointer-events-none"
+          draggable={false}
+          style={{
+            transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`,
+            transformOrigin: "center center",
+          }}
+          onDoubleClick={() => onZoomChange(zoom === 1 ? 2.5 : 1)}
+        />
+      </div>
+      {/* Zoom controls */}
+      <div className="absolute top-2 left-2 flex gap-1">
+        <button
+          className="w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center text-lg font-bold"
+          onClick={() => onZoomChange(Math.min(zoom + 0.5, 4))}
+        >+</button>
+        <button
+          className="w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center text-lg font-bold"
+          onClick={() => { onZoomChange(Math.max(zoom - 0.5, 1)); }}
+        >-</button>
+        {zoom > 1 && (
+          <button
+            className="h-8 px-2 rounded-full bg-black/50 text-white flex items-center justify-center text-xs"
+            onClick={() => { onZoomChange(1); setOffset({ x: 0, y: 0 }); }}
+          >Reset</button>
+        )}
+      </div>
+    </>
+  );
+}
+
 function PhotoThumb({ paths, onClick }: { paths: string[]; onClick: () => void }) {
   const first = paths[0];
   const extra = paths.length > 1 ? paths.length : 0;
@@ -279,6 +362,8 @@ export default function HistoryPage() {
   // ---- User filter (admins + PMs with managed properties) ----
   // Build list of distinct users who appear in any of the four lists.
   const [userFilter, setUserFilter] = useState<string>("all");
+  // Property filter — visible to admin/super_admin only (item 8 in June 2026 update).
+  const [propertyFilter, setPropertyFilter] = useState<string>("all");
   // Collapsible section state — Recent Receipts open by default, the rest collapsed for a cleaner page.
   const [showReceipts, setShowReceipts] = useState(true);
   const [showCashTxs, setShowCashTxs] = useState(false);
@@ -309,17 +394,39 @@ export default function HistoryPage() {
   // Show the filter only when there's more than one unique user represented.
   const showUserFilter = filterOptions.length > 1;
 
+  // Distinct property values that appear in any list — used to populate the admin property filter.
+  const propertyFilterOptions = useMemo(() => {
+    const set = new Set<string>();
+    const add = (items: any[] | undefined) => {
+      if (!items) return;
+      for (const it of items) if (it.property) set.add(it.property);
+    };
+    add(invoices);
+    add(cashTxs);
+    add(timeReports);
+    add(workCredits);
+    add(flatRates);
+    return Array.from(set).sort();
+  }, [invoices, cashTxs, timeReports, workCredits, flatRates]);
+
+  const isAdminUser = user?.role === "admin" || user?.role === "super_admin";
+  const showPropertyFilter = isAdminUser && propertyFilterOptions.length > 1;
+
   function matchesFilter(item: any): boolean {
-    if (userFilter === "all") return true;
-    return String(item.userId) === userFilter;
+    if (userFilter !== "all" && String(item.userId) !== userFilter) return false;
+    if (propertyFilter !== "all" && item.property !== propertyFilter) return false;
+    return true;
   }
-  const filteredInvoices = useMemo(() => invoices?.filter(matchesFilter), [invoices, userFilter]);
-  const filteredCashTxs = useMemo(() => cashTxs?.filter(matchesFilter), [cashTxs, userFilter]);
-  const filteredTimeReports = useMemo(() => timeReports?.filter(matchesFilter), [timeReports, userFilter]);
-  const filteredWorkCredits = useMemo(() => workCredits?.filter(matchesFilter), [workCredits, userFilter]);
-  const filteredFlatRates = useMemo(() => flatRates?.filter(matchesFilter), [flatRates, userFilter]);
+  const filteredInvoices = useMemo(() => invoices?.filter(matchesFilter), [invoices, userFilter, propertyFilter]);
+  const filteredCashTxs = useMemo(() => cashTxs?.filter(matchesFilter), [cashTxs, userFilter, propertyFilter]);
+  const filteredTimeReports = useMemo(() => timeReports?.filter(matchesFilter), [timeReports, userFilter, propertyFilter]);
+  const filteredWorkCredits = useMemo(() => workCredits?.filter(matchesFilter), [workCredits, userFilter, propertyFilter]);
+  const filteredFlatRates = useMemo(() => flatRates?.filter(matchesFilter), [flatRates, userFilter, propertyFilter]);
 
   // Cash transaction edit state
+  // Full-text "details" modal. Clicking a truncated description opens this
+  // (item 7 in June 2026 update).
+  const [detailsModal, setDetailsModal] = useState<{ title: string; lines: { label: string; value: string }[] } | null>(null);
   const [editingCashTx, setEditingCashTx] = useState<any | null>(null);
   const [editCashAmount, setEditCashAmount] = useState("");
   const [editCashCategory, setEditCashCategory] = useState("");
@@ -632,6 +739,29 @@ export default function HistoryPage() {
           </div>
         )}
 
+        {/* Filter by property — admin/super_admin only (item 8) */}
+        {showPropertyFilter && (
+          <div className="flex items-center gap-2">
+            <Building2 className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+            <Select value={propertyFilter} onValueChange={setPropertyFilter}>
+              <SelectTrigger className="h-9 text-sm" data-testid="select-property-filter">
+                <SelectValue placeholder="Filter by property" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All properties</SelectItem>
+                {propertyFilterOptions.map(p => (
+                  <SelectItem key={p} value={p}>{p}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {propertyFilter !== "all" && (
+              <Button variant="ghost" size="sm" onClick={() => setPropertyFilter("all")} className="h-9 px-2 text-xs">
+                <X className="w-3.5 h-3.5" />
+              </Button>
+            )}
+          </div>
+        )}
+
         {/* Section header */}
         <div className="flex items-center justify-between">
           <button
@@ -681,7 +811,26 @@ export default function HistoryPage() {
                   />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
-                      <p className="text-sm font-medium truncate">{inv.description}</p>
+                      <p
+                        className="text-sm font-medium truncate cursor-pointer"
+                        title="Tap to view full details"
+                        onClick={() => setDetailsModal({
+                          title: inv.description || "Receipt",
+                          lines: [
+                            { label: "Description", value: inv.description || "" },
+                            { label: "Purpose / Use", value: inv.purpose || "" },
+                            { label: "Amount", value: `$${inv.amount}` },
+                            { label: "Property", value: (inv as any).property || "" },
+                            { label: "Date", value: (inv as any).purchaseDate || "" },
+                            { label: "Bought by", value: inv.boughtBy || "" },
+                            { label: "Payment", value: inv.paymentMethod === "cash" ? "Cash" : `Card ••${inv.lastFourDigits || ""}` },
+                            { label: "Receipt ID", value: (inv as any).recordNumber || "" },
+                            { label: "Submitted by", value: (inv as any).submittedBy || "" },
+                          ].filter(l => l.value),
+                        })}
+                      >
+                        {inv.description}
+                      </p>
                       <div className="flex items-center gap-1">
                         <span className="text-sm font-semibold whitespace-nowrap">${inv.amount}</span>
                         <button
@@ -713,7 +862,25 @@ export default function HistoryPage() {
                         </button>
                       </div>
                     </div>
-                    <p className="text-xs text-muted-foreground truncate">{inv.purpose}</p>
+                    <p
+                      className="text-xs text-muted-foreground truncate cursor-pointer"
+                      onClick={() => setDetailsModal({
+                        title: inv.description || "Receipt",
+                        lines: [
+                          { label: "Description", value: inv.description || "" },
+                          { label: "Purpose / Use", value: inv.purpose || "" },
+                          { label: "Amount", value: `$${inv.amount}` },
+                          { label: "Property", value: (inv as any).property || "" },
+                          { label: "Date", value: (inv as any).purchaseDate || "" },
+                          { label: "Bought by", value: inv.boughtBy || "" },
+                          { label: "Payment", value: inv.paymentMethod === "cash" ? "Cash" : `Card ••${inv.lastFourDigits || ""}` },
+                          { label: "Receipt ID", value: (inv as any).recordNumber || "" },
+                          { label: "Submitted by", value: (inv as any).submittedBy || "" },
+                        ].filter(l => l.value),
+                      })}
+                    >
+                      {inv.purpose}
+                    </p>
                     <div className="flex items-center gap-2 mt-1 flex-wrap">
                       {inv.recordNumber && (
                         <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 font-mono">
@@ -816,7 +983,31 @@ export default function HistoryPage() {
                             {tx.property}
                           </Badge>
                           <span className="text-xs text-muted-foreground">{tx.date}</span>
-                          {tx.description && <span className="text-xs text-muted-foreground truncate max-w-[120px]">{tx.description}</span>}
+                          {tx.description && (
+                            <span
+                              className="text-xs text-muted-foreground truncate max-w-[120px] cursor-pointer"
+                              title="Tap to view full details"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDetailsModal({
+                                  title: tx.description,
+                                  lines: [
+                                    { label: "Description", value: tx.description || "" },
+                                    { label: "Amount", value: `$${tx.amount}` },
+                                    { label: "Category", value: tx.category || "" },
+                                    { label: "Property", value: tx.property || "" },
+                                    { label: "Date", value: tx.date || "" },
+                                    { label: "Unit / Lot", value: tx.unitLotNumber || "" },
+                                    { label: "Tenant", value: tx.tenantName || "" },
+                                    { label: "Bank", value: tx.bankName || "" },
+                                    { label: "Submitted by", value: tx.submittedBy || "" },
+                                  ].filter(l => l.value),
+                                });
+                              }}
+                            >
+                              {tx.description}
+                            </span>
+                          )}
                           {tx.recordNumber && (
                             <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 font-mono">
                               #{tx.recordNumber}
@@ -1187,6 +1378,26 @@ export default function HistoryPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Full-details modal triggered by tapping a truncated description (item 7). */}
+      <Dialog open={detailsModal !== null} onOpenChange={(open) => { if (!open) setDetailsModal(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="break-words">{detailsModal?.title}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 text-sm">
+            {detailsModal?.lines.map((l, i) => (
+              <div key={i} className="grid grid-cols-[110px_1fr] gap-2">
+                <span className="text-xs uppercase tracking-wide text-muted-foreground pt-0.5">{l.label}</span>
+                <span className="break-words whitespace-pre-wrap">{l.value}</span>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end mt-3">
+            <Button variant="outline" onClick={() => setDetailsModal(null)}>Close</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={editingCashTx !== null} onOpenChange={(open) => { if (!open) setEditingCashTx(null); }}>
         <DialogContent>
           <DialogHeader><DialogTitle>Edit Cash Transaction</DialogTitle></DialogHeader>
@@ -1194,6 +1405,33 @@ export default function HistoryPage() {
             <div className="space-y-1">
               <Label className="text-xs">Amount ($)</Label>
               <Input type="number" step="0.01" value={editCashAmount} onChange={e => setEditCashAmount(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Category</Label>
+              <Select value={editCashCategory} onValueChange={setEditCashCategory}>
+                <SelectTrigger data-testid="select-cash-category"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {/* Show categories matching the current transaction's direction. */}
+                  {(editingCashTx && ["rental_income","check","washer","dryer","vending","store_items"].includes(editingCashTx.category)) ? (
+                    <>
+                      <SelectItem value="rental_income">Rental Income</SelectItem>
+                      <SelectItem value="check">Check</SelectItem>
+                      <SelectItem value="washer">Washer</SelectItem>
+                      <SelectItem value="dryer">Dryer</SelectItem>
+                      <SelectItem value="vending">Vending</SelectItem>
+                      <SelectItem value="store_items">Store Items</SelectItem>
+                      <SelectItem value="other">Other</SelectItem>
+                    </>
+                  ) : (
+                    <>
+                      <SelectItem value="bank_deposit">Bank Deposit</SelectItem>
+                      <SelectItem value="item_purchased">Item Purchased</SelectItem>
+                      <SelectItem value="contractor_pay">Contractor Pay</SelectItem>
+                      <SelectItem value="other">Other</SelectItem>
+                    </>
+                  )}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Description</Label>
@@ -1225,6 +1463,7 @@ export default function HistoryPage() {
               try {
                 await apiRequest("PUT", `/api/cash-transactions/${editingCashTx!.id}`, {
                   amount: editCashAmount,
+                  category: editCashCategory || undefined,
                   description: editCashDescription,
                   bankName: editCashBankName || undefined,
                   unitLotNumber: editCashUnitLot || undefined,
@@ -1293,23 +1532,11 @@ export default function HistoryPage() {
                 );
               }
               return (
-                <>
-                  <div className="overflow-auto max-h-[80vh] rounded-lg" style={{ cursor: photoZoom > 1 ? "grab" : "default" }}>
-                    <img
-                      src={authImgUrl(cur)}
-                      alt="Receipt"
-                      className="w-full rounded-lg transition-transform"
-                      style={{ transform: `scale(${photoZoom})`, transformOrigin: "center center" }}
-                      onDoubleClick={() => setPhotoZoom(z => z === 1 ? 2.5 : 1)}
-                    />
-                  </div>
-                  {/* Zoom controls */}
-                  <div className="absolute top-2 left-2 flex gap-1">
-                    <button className="w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center text-lg font-bold" onClick={() => setPhotoZoom(z => Math.min(z + 0.5, 4))}>+</button>
-                    <button className="w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center text-lg font-bold" onClick={() => setPhotoZoom(z => Math.max(z - 0.5, 1))}>-</button>
-                    {photoZoom > 1 && <button className="h-8 px-2 rounded-full bg-black/50 text-white flex items-center justify-center text-xs" onClick={() => setPhotoZoom(1)}>Reset</button>}
-                  </div>
-                </>
+                <ZoomablePhoto
+                  src={authImgUrl(cur)}
+                  zoom={photoZoom}
+                  onZoomChange={setPhotoZoom}
+                />
               );
             })()}
             {viewingPhotos.length > 1 && (

@@ -1385,6 +1385,7 @@ export async function registerRoutes(
       mileageRate: (user as any).mileageRate, allowOffSite: (user as any).allowOffSite,
       allowSpecialTerms: (user as any).allowSpecialTerms, specialTermsAmount: (user as any).specialTermsAmount,
       homeProperty: (user as any).homeProperty, baseRate: (user as any).baseRate, offSiteRate: (user as any).offSiteRate,
+      positions: (user as any).positions || null,
       mustChangePassword: (user as any).mustChangePassword || 0,
     } });
   });
@@ -1407,6 +1408,7 @@ export async function registerRoutes(
       mileageRate: (targetUser as any).mileageRate, allowOffSite: (targetUser as any).allowOffSite,
       allowSpecialTerms: (targetUser as any).allowSpecialTerms, specialTermsAmount: (targetUser as any).specialTermsAmount,
       homeProperty: (targetUser as any).homeProperty, baseRate: (targetUser as any).baseRate, offSiteRate: (targetUser as any).offSiteRate,
+      positions: (targetUser as any).positions || null,
       mustChangePassword: (targetUser as any).mustChangePassword || 0,
     } });
   });
@@ -1433,6 +1435,7 @@ export async function registerRoutes(
       mileageRate: (user as any).mileageRate, allowOffSite: (user as any).allowOffSite,
       allowSpecialTerms: (user as any).allowSpecialTerms, specialTermsAmount: (user as any).specialTermsAmount,
       homeProperty: (user as any).homeProperty, baseRate: (user as any).baseRate, offSiteRate: (user as any).offSiteRate,
+      positions: (user as any).positions || null,
       mustChangePassword: (user as any).mustChangePassword || 0,
       requireFinancialConfirm: (user as any).requireFinancialConfirm || 0,
       allowPastDates: (user as any).allowPastDates || 0,
@@ -1514,6 +1517,7 @@ export async function registerRoutes(
         lastName: (u as any).lastName || "",
         baseRate: (u as any).baseRate || "",
         offSiteRate: (u as any).offSiteRate || "",
+        positions: (u as any).positions || "",
         homeProperty: (u as any).homeProperty || "",
         allowOffSite: (u as any).allowOffSite || 0,
         mileageRate: (u as any).mileageRate || "0.50",
@@ -2004,7 +2008,7 @@ export async function registerRoutes(
 
     const { displayName, email, password, role,
       dailyTimeReport, dailyTransactionReport, reconciliationReport,
-      firstName, lastName, baseRate, offSiteRate, homeProperty, allowOffSite,
+      firstName, lastName, baseRate, offSiteRate, positions, homeProperty, allowOffSite,
       mileageRate, allowSpecialTerms, specialTermsAmount, w9OrW4, docsComplete,
       requireFinancialConfirm, allowPastDates, receiveTransactionEmails,
       allowWorkCredits, workCreditReport, documentUploadReport, docReminderEnabled, docReminderDays, allowContractorDocs, allowCreatingContractors,
@@ -2033,6 +2037,19 @@ export async function registerRoutes(
     if (lastName !== undefined) updateData.lastName = lastName || null;
     if (baseRate !== undefined) updateData.baseRate = baseRate || null;
     if (offSiteRate !== undefined) updateData.offSiteRate = offSiteRate || null;
+    if (positions !== undefined) {
+      // Accept either a JSON string or a structured array. Normalise to a JSON string.
+      if (positions === null || positions === "") {
+        updateData.positions = null;
+      } else if (typeof positions === "string") {
+        updateData.positions = positions;
+      } else if (Array.isArray(positions)) {
+        const clean = positions
+          .filter((p: any) => p && p.name && p.rate)
+          .map((p: any) => ({ name: String(p.name).trim(), rate: String(p.rate).trim() }));
+        updateData.positions = clean.length > 0 ? JSON.stringify(clean) : null;
+      }
+    }
     if (homeProperty !== undefined) updateData.homeProperty = homeProperty || null;
     if (allowOffSite !== undefined) updateData.allowOffSite = allowOffSite ? 1 : 0;
     if (mileageRate !== undefined) updateData.mileageRate = mileageRate || null;
@@ -2297,18 +2314,26 @@ export async function registerRoutes(
     });
   });
 
-  // Helper: returns the set of user IDs whose submissions a property manager
-  // is allowed to see. A PM should only see contractors who share the PM's
-  // home base property — even if the PM is also assigned to other properties
-  // for support purposes. The PM always sees their own data.
-  async function getVisibleUserIdsForManager(pmUserId: number): Promise<Set<number>> {
-    const allowed = new Set<number>([pmUserId]);
-    const pm = await storage.getUser(pmUserId);
-    const pmHome = (pm as any)?.homeProperty;
-    if (!pmHome) return allowed; // PM with no home base sees only themselves
+  // Helper: returns the set of user IDs whose submissions a given viewer
+  // (non-admin) is allowed to see. Visibility rules:
+  //   * Property managers see themselves + every CONTRACTOR sharing their
+  //     home base property (so they can monitor their crew).
+  //   * Contractors see ONLY their own submissions — not the PM's, not
+  //     other contractors' (one-way visibility, item 3 in June 2026 update).
+  //   * A viewer with no home base sees only their own submissions.
+  async function getVisibleUserIdsForManager(viewerUserId: number): Promise<Set<number>> {
+    const allowed = new Set<number>([viewerUserId]);
+    const viewer = await storage.getUser(viewerUserId);
+    if (!viewer) return allowed;
+    // Contractors are scoped to themselves only.
+    if (viewer.role === "contractor") return allowed;
+    const viewerHome = (viewer as any)?.homeProperty;
+    if (!viewerHome) return allowed;
     const allUsers = await storage.getAllUsers();
     for (const u of allUsers) {
-      if ((u as any).homeProperty === pmHome) {
+      if (u.id === viewerUserId) continue;
+      // Property managers see contractors at their home base (not other PMs/admins).
+      if (u.role === "contractor" && (u as any).homeProperty === viewerHome) {
         allowed.add(u.id);
       }
     }
@@ -3653,7 +3678,7 @@ export async function registerRoutes(
   app.post("/api/time-reports", async (req, res) => {
     const session = await requireAuth(req, res);
     if (!session) return;
-    const { property, date, startTime, endTime, timeBlocks, accomplishments, miles, mileageAmount, specialTerms, specialTermsAmount, notes } = req.body;
+    const { property, date, startTime, endTime, timeBlocks, accomplishments, miles, mileageAmount, specialTerms, specialTermsAmount, notes, positionName, positionRate } = req.body;
     if (!property || !date || !startTime || !endTime || !accomplishments) {
       return res.status(400).json({ error: "Missing required fields" });
     }
@@ -3701,6 +3726,8 @@ export async function registerRoutes(
       specialTerms: specialTerms ? 1 : 0,
       specialTermsAmount: specialTermsAmount || null,
       notes: notes || null,
+      positionName: positionName || null,
+      positionRate: positionRate || null,
       syncedToSheets: 0,
       createdAt: new Date().toISOString(),
     });
@@ -3812,66 +3839,13 @@ export async function registerRoutes(
             try { fs.unlinkSync(reportFilePath); } catch {}
           } catch (e) { console.error("[time-report] Drive sync error:", e); }
 
-          // Update Time Reporting tracking spreadsheet
+          // Update Time Reporting tracking spreadsheet by rebuilding this user's tab.
+          // Rebuild (vs. append) keeps the layout consistent with Position-aware
+          // rates and the new Type column shared with flat-rate rows.
           try {
-            // Use the shared time tracking config (spreadsheet at Drive root)
-            const trConfigPath = path.resolve(dataDir, "time-tracking-config.json");
-            let trConfig: any = null;
-            if (fs.existsSync(trConfigPath)) {
-              trConfig = JSON.parse(fs.readFileSync(trConfigPath, "utf-8"));
-            }
-            // If no spreadsheet config, trigger a full sync which creates it
-            if (!trConfig?.spreadsheetId) {
-              console.log("[time-report] No time tracking spreadsheet yet, will be created on next sync");
-            }
-            if (trConfig?.spreadsheetId) {
-              const tabName = displayName;
-              await createSheetTab(trConfig.spreadsheetId, tabName, [
-                "Date", "Property", "Time Blocks", "Total Hours", "Rate",
-                "Labor", "Miles", "Mileage Pay", "Special Terms",
-                "Total", "Accomplishments", "Notes", "Submitted At",
-              ]);
-              // Write one row per time block (split shifts get separate rows)
-              if (blocks.length > 1) {
-                for (let bi = 0; bi < blocks.length; bi++) {
-                  const blk = blocks[bi];
-                  const [bsh, bsm] = blk.start.split(":").map(Number);
-                  const [beh, bem] = blk.end.split(":").map(Number);
-                  const blockHours = ((beh * 60 + bem) - (bsh * 60 + bsm)) / 60;
-                  const blockLabor = blockHours * rate;
-                  await appendSheetRow(trConfig.spreadsheetId, tabName, [
-                    date,
-                    property,
-                    `${blk.start} - ${blk.end}`,
-                    blockHours.toFixed(1),
-                    `$${rate.toFixed(2)}`,
-                    `$${blockLabor.toFixed(2)}`,
-                    bi === 0 ? `${milesVal}` : "0",
-                    bi === 0 ? `$${mileageVal.toFixed(2)}` : "$0.00",
-                    bi === 0 ? `$${specialVal.toFixed(2)}` : "$0.00",
-                    bi === 0 ? `$${totalCost.toFixed(2)}` : `$${blockLabor.toFixed(2)}`,
-                    bi === 0 ? accList.join("; ") : "(continued)",
-                    bi === 0 ? (notes || "") : "",
-                    new Date().toISOString(),
-                  ]);
-                }
-              } else {
-                await appendSheetRow(trConfig.spreadsheetId, tabName, [
-                  date,
-                  property,
-                  timeDisplay,
-                  totalHours.toFixed(1),
-                  `$${rate.toFixed(2)}`,
-                  `$${laborCost.toFixed(2)}`,
-                  `${milesVal}`,
-                  `$${mileageVal.toFixed(2)}`,
-                  `$${specialVal.toFixed(2)}`,
-                  `$${totalCost.toFixed(2)}`,
-                  accList.join("; "),
-                  notes || "",
-                  new Date().toISOString(),
-                ]);
-              }
+            const result = await rebuildTimeReportSheetForUser(session.userId);
+            if (!result.ok) {
+              console.log(`[time-report] Sheet rebuild skipped: ${result.reason}`);
             }
           } catch (e) { console.error("[time-report] Tracking spreadsheet error:", e); }
         }
@@ -4145,6 +4119,11 @@ export async function registerRoutes(
     });
     res.json(created);
 
+    // Mirror flat-rate into the Time Reports spreadsheet so everything is in one place.
+    setImmediate(async () => {
+      try { await rebuildTimeReportSheetForUser(session.userId); } catch {}
+    });
+
     // Per-entry email to admins subscribed to work credit reports or daily transaction
     // reports (matches the work-credit notification list).
     setImmediate(async () => {
@@ -4214,8 +4193,13 @@ export async function registerRoutes(
     if (row.userId !== session.userId && !isAdminRole(session.role)) {
       return res.status(403).json({ error: "Not authorized" });
     }
+    const targetUserId = row.userId;
     await storage.deleteFlatRate(id);
     res.json({ ok: true });
+    // Mirror to Google Sheets (item 1: flat-rate rows live in the same tab).
+    setImmediate(async () => {
+      try { await rebuildTimeReportSheetForUser(targetUserId); } catch {}
+    });
   });
 
   // ---- Document Reminders ----
@@ -4852,8 +4836,10 @@ export async function registerRoutes(
     if (!user) return { ok: false, reason: "no-user" };
     const tabName = user.displayName || `User ${userId}`;
 
+    // Column layout: Type was added so flat-rate assignments share the same
+    // sheet as the regular time reports (item 1 in June 2026 update).
     const headers = [
-      "Date", "Property", "Time Blocks", "Total Hours", "Rate ($/hr)",
+      "Type", "Date", "Property", "Position / Time Blocks", "Total Hours", "Rate ($/hr)",
       "Labor ($)", "Miles", "Mileage Pay ($)", "Special Terms ($)",
       "Total ($)", "Accomplishments", "Notes", "Submitted At",
     ];
@@ -4861,13 +4847,36 @@ export async function registerRoutes(
     await clearSheet(trConfig.spreadsheetId, `'${tabName}'!A2:Z`);
 
     const reports = (await storage.getAllTimeReports()).filter(r => r.userId === userId);
+    const flatRates = (await storage.getAllFlatRates()).filter(fr => fr.userId === userId);
     const homeProperty = (user as any)?.homeProperty || "";
     const baseRate = parseFloat((user as any)?.baseRate || "0");
     const offSiteRate = parseFloat((user as any)?.offSiteRate || "0");
-    const sorted = [...reports].sort((a, b) => a.date.localeCompare(b.date));
+
+    // Build a unified list sorted by date so flat-rate rows interleave with
+    // hourly rows. Flat-rate rows live in their own table but show up here too.
+    type Entry =
+      | { kind: "time"; date: string; r: any }
+      | { kind: "flat"; date: string; fr: any };
+    const merged: Entry[] = [
+      ...reports.map((r): Entry => ({ kind: "time", date: r.date, r })),
+      ...flatRates.map((fr): Entry => ({ kind: "flat", date: fr.date, fr })),
+    ].sort((a, b) => a.date.localeCompare(b.date));
 
     const rows: string[][] = [];
-    for (const r of sorted) {
+    for (const entry of merged) {
+      if (entry.kind === "flat") {
+        const fr = entry.fr;
+        const amt = parseFloat(fr.rate || "0");
+        let accs: string[] = [];
+        try { accs = JSON.parse(fr.accomplishments || "[]"); } catch {}
+        rows.push([
+          "Flat Rate", fr.date, fr.property, "", "", "",
+          `$${amt.toFixed(2)}`, "0", "$0.00", "$0.00",
+          `$${amt.toFixed(2)}`, accs.join("; "), fr.notes || "", fr.createdAt,
+        ]);
+        continue;
+      }
+      const r = entry.r;
       let hours = 0;
       let timeDisplay = `${r.startTime || ""} - ${r.endTime || ""}`;
       let blocks: { start: string; end: string }[] = [];
@@ -4884,8 +4893,12 @@ export async function registerRoutes(
         const [eh, em] = r.endTime.split(":").map(Number);
         hours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
       }
+      // Rate selection: explicit position rate wins, otherwise off-site/base.
       const isOffSite = r.property !== homeProperty && (user as any)?.allowOffSite;
-      const rate = isOffSite ? offSiteRate : baseRate;
+      const rate = r.positionRate
+        ? parseFloat(r.positionRate)
+        : (isOffSite ? offSiteRate : baseRate);
+      const rateLabelSuffix = r.positionName ? ` — ${r.positionName}` : (isOffSite ? " (off-site)" : "");
       const laborCost = hours * rate;
       const milesVal = parseFloat(r.miles || "0");
       const mileageVal = parseFloat(r.mileageAmount || "0");
@@ -4901,7 +4914,7 @@ export async function registerRoutes(
           const blockHours = ((beh * 60 + bem) - (bsh * 60 + bsm)) / 60;
           const blockLabor = blockHours * rate;
           rows.push([
-            r.date, r.property + (isOffSite ? " (off-site)" : ""),
+            "Hourly", r.date, r.property + rateLabelSuffix,
             `${blk.start} - ${blk.end}`, blockHours.toFixed(1),
             `$${rate.toFixed(2)}`, `$${blockLabor.toFixed(2)}`,
             bi === 0 ? milesVal.toString() : "0",
@@ -4914,7 +4927,7 @@ export async function registerRoutes(
         }
       } else {
         rows.push([
-          r.date, r.property + (isOffSite ? " (off-site)" : ""),
+          "Hourly", r.date, r.property + rateLabelSuffix,
           timeDisplay, hours.toFixed(1),
           `$${rate.toFixed(2)}`, `$${laborCost.toFixed(2)}`,
           milesVal.toString(), `$${mileageVal.toFixed(2)}`,

@@ -42,6 +42,12 @@ export const users = sqliteTable("users", {
   lastName: text("last_name"),
   baseRate: text("base_rate"), // hourly rate at home property
   offSiteRate: text("off_site_rate"),
+  // Optional multi-position list. JSON array of { name, rate } pairs, e.g.
+  // [{"name":"Property Manager","rate":"20"},{"name":"Maintenance","rate":"15"}]
+  // When set (and 2+ entries), the Work Report screen asks which position the
+  // user is reporting under and uses that rate. When empty/missing, the
+  // single baseRate/offSiteRate continue to apply (no UI change).
+  positions: text("positions"),
   homeProperty: text("home_property"),
   allowOffSite: integer("allow_off_site").default(0),
   mileageRate: text("mileage_rate").default("0.50"),
@@ -238,6 +244,11 @@ export const timeReports = sqliteTable("time_reports", {
   specialTerms: integer("special_terms").default(0),
   specialTermsAmount: text("special_terms_amount"),
   notes: text("notes"),
+  // Optional: which named Position (and its rate) the worker chose for this
+  // report. Only used when the user has 2+ positions defined; otherwise null
+  // and the legacy baseRate/offSiteRate logic applies.
+  positionName: text("position_name"),
+  positionRate: text("position_rate"),
   syncedToSheets: integer("synced_to_sheets").default(0),
   createdAt: text("created_at").notNull(),
 });
