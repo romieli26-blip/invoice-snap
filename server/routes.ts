@@ -5020,108 +5020,29 @@ export async function registerRoutes(
       let tabsCreated = 0;
       let rowsWritten = 0;
 
-      const headers = [
-        "Date", "Property", "Time Blocks", "Total Hours", "Rate ($/hr)",
-        "Labor ($)", "Miles", "Mileage Pay ($)", "Special Terms ($)",
-        "Total ($)", "Accomplishments", "Notes", "Submitted At",
-      ];
-
-      for (const [userId, reports] of reportsByUser) {
+      // Bulk rebuild: delegate to the shared per-user helper so the layout
+      // (including the Type column + flat-rate rows + position-aware rates)
+      // stays in lockstep with single-user rebuilds.
+      for (const [userId, _reports] of reportsByUser) {
         const user = userMap.get(userId);
         if (!user) continue;
-        const tabName = user.displayName || `User ${userId}`;
-
-        // Create tab with headers (will skip if already exists)
-        const created = await createSheetTab(trConfig.spreadsheetId, tabName, headers);
-        if (created && created > 0) tabsCreated++;
-
-        // Clear existing data (keep headers) and rewrite all rows
-        await clearSheet(trConfig.spreadsheetId, `'${tabName}'!A2:Z`);
-
-        const homeProperty = (user as any)?.homeProperty || "";
-        const baseRate = parseFloat((user as any)?.baseRate || "0");
-        const offSiteRate = parseFloat((user as any)?.offSiteRate || "0");
-
-        // Sort reports by date
-        const sorted = [...reports].sort((a, b) => a.date.localeCompare(b.date));
-
-        const rows: string[][] = [];
-        for (const r of sorted) {
-          let hours = 0;
-          let timeDisplay = `${r.startTime || ""} - ${r.endTime || ""}`;
-          let blocks: { start: string; end: string }[] = [];
-          try { blocks = r.timeBlocks ? JSON.parse(r.timeBlocks) : []; } catch {}
-
-          if (blocks.length > 0) {
-            hours = blocks.reduce((sum, b) => {
-              const [bsh, bsm] = b.start.split(":").map(Number);
-              const [beh, bem] = b.end.split(":").map(Number);
-              return sum + ((beh * 60 + bem) - (bsh * 60 + bsm)) / 60;
-            }, 0);
-            timeDisplay = blocks.map(b => `${b.start} - ${b.end}`).join(", ");
-          } else if (r.startTime && r.endTime) {
-            const [sh, sm] = r.startTime.split(":").map(Number);
-            const [eh, em] = r.endTime.split(":").map(Number);
-            hours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
-          }
-
-          const isOffSite = r.property !== homeProperty && (user as any)?.allowOffSite;
-          const rate = isOffSite ? offSiteRate : baseRate;
-          const laborCost = hours * rate;
-          const milesVal = parseFloat(r.miles || "0");
-          const mileageVal = parseFloat(r.mileageAmount || "0");
-          const specialVal = r.specialTerms ? parseFloat(r.specialTermsAmount || "0") : 0;
-          const totalCost = laborCost + mileageVal + specialVal;
-
-          let accs: string[] = [];
-          try { accs = JSON.parse(r.accomplishments || "[]"); } catch {}
-
-          // If split shifts, write one row per block
-          if (blocks.length > 1) {
-            for (let bi = 0; bi < blocks.length; bi++) {
-              const blk = blocks[bi];
-              const [bsh, bsm] = blk.start.split(":").map(Number);
-              const [beh, bem] = blk.end.split(":").map(Number);
-              const blockHours = ((beh * 60 + bem) - (bsh * 60 + bsm)) / 60;
-              const blockLabor = blockHours * rate;
-              rows.push([
-                r.date,
-                r.property + (isOffSite ? " (off-site)" : ""),
-                `${blk.start} - ${blk.end}`,
-                blockHours.toFixed(1),
-                `$${rate.toFixed(2)}`,
-                `$${blockLabor.toFixed(2)}`,
-                bi === 0 ? milesVal.toString() : "0",
-                bi === 0 ? `$${mileageVal.toFixed(2)}` : "$0.00",
-                bi === 0 ? `$${specialVal.toFixed(2)}` : "$0.00",
-                bi === 0 ? `$${totalCost.toFixed(2)}` : `$${blockLabor.toFixed(2)}`,
-                bi === 0 ? accs.join("; ") : "(continued)",
-                bi === 0 ? (r.notes || "") : "",
-                r.createdAt,
-              ]);
-            }
-          } else {
-            rows.push([
-              r.date,
-              r.property + (isOffSite ? " (off-site)" : ""),
-              timeDisplay,
-              hours.toFixed(1),
-              `$${rate.toFixed(2)}`,
-              `$${laborCost.toFixed(2)}`,
-              milesVal.toString(),
-              `$${mileageVal.toFixed(2)}`,
-              `$${specialVal.toFixed(2)}`,
-              `$${totalCost.toFixed(2)}`,
-              accs.join("; "),
-              r.notes || "",
-              r.createdAt,
-            ]);
-          }
-          rowsWritten += rows.length;
+        const result = await rebuildTimeReportSheetForUser(userId);
+        if (result.ok) {
+          tabsCreated++;
+          rowsWritten += (await storage.getAllTimeReports()).filter(r => r.userId === userId).length
+            + (await storage.getAllFlatRates()).filter(fr => fr.userId === userId).length;
         }
-
-        if (rows.length > 0) {
-          await updateSheetRange(trConfig.spreadsheetId, `'${tabName}'!A2`, rows);
+      }
+      // Also rebuild tabs for users who ONLY have flat-rate assignments (no time reports).
+      const flatRateUserIds = new Set((await storage.getAllFlatRates()).map(fr => fr.userId));
+      for (const fuid of Array.from(flatRateUserIds)) {
+        if (reportsByUser.has(fuid)) continue;
+        const user = userMap.get(fuid);
+        if (!user) continue;
+        const result = await rebuildTimeReportSheetForUser(fuid);
+        if (result.ok) {
+          tabsCreated++;
+          rowsWritten += (await storage.getAllFlatRates()).filter(fr => fr.userId === fuid).length;
         }
       }
 
