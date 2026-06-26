@@ -66,8 +66,16 @@ export default function TimeReportPage() {
       return [];
     }
   })() as { name: string; rate: string }[];
+  // If the user has ANY positions defined, position pay takes over from
+  // baseRate/offSiteRate. With 1 position we auto-apply it (no need to ask).
+  // With 2+ positions we ask the user which one each time.
+  const hasAnyPositions = userPositions.length >= 1;
   const hasMultiplePositions = userPositions.length >= 2;
-  const [selectedPositionIdx, setSelectedPositionIdx] = useState<string>("");
+  // Default selection: when there's exactly one position, pre-select it ("0").
+  // Otherwise empty until the user picks one.
+  const [selectedPositionIdx, setSelectedPositionIdx] = useState<string>(
+    userPositions.length === 1 ? "0" : ""
+  );
 
   function addTimeBlock() {
     setTimeBlocks(prev => [...prev, { start: "", end: "" }]);
@@ -108,8 +116,10 @@ export default function TimeReportPage() {
   const offSiteRate = user?.offSiteRate || "";
 
   const isOffSite = property && property !== homeProperty;
-  // If user picked a Position, its rate overrides everything else.
-  const positionRate = hasMultiplePositions && selectedPositionIdx !== ""
+  // Position-based rate wins whenever the user has positions configured.
+  // - 1 position: auto-applied (idx 0)
+  // - 2+ positions: only after the user picks
+  const positionRate = hasAnyPositions && selectedPositionIdx !== ""
     ? userPositions[parseInt(selectedPositionIdx, 10)]?.rate
     : undefined;
   const currentRate = positionRate || (isOffSite && allowOffSite ? offSiteRate : baseRate);
@@ -180,7 +190,10 @@ export default function TimeReportPage() {
     const endTime = timeBlocks[timeBlocks.length - 1].end;
     setSubmitting(true);
     try {
-      const selectedPos = hasMultiplePositions && selectedPositionIdx !== ""
+      // Capture the chosen position name+rate on the submission so the sheet,
+      // daily report and pay calculator all see the correct figure.
+      // Works for both single-position auto-pick and multi-position user picks.
+      const selectedPos = hasAnyPositions && selectedPositionIdx !== ""
         ? userPositions[parseInt(selectedPositionIdx, 10)]
         : null;
       await apiRequest("POST", "/api/time-reports", {
@@ -256,7 +269,7 @@ export default function TimeReportPage() {
                   {currentRate && (
                     <>
                       <span className="text-muted-foreground">Rate</span>
-                      <span className="font-medium text-right">${currentRate}/hr{isOffSite && allowOffSite ? " (off-site)" : ""}</span>
+                      <span className="font-medium text-right">${currentRate}/hr{positionRate ? ` (${userPositions[parseInt(selectedPositionIdx, 10)]?.name})` : (isOffSite && allowOffSite ? " (off-site)" : "")}</span>
 
                       <span className="text-muted-foreground">Subtotal</span>
                       <span className="font-semibold text-right">${totalPay}</span>
@@ -379,6 +392,13 @@ export default function TimeReportPage() {
                   </p>
                 )}
               </div>
+            )}
+
+            {/* Single position: auto-applied; show a small confirmation hint */}
+            {!hasMultiplePositions && userPositions.length === 1 && (
+              <p className="text-xs text-blue-600">
+                Reporting at ${userPositions[0].rate}/hr ({userPositions[0].name})
+              </p>
             )}
 
             <div className="space-y-2">
