@@ -25,7 +25,10 @@ interface PropertyItem { id: number; name: string; sheetsTabId: number | null; }
 
 const INCOME_CATEGORIES = [
   { value: "rental_income", label: "Rental Income" },
-  { value: "check", label: "Check" },
+  // Checks moved to their own "New Check Transaction" flow (separate table
+  // + spreadsheet + deposited lifecycle). The old "check" category is no
+  // longer shown in this dropdown.
+  // { value: "check", label: "Check" },
   { value: "washer", label: "Washer" },
   { value: "dryer", label: "Dryer" },
   { value: "vending", label: "Vending" },

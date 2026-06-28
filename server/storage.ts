@@ -1,4 +1,4 @@
-import { type User, type InsertUser, type Invoice, type InsertInvoice, type Property, type InsertProperty, type CashTransaction, type InsertCashTransaction, type CcStatement, type TimeReport, type UserDocument, type WorkCredit, type ContractorDocument, type FlatRateAssignment, users, invoices, properties, sessions, userProperties, cashTransactions, ccStatements, timeReports, userDocuments, workCredits, contractorDocuments, flatRateAssignments } from "@shared/schema";
+import { type User, type InsertUser, type Invoice, type InsertInvoice, type Property, type InsertProperty, type CashTransaction, type InsertCashTransaction, type CheckTransaction, type InsertCheckTransaction, type CcStatement, type TimeReport, type UserDocument, type WorkCredit, type ContractorDocument, type FlatRateAssignment, users, invoices, properties, sessions, userProperties, cashTransactions, checkTransactions, ccStatements, timeReports, userDocuments, workCredits, contractorDocuments, flatRateAssignments } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import { eq, desc, inArray, and, gte, lte } from "drizzle-orm";
@@ -255,6 +255,27 @@ sqlite.exec(`
     synced_to_drive INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS check_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    property TEXT NOT NULL,
+    amount TEXT NOT NULL,
+    date TEXT NOT NULL,
+    payer_name TEXT,
+    check_number TEXT,
+    unit_lot_number TEXT,
+    notes TEXT,
+    photo_path TEXT,
+    photo_paths TEXT,
+    deposited INTEGER NOT NULL DEFAULT 0,
+    deposited_at TEXT,
+    record_number INTEGER,
+    property_code TEXT,
+    edit_history TEXT,
+    synced_to_sheets INTEGER NOT NULL DEFAULT 0,
+    synced_to_drive INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
 `);
 
 export const db = drizzle(sqlite);
@@ -299,6 +320,13 @@ export interface IStorage {
   getCashTransactionsByUser(userId: number): Promise<CashTransaction[]>;
   deleteCashTransaction(id: number): Promise<void>;
   getCashTransaction(id: number): Promise<CashTransaction | undefined>;
+  // Check transactions (separate table)
+  createCheckTransaction(tx: InsertCheckTransaction): Promise<CheckTransaction>;
+  getAllCheckTransactions(): Promise<CheckTransaction[]>;
+  getCheckTransactionsByUser(userId: number): Promise<CheckTransaction[]>;
+  getCheckTransaction(id: number): Promise<CheckTransaction | undefined>;
+  deleteCheckTransaction(id: number): Promise<void>;
+  updateCheckTransaction(id: number, data: any): Promise<CheckTransaction | undefined>;
   getNextCashRecordNumber(property: string): Promise<number>;
   updateCashTransaction(id: number, data: any): Promise<CashTransaction | undefined>;
   updateCashTransactionSyncStatus(id: number, target: "drive" | "sheets", synced: boolean): Promise<void>;
@@ -561,6 +589,26 @@ export class DatabaseStorage implements IStorage {
 
   async getCashTransactionsByDate(date: string): Promise<CashTransaction[]> {
     return db.select().from(cashTransactions).where(eq(cashTransactions.date, date)).all();
+  }
+
+  // ---- Check Transactions ----
+  async createCheckTransaction(tx: InsertCheckTransaction): Promise<CheckTransaction> {
+    return db.insert(checkTransactions).values(tx).returning().get();
+  }
+  async getAllCheckTransactions(): Promise<CheckTransaction[]> {
+    return db.select().from(checkTransactions).orderBy(desc(checkTransactions.id)).all();
+  }
+  async getCheckTransactionsByUser(userId: number): Promise<CheckTransaction[]> {
+    return db.select().from(checkTransactions).where(eq(checkTransactions.userId, userId)).orderBy(desc(checkTransactions.id)).all();
+  }
+  async getCheckTransaction(id: number): Promise<CheckTransaction | undefined> {
+    return db.select().from(checkTransactions).where(eq(checkTransactions.id, id)).get();
+  }
+  async deleteCheckTransaction(id: number): Promise<void> {
+    db.delete(checkTransactions).where(eq(checkTransactions.id, id)).run();
+  }
+  async updateCheckTransaction(id: number, data: any): Promise<CheckTransaction | undefined> {
+    return db.update(checkTransactions).set(data).where(eq(checkTransactions.id, id)).returning().get();
   }
 
   // ---- CC Statements ----

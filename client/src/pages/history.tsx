@@ -54,13 +54,15 @@ function PlaybookButton({ role }: { role: string | undefined }) {
   const downloadUrl = `${API_BASE}/api/playbook/file?download=1&token=${token}`;
   return (
     <>
+      {/* Doubled height + highlighted (yellow bg + amber accents) so it stands
+         out as the first thing users see on the dashboard. */}
       <Button
         variant="outline"
-        className="w-full h-11 text-sm gap-2 border-amber-500/50 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30"
+        className="w-full h-20 text-base font-semibold gap-2 bg-amber-100 hover:bg-amber-200 border-2 border-amber-400 text-amber-900 shadow-sm dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-500"
         onClick={() => setOpen(true)}
         data-testid="button-playbook"
       >
-        <BookOpen className="w-4 h-4" />
+        <BookOpen className="w-6 h-6" />
         Property Manager Playbook
       </Button>
       {open && (
@@ -124,7 +126,7 @@ function PlaybookButton({ role }: { role: string | undefined }) {
 // that URL directly. For PMs/admins covering multiple properties, it opens a
 // small picker so they can choose which property's marketing page to visit.
 // Hidden entirely when no property they manage has a URL configured.
-function MarketingButton({ role, homeProperty }: { role: string | undefined; homeProperty?: string | null }) {
+function MarketingButton({ role, homeProperty, compact }: { role: string | undefined; homeProperty?: string | null; compact?: boolean }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const eligible = role === "manager" || role === "admin" || role === "super_admin";
   const isAdmin = role === "admin" || role === "super_admin";
@@ -153,11 +155,13 @@ function MarketingButton({ role, homeProperty }: { role: string | undefined; hom
   return (
     <>
       <Button
-        className="w-full h-12 text-sm gap-1.5 bg-orange-500 hover:bg-orange-600 text-white"
+        className={compact
+          ? "w-full h-16 text-sm gap-1.5 bg-orange-500 hover:bg-orange-600 text-white flex-col leading-tight"
+          : "w-full h-12 text-sm gap-1.5 bg-orange-500 hover:bg-orange-600 text-white"}
         onClick={handleClick}
         data-testid="button-marketing"
       >
-        <Megaphone className="w-4 h-4" />
+        <Megaphone className={compact ? "w-5 h-5" : "w-4 h-4"} />
         Marketing
       </Button>
       {pickerOpen && (
@@ -343,8 +347,17 @@ export default function HistoryPage() {
     queryKey: ["/api/cash-balances"],
   });
 
+  // Checks on Hand: sum of un-deposited checks per property.
+  const { data: checkBalances } = useQuery<Record<string, number>>({
+    queryKey: ["/api/check-transactions/balances"],
+  });
+
   const { data: cashTxs } = useQuery<any[]>({
     queryKey: ["/api/cash-transactions"],
+  });
+
+  const { data: checkTxs } = useQuery<any[]>({
+    queryKey: ["/api/check-transactions"],
   });
 
   const { data: timeReports } = useQuery<any[]>({
@@ -367,6 +380,7 @@ export default function HistoryPage() {
   // Collapsible section state — Recent Receipts open by default, the rest collapsed for a cleaner page.
   const [showReceipts, setShowReceipts] = useState(true);
   const [showCashTxs, setShowCashTxs] = useState(false);
+  const [showCheckTxs, setShowCheckTxs] = useState(false);
   const [showWorkReports, setShowWorkReports] = useState(false);
   const [showFlatRates, setShowFlatRates] = useState(false);
   const [showWorkCredits, setShowWorkCredits] = useState(false);
@@ -419,6 +433,7 @@ export default function HistoryPage() {
   }
   const filteredInvoices = useMemo(() => invoices?.filter(matchesFilter), [invoices, userFilter, propertyFilter]);
   const filteredCashTxs = useMemo(() => cashTxs?.filter(matchesFilter), [cashTxs, userFilter, propertyFilter]);
+  const filteredCheckTxs = useMemo(() => checkTxs?.filter(matchesFilter), [checkTxs, userFilter, propertyFilter]);
   const filteredTimeReports = useMemo(() => timeReports?.filter(matchesFilter), [timeReports, userFilter, propertyFilter]);
   const filteredWorkCredits = useMemo(() => workCredits?.filter(matchesFilter), [workCredits, userFilter, propertyFilter]);
   const filteredFlatRates = useMemo(() => flatRates?.filter(matchesFilter), [flatRates, userFilter, propertyFilter]);
@@ -560,10 +575,30 @@ export default function HistoryPage() {
           </Button>
         )}
 
-        {/* Marketing — visible to managers/admins/super_admins when any property
-            they can see has a marketing URL configured. Sits between the CC
-            button row and the Work Report row. */}
-        <MarketingButton role={user?.role} homeProperty={(user as any)?.homeProperty} />
+        {/* New Check Transaction + Marketing share a single row. The Check
+           button is shown to everyone who can submit transactions (not
+           contractors). Marketing is conditional on the user's role and home
+           base, so when it's hidden the Check button still takes the full row. */}
+        {user?.role !== "contractor" && (
+          <div className="grid grid-cols-2 gap-3">
+            <Button
+              className="h-16 text-sm gap-1.5 flex-col leading-tight bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border border-emerald-300"
+              variant="outline"
+              onClick={() => setLocation("/check")}
+              data-testid="button-new-check"
+            >
+              <Camera className="w-5 h-5" />
+              <span className="text-center">New Check<br/>Transaction</span>
+            </Button>
+            <MarketingButton role={user?.role} homeProperty={(user as any)?.homeProperty} compact />
+          </div>
+        )}
+
+        {/* For contractors, MarketingButton may still render full-width on its
+           own (no Check submission for them). */}
+        {user?.role === "contractor" && (
+          <MarketingButton role={user?.role} homeProperty={(user as any)?.homeProperty} />
+        )}
 
         {user?.role === "contractor" && (
           <div className="grid grid-cols-2 gap-3">
@@ -697,6 +732,25 @@ export default function HistoryPage() {
                     ${balance.toFixed(2)}
                   </span>
                 </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Checks on Hand — sum of un-deposited check transactions per property */}
+        {user?.role !== "contractor" && checkBalances && Object.values(checkBalances).some(v => v > 0) && (
+          <div className="border rounded-lg p-3 space-y-1.5 bg-emerald-50/40 dark:bg-emerald-950/10 border-emerald-200/60 dark:border-emerald-800/40">
+            <h3 className="text-xs font-medium text-emerald-800 dark:text-emerald-300 mb-2">Checks on Hand</h3>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+              {Object.entries(checkBalances)
+                .filter(([, balance]) => balance > 0)
+                .map(([prop, balance]) => (
+                  <div key={prop} className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground truncate mr-2">{prop}</span>
+                    <span className="font-medium tabular-nums text-emerald-700 dark:text-emerald-400">
+                      ${balance.toFixed(2)}
+                    </span>
+                  </div>
               ))}
             </div>
           </div>
@@ -1046,6 +1100,116 @@ export default function HistoryPage() {
           ))}
         </div>
         </>)}
+
+        {/* ---- CHECK TRANSACTIONS SECTION (collapsible) ---- */}
+        {user?.role !== "contractor" && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setShowCheckTxs(s => !s)}
+              className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+              aria-expanded={showCheckTxs}
+            >
+              <ChevronDown className={`w-4 h-4 transition-transform ${showCheckTxs ? "" : "-rotate-90"}`} />
+              <span>Check Transactions</span>
+              {filteredCheckTxs && filteredCheckTxs.length > 0 && (
+                <span className="text-xs text-muted-foreground/80 font-normal">({filteredCheckTxs.length})</span>
+              )}
+            </button>
+          </div>
+          {showCheckTxs && (filteredCheckTxs && filteredCheckTxs.length > 0 ? (
+            <div className="space-y-2">
+              {filteredCheckTxs.map((tx: any) => (
+                <Card key={tx.id}>
+                  <CardContent className="py-3 flex gap-3">
+                    <PhotoThumb
+                      paths={(tx as any).photoPaths ? JSON.parse((tx as any).photoPaths) : (tx.photoPath ? [tx.photoPath] : [])}
+                      onClick={() => {
+                        const paths = (tx as any).photoPaths ? JSON.parse((tx as any).photoPaths) : (tx.photoPath ? [tx.photoPath] : []);
+                        if (paths.length > 0) setViewingPhotos(paths);
+                      }}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate">
+                            {tx.payerName || "Check"}
+                            {tx.checkNumber ? <span className="text-xs text-muted-foreground"> #{tx.checkNumber}</span> : null}
+                          </p>
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 gap-1">
+                              <Building2 className="w-2.5 h-2.5" />
+                              {tx.property}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">{tx.date}</span>
+                            {tx.recordNumber && (
+                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 font-mono">
+                                #{(tx as any).propertyCode || tx.recordNumber}
+                              </Badge>
+                            )}
+                            {tx.deposited ? (
+                              <Badge className="text-[10px] px-1.5 py-0 h-4 bg-emerald-100 text-emerald-800 border-emerald-300">
+                                Deposited
+                              </Badge>
+                            ) : (
+                              <Badge className="text-[10px] px-1.5 py-0 h-4 bg-amber-100 text-amber-800 border-amber-300">
+                                On Hand
+                              </Badge>
+                            )}
+                          </div>
+                          {tx.notes && <p className="text-xs text-muted-foreground mt-0.5 truncate">{tx.notes}</p>}
+                        </div>
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <span className="text-sm font-semibold whitespace-nowrap text-emerald-700">${tx.amount}</span>
+                          {!tx.deposited && (
+                            <Button
+                              size="sm" variant="outline"
+                              className="h-7 text-xs px-2 border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                              onClick={async () => {
+                                try {
+                                  await apiRequest("POST", `/api/check-transactions/${tx.id}/deposit`);
+                                  queryClient.invalidateQueries({ queryKey: ["/api/check-transactions"] });
+                                  queryClient.invalidateQueries({ queryKey: ["/api/check-transactions/balances"] });
+                                  toast({ title: "Marked as deposited" });
+                                } catch (e: any) {
+                                  toast({ title: "Failed", description: e.message, variant: "destructive" });
+                                }
+                              }}
+                            >
+                              Mark Deposited
+                            </Button>
+                          )}
+                          {(user?.role === "admin" || user?.role === "super_admin" || tx.userId === user?.id) && (
+                            <button
+                              className="text-muted-foreground hover:text-destructive p-0.5"
+                              onClick={async () => {
+                                if (!confirm("Delete this check transaction?")) return;
+                                try {
+                                  await apiRequest("DELETE", `/api/check-transactions/${tx.id}`);
+                                  queryClient.invalidateQueries({ queryKey: ["/api/check-transactions"] });
+                                  queryClient.invalidateQueries({ queryKey: ["/api/check-transactions/balances"] });
+                                  toast({ title: "Check deleted" });
+                                } catch (e: any) {
+                                  toast({ title: "Failed", description: e.message, variant: "destructive" });
+                                }
+                              }}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-4">No check transactions yet.</p>
+          ))}
+        </div>
+        )}
 
         {/* ---- TIME REPORTS SECTION (collapsible) ---- */}
         <div className="space-y-2">

@@ -11,6 +11,7 @@ import CapturePage from "@/pages/capture";
 import InvoiceFormPage from "@/pages/invoice-form";
 import AdminPage from "@/pages/admin";
 import CashTransactionPage from "@/pages/cash-transaction";
+import CheckTransactionPage from "@/pages/check-transaction";
 import ReconcilePage from "@/pages/reconcile";
 import TimeReportPage from "@/pages/time-report";
 import DocumentsPage from "@/pages/documents";
@@ -48,6 +49,7 @@ function AuthenticatedRouter() {
       <Route path="/form" component={InvoiceFormPage} />
       <Route path="/admin" component={AdminPage} />
       <Route path="/cash" component={CashTransactionPage} />
+      <Route path="/check" component={CheckTransactionPage} />
       <Route path="/reconcile" component={ReconcilePage} />
       <Route path="/time-report" component={TimeReportPage} />
       <Route path="/documents" component={DocumentsPage} />

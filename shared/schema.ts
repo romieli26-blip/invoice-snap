@@ -210,6 +210,42 @@ export const insertCashTransactionSchema = createInsertSchema(cashTransactions).
 export type CashTransaction = typeof cashTransactions.$inferSelect;
 export type InsertCashTransaction = z.infer<typeof insertCashTransactionSchema>;
 
+// ---- Check Transactions (separate from Cash) ----
+// Dedicated table for incoming checks. Adds 'deposited' lifecycle: a check
+// counts toward 'Checks on Hand' until it's marked deposited (or the user
+// confirms deposit at submission time). Once deposited, it falls out of
+// Checks on Hand and is treated like a settled payment.
+export const checkTransactions = sqliteTable("check_transactions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull(),
+  property: text("property").notNull(),
+  amount: text("amount").notNull(),
+  date: text("date").notNull(),
+  // "From" on the check (required)
+  payerName: text("payer_name"),
+  // Optional check number (off the printed check)
+  checkNumber: text("check_number"),
+  unitLotNumber: text("unit_lot_number"),
+  notes: text("notes"),
+  // Photo of the check itself
+  photoPath: text("photo_path"),
+  photoPaths: text("photo_paths"),
+  // Deposit lifecycle
+  deposited: integer("deposited").notNull().default(0),
+  depositedAt: text("deposited_at"),
+  // Record IDs (parallel to cash/invoice)
+  recordNumber: integer("record_number"),
+  propertyCode: text("property_code"),
+  editHistory: text("edit_history"),
+  syncedToSheets: integer("synced_to_sheets").notNull().default(0),
+  syncedToDrive: integer("synced_to_drive").notNull().default(0),
+  createdAt: text("created_at").notNull(),
+});
+
+export const insertCheckTransactionSchema = createInsertSchema(checkTransactions).omit({ id: true });
+export type CheckTransaction = typeof checkTransactions.$inferSelect;
+export type InsertCheckTransaction = z.infer<typeof insertCheckTransactionSchema>;
+
 // ---- CC Statement Reconciliation ----
 export const ccStatements = sqliteTable("cc_statements", {
   id: integer("id").primaryKey({ autoIncrement: true }),

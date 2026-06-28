@@ -32,6 +32,17 @@ try {
     console.log(`[cash-sheets] Config loaded: spreadsheet ${cashSheetsConfig!.spreadsheetId}`);
   }
 } catch {}
+
+// Check transactions sheets config (separate spreadsheet from cash). Same
+// schema — one tab per property.
+const CHECK_SHEETS_CONFIG_PATH = path.resolve(process.cwd(), "check-sheets-config.json");
+let checkSheetsConfig: { spreadsheetId: string; tabs: Record<string, number> } | null = null;
+try {
+  if (fs.existsSync(CHECK_SHEETS_CONFIG_PATH)) {
+    checkSheetsConfig = JSON.parse(fs.readFileSync(CHECK_SHEETS_CONFIG_PATH, "utf-8"));
+    console.log(`[check-sheets] Config loaded: spreadsheet ${checkSheetsConfig!.spreadsheetId}`);
+  }
+} catch {}
 try {
   if (fs.existsSync(SHEETS_CONFIG_PATH)) {
     sheetsConfig = JSON.parse(fs.readFileSync(SHEETS_CONFIG_PATH, "utf-8"));
@@ -2642,6 +2653,48 @@ export async function registerRoutes(
     }
     html += `</table>`;
 
+    // Check Transactions for today + Checks on Hand summary.
+    // Mirrors the Cash section. Each property gets a row of today's check
+    // entries (showing deposit status + From + amount), and we append a
+    // Checks on Hand table for un-deposited totals per property.
+    const allChecks = await storage.getAllCheckTransactions();
+    const todayChecks = allChecks.filter(c => c.date === date);
+    if (todayChecks.length > 0) {
+      html += `<h2 style="color:#0e7c66;border-bottom:2px solid #0e7c66;padding-bottom:5px;margin-top:20px;">Check Transactions (today)</h2>`;
+      const byPropChecks = new Map<string, typeof todayChecks>();
+      for (const c of todayChecks) {
+        const list = byPropChecks.get(c.property) || [];
+        list.push(c);
+        byPropChecks.set(c.property, list);
+      }
+      let todayCheckTotal = 0;
+      for (const [prop, checks] of byPropChecks) {
+        html += `<h3 style="color:#0e7c66;">${prop}</h3>`;
+        html += `<table style="border-collapse:collapse;width:100%;margin-bottom:10px;">`;
+        html += `<tr style="background:#f0f0f0;"><th style="text-align:left;padding:6px;border:1px solid #ddd;">From</th><th style="padding:6px;border:1px solid #ddd;">Amount</th><th style="padding:6px;border:1px solid #ddd;">Check #</th><th style="padding:6px;border:1px solid #ddd;">Status</th><th style="padding:6px;border:1px solid #ddd;">Notes</th></tr>`;
+        for (const c of checks) {
+          todayCheckTotal += parseFloat(c.amount || "0");
+          const statusColor = c.deposited ? "green" : "#b45309";
+          html += `<tr><td style="padding:6px;border:1px solid #ddd;">${c.payerName || ""}</td><td style="padding:6px;border:1px solid #ddd;text-align:right;">$${c.amount}</td><td style="padding:6px;border:1px solid #ddd;text-align:center;">${c.checkNumber || ""}</td><td style="padding:6px;border:1px solid #ddd;text-align:center;color:${statusColor};">${c.deposited ? "Deposited" : "On Hand"}</td><td style="padding:6px;border:1px solid #ddd;">${c.notes || ""}</td></tr>`;
+        }
+        html += `</table>`;
+      }
+      html += `<div style="background:#f3fbf7;padding:10px;border-radius:5px;margin:10px 0;">`;
+      html += `<strong>Total checks today:</strong> $${todayCheckTotal.toFixed(2)}`;
+      html += `</div>`;
+    }
+    // Checks on Hand table — always shown alongside Cash on Hand.
+    html += `<h2 style="color:#0e7c66;border-bottom:2px solid #0e7c66;padding-bottom:5px;margin-top:20px;">Checks on Hand</h2>`;
+    html += `<table style="border-collapse:collapse;width:100%;">`;
+    for (const prop of allProps) {
+      const onHand = allChecks
+        .filter(c => c.property === prop.name && !c.deposited)
+        .reduce((acc, c) => acc + parseFloat(c.amount || "0"), 0);
+      const color = onHand > 0 ? "#b45309" : "#999";
+      html += `<tr><td style="padding:6px;border:1px solid #ddd;">${prop.name}</td><td style="padding:6px;border:1px solid #ddd;text-align:right;color:${color};font-weight:bold;">$${onHand.toFixed(2)}</td></tr>`;
+    }
+    html += `</table>`;
+
     // Transaction report HTML complete
     html += `<p style="color:#888;font-size:12px;margin-top:20px;">- Receipt App Daily Report</p></div>`;
 
@@ -3302,6 +3355,350 @@ export async function registerRoutes(
       balances[p.name] = await storage.getCashBalanceByProperty(p.name);
     }
     res.json(balances);
+  });
+
+  // ============================================================
+  // CHECK TRANSACTIONS
+  // Dedicated from Cash. Each check counts toward "Checks on Hand"
+  // until marked deposited.
+  // ============================================================
+
+  // Helper: rebuild ONE property tab in the Checks spreadsheet.
+  async function rebuildCheckSheetForProperty(propertyName: string): Promise<{ ok: boolean; reason?: string; rows?: number }> {
+    if (!isGoogleEnabled()) return { ok: false, reason: "google-disabled" };
+    if (!checkSheetsConfig?.spreadsheetId) return { ok: false, reason: "no-config" };
+    const headers = [
+      "Date", "Property", "Amount", "From", "Unit/Lot",
+      "Check #", "Notes", "Deposited", "Deposited At",
+      "Submitted By", "Submitted At", "Record #", "Property Code",
+    ];
+    await createSheetTab(checkSheetsConfig.spreadsheetId, propertyName, headers);
+    await updateSheetRange(checkSheetsConfig.spreadsheetId, `'${propertyName}'!A1`, [headers]);
+    await clearSheet(checkSheetsConfig.spreadsheetId, `'${propertyName}'!A2:Z`);
+
+    const all = (await storage.getAllCheckTransactions()).filter(c => c.property === propertyName);
+    const sorted = [...all].sort((a, b) => a.date.localeCompare(b.date));
+    if (sorted.length === 0) return { ok: true, rows: 0 };
+
+    const allUsers = await storage.getAllUsers();
+    const userMap = new Map(allUsers.map(u => [u.id, u.displayName]));
+    const rows: string[][] = sorted.map(c => [
+      c.date, c.property, c.amount,
+      c.payerName || "", c.unitLotNumber || "",
+      c.checkNumber || "", c.notes || "",
+      c.deposited ? "Yes" : "No",
+      c.depositedAt || "",
+      userMap.get(c.userId) || `User ${c.userId}`,
+      c.createdAt,
+      String(c.recordNumber || ""),
+      c.propertyCode || "",
+    ]);
+    await updateSheetRange(checkSheetsConfig.spreadsheetId, `'${propertyName}'!A2`, rows);
+    return { ok: true, rows: rows.length };
+  }
+
+  app.post("/api/check-transactions", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const { property, amount, date, payerName, checkNumber, unitLotNumber, notes, photoPath, photoPaths, deposited } = req.body;
+    if (!property || !amount || !date) {
+      return res.status(400).json({ error: "property, amount and date are required" });
+    }
+    if (!payerName) {
+      return res.status(400).json({ error: "From (payerName) is required for a check" });
+    }
+    const user = await storage.getUser(session.userId);
+    const recordNumber = await storage.getNextCashRecordNumber(property); // shared per-property counter
+    const propertyCode = await storage.getNextPropertyCode(property);
+    const nowIso = new Date().toISOString();
+    const tx = await storage.createCheckTransaction({
+      userId: session.userId,
+      property,
+      amount,
+      date,
+      payerName,
+      checkNumber: checkNumber || null,
+      unitLotNumber: unitLotNumber || null,
+      notes: notes || null,
+      photoPath: photoPath || null,
+      photoPaths: photoPaths || null,
+      deposited: deposited ? 1 : 0,
+      depositedAt: deposited ? nowIso : null,
+      recordNumber,
+      propertyCode,
+      syncedToSheets: 0,
+      syncedToDrive: 0,
+      createdAt: nowIso,
+    } as any);
+    res.json(tx);
+
+    // Background sync to Sheets + Drive + email
+    setImmediate(async () => {
+      try {
+        if (checkSheetsConfig?.spreadsheetId) {
+          await rebuildCheckSheetForProperty(property);
+        }
+      } catch (e) { console.error("[check-sheets] sync error:", e); }
+      // Drive: same folder pattern as Cash, under "Credit Card and Cash Receipts/Check Receipts/<property>".
+      if (isGoogleEnabled() && photoPath) {
+        try {
+          const filePath = path.resolve(dataDir, "uploads", photoPath.replace(/^\/api\/uploads\//, ""));
+          if (fs.existsSync(filePath)) {
+            let rootFolder = propertyFolderCache.get("__check_root") || null;
+            if (!rootFolder) {
+              const main = await ensureDriveFolder("Credit Card and Cash Receipts");
+              if (main) {
+                rootFolder = await ensureDriveFolder("Check Receipts", main);
+                if (rootFolder) propertyFolderCache.set("__check_root", rootFolder);
+              }
+            }
+            let propFolder = propertyFolderCache.get("check_" + property) || null;
+            if (!propFolder && rootFolder) {
+              propFolder = await ensureDriveFolder(property, rootFolder);
+              if (propFolder) propertyFolderCache.set("check_" + property, propFolder);
+            }
+            const ext = path.extname(filePath).slice(1) || "jpg";
+            const codeSuffix = propertyCode ? ` ${propertyCode}` : "";
+            const driveFileName = `Check_${property}_${date}${codeSuffix}.${ext}`;
+            await uploadToDrive(filePath, driveFileName, propFolder || rootFolder || undefined);
+          }
+        } catch (e) { console.error("[check-drive] sync error:", e); }
+      }
+      try {
+        await sendNotificationEmails(
+          `Check received: $${amount} - ${property}`,
+          `<h3>New Check Transaction</h3>
+           <p><strong>Property:</strong> ${property}</p>
+           <p><strong>Amount:</strong> $${amount}</p>
+           <p><strong>From:</strong> ${payerName}</p>
+           <p><strong>Date:</strong> ${date}</p>
+           ${checkNumber ? `<p><strong>Check #:</strong> ${checkNumber}</p>` : ""}
+           ${unitLotNumber ? `<p><strong>Unit/Lot:</strong> ${unitLotNumber}</p>` : ""}
+           ${notes ? `<p><strong>Notes:</strong> ${notes}</p>` : ""}
+           <p><strong>Deposited at submission:</strong> ${deposited ? "Yes" : "No"}</p>
+           <p><strong>Submitted by:</strong> ${user?.displayName || ""}</p>
+           <p><strong>Record #:</strong> ${recordNumber} (${propertyCode || ""})</p>`,
+          photoPath ? [{ filename: path.basename(photoPath.replace(/^\/api\/uploads\//, "")), path: path.resolve(dataDir, "uploads", photoPath.replace(/^\/api\/uploads\//, "")) }] : []
+        );
+      } catch (e) { console.error("[email] check notification error:", e); }
+    });
+  });
+
+  app.get("/api/check-transactions", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    let txList;
+    if (isAdminRole(session.role)) {
+      txList = await storage.getAllCheckTransactions();
+    } else {
+      // Property managers see their own + their crew's checks (home base scope);
+      // contractors see only their own. Mirror the visibility used by
+      // /api/cash-transactions to keep these features consistent.
+      const allowed = await getVisibleUserIdsForManager(session.userId);
+      const all = await storage.getAllCheckTransactions();
+      txList = all.filter(c => allowed.has(c.userId));
+    }
+    const allUsers = await storage.getAllUsers();
+    const userMap = new Map(allUsers.map(u => [u.id, u.displayName]));
+    const enriched = txList.map(t => ({ ...t, submittedBy: userMap.get(t.userId) || "Unknown" }));
+    res.json(enriched);
+  });
+
+  app.put("/api/check-transactions/:id", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid ID" });
+    const existing = await storage.getCheckTransaction(id);
+    if (!existing) return res.status(404).json({ error: "Not found" });
+    if (existing.userId !== session.userId && !isAdminRole(session.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+    const { amount, date, payerName, checkNumber, unitLotNumber, notes, deposited } = req.body;
+    const updateData: any = {};
+    if (amount !== undefined) updateData.amount = String(amount);
+    if (date !== undefined) updateData.date = date;
+    if (payerName !== undefined) updateData.payerName = payerName;
+    if (checkNumber !== undefined) updateData.checkNumber = checkNumber || null;
+    if (unitLotNumber !== undefined) updateData.unitLotNumber = unitLotNumber || null;
+    if (notes !== undefined) updateData.notes = notes || null;
+    if (deposited !== undefined) {
+      updateData.deposited = deposited ? 1 : 0;
+      updateData.depositedAt = deposited ? new Date().toISOString() : null;
+    }
+    const updated = await storage.updateCheckTransaction(id, updateData);
+    res.json(updated);
+    setImmediate(async () => {
+      try { await rebuildCheckSheetForProperty(existing.property); } catch {}
+    });
+  });
+
+  // Convenience endpoint for the "Mark as deposited" button.
+  app.post("/api/check-transactions/:id/deposit", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const id = parseInt(req.params.id);
+    const existing = await storage.getCheckTransaction(id);
+    if (!existing) return res.status(404).json({ error: "Not found" });
+    if (existing.userId !== session.userId && !isAdminRole(session.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+    const updated = await storage.updateCheckTransaction(id, {
+      deposited: 1,
+      depositedAt: new Date().toISOString(),
+    });
+    res.json(updated);
+    setImmediate(async () => {
+      try { await rebuildCheckSheetForProperty(existing.property); } catch {}
+    });
+  });
+
+  app.delete("/api/check-transactions/:id", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const id = parseInt(req.params.id);
+    const existing = await storage.getCheckTransaction(id);
+    if (!existing) return res.status(404).json({ error: "Not found" });
+    if (existing.userId !== session.userId && !isAdminRole(session.role)) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+    await storage.deleteCheckTransaction(id);
+    res.json({ ok: true });
+    setImmediate(async () => {
+      try { await rebuildCheckSheetForProperty(existing.property); } catch {}
+    });
+  });
+
+  // Per-property un-deposited totals — powers the "Checks on Hand" dashboard card.
+  app.get("/api/check-transactions/balances", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const props = isAdminRole(session.role)
+      ? await storage.getAllProperties()
+      : await storage.getPropertiesForUser(session.userId);
+    const allChecks = await storage.getAllCheckTransactions();
+    const balances: Record<string, number> = {};
+    for (const p of props) {
+      const sum = allChecks
+        .filter(c => c.property === p.name && !c.deposited)
+        .reduce((acc, c) => acc + parseFloat(c.amount || "0"), 0);
+      balances[p.name] = sum;
+    }
+    res.json(balances);
+  });
+
+  // Admin-only: provision the Check spreadsheet and create one tab per property.
+  app.post("/api/admin/init-check-sheet", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    if (!isGoogleEnabled()) return res.status(400).json({ error: "Google API not configured" });
+    try {
+      let spreadsheetId = checkSheetsConfig?.spreadsheetId;
+      if (!spreadsheetId) {
+        // Create new spreadsheet at Drive root via Sheets API (same pattern
+        // used by the time-reports sync endpoint).
+        const oauth2Client = new google.auth.OAuth2(
+          process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET
+        );
+        oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
+        const sheets = google.sheets({ version: "v4", auth: oauth2Client });
+        const created = await sheets.spreadsheets.create({
+          requestBody: { properties: { title: "Check Transactions" } },
+        });
+        spreadsheetId = created.data.spreadsheetId!;
+        checkSheetsConfig = { spreadsheetId, tabs: {} };
+        fs.writeFileSync(CHECK_SHEETS_CONFIG_PATH, JSON.stringify(checkSheetsConfig, null, 2));
+        console.log(`[check-sheets] Created spreadsheet ${spreadsheetId}`);
+      }
+      // Make sure one tab exists per property, with current data.
+      const props = await storage.getAllProperties();
+      let tabs = 0, rows = 0;
+      for (const p of props) {
+        const result = await rebuildCheckSheetForProperty(p.name);
+        if (result.ok) { tabs++; rows += (result.rows || 0); }
+      }
+      res.json({ ok: true, spreadsheetId, tabs, rows });
+    } catch (e: any) {
+      console.error("[check-sheets] init error:", e);
+      res.status(500).json({ error: e.message || "Failed to init Check sheet" });
+    }
+  });
+
+  // Migration: pull every category=check row out of cash_transactions into
+  // check_transactions, mark them as already deposited, then rebuild both
+  // spreadsheets. Idempotent — only moves rows whose category is still 'check'.
+  app.post("/api/admin/migrate-checks", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    try {
+      const all = await storage.getAllCashTransactions();
+      const oldChecks = all.filter(c => c.category === "check");
+      const nowIso = new Date().toISOString();
+      let migrated = 0;
+      const touchedProps = new Set<string>();
+      for (const c of oldChecks) {
+        await storage.createCheckTransaction({
+          userId: c.userId,
+          property: c.property,
+          amount: c.amount,
+          date: c.date,
+          payerName: (c as any).payerName || (c as any).tenantName || null,
+          checkNumber: null,
+          unitLotNumber: c.unitLotNumber || null,
+          notes: (c as any).notes || c.description || null,
+          photoPath: c.photoPath || null,
+          photoPaths: c.photoPaths || null,
+          deposited: 1, // already deposited per migration policy
+          depositedAt: nowIso,
+          recordNumber: c.recordNumber || null,
+          propertyCode: (c as any).propertyCode || null,
+          syncedToSheets: 0,
+          syncedToDrive: 0,
+          createdAt: c.createdAt,
+        } as any);
+        await storage.deleteCashTransaction(c.id);
+        touchedProps.add(c.property);
+        migrated++;
+      }
+      // Rebuild affected tabs in both spreadsheets so they reflect reality.
+      for (const p of Array.from(touchedProps)) {
+        try { await rebuildCheckSheetForProperty(p); } catch {}
+      }
+      // Also resync cash sheet so the check rows disappear from there.
+      if (cashSheetsConfig?.spreadsheetId) {
+        for (const p of Array.from(touchedProps)) {
+          try {
+            const remaining = (await storage.getAllCashTransactions())
+              .filter(c => c.property === p)
+              .sort((a, b) => a.date.localeCompare(b.date));
+            const headers = ["Date", "Type", "Category", "Amount", "Unit/Lot", "Tenant", "Bank", "Description", "Submitted By", "Submitted At", "Record #", "Balance"];
+            await updateSheetRange(cashSheetsConfig.spreadsheetId, `${p}!A1`, [headers]);
+            await clearSheet(cashSheetsConfig.spreadsheetId, `${p}!A2:L`);
+            if (remaining.length > 0) {
+              const allUsers = await storage.getAllUsers();
+              const userMap = new Map(allUsers.map(u => [u.id, u.displayName]));
+              let running = 0;
+              const cashRows = remaining.map(c => {
+                running += (c.type === "income" ? 1 : -1) * parseFloat(c.amount || "0");
+                return [
+                  c.date, c.type, c.category, c.amount,
+                  c.unitLotNumber || "", c.tenantName || (c as any).payerName || "",
+                  c.bankName || "", c.description || (c as any).notes || "",
+                  userMap.get(c.userId) || "", c.createdAt,
+                  (c as any).propertyCode || String(c.recordNumber || ""),
+                  running.toFixed(2),
+                ];
+              });
+              await updateSheetRange(cashSheetsConfig.spreadsheetId, `${p}!A2`, cashRows);
+            }
+          } catch (e) { console.error("[migrate-checks] cash sheet rebuild:", e); }
+        }
+      }
+      res.json({ ok: true, migrated, properties: Array.from(touchedProps) });
+    } catch (e: any) {
+      console.error("[migrate-checks] error:", e);
+      res.status(500).json({ error: e.message || "Migration failed" });
+    }
   });
 
   // ---- CC STATEMENT RECONCILIATION ----
