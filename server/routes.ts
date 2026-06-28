@@ -4665,6 +4665,15 @@ export async function registerRoutes(
       if (!session) return;
     }
 
+    // Heartbeat: record each fire (manual or cron) so we can audit silently-missed days.
+    const heartbeatPath = path.resolve(dataDir, "reminder-heartbeat.json");
+    let heartbeat: { lastFiredAt: string; lastFiredBy: string; history: any[] } = {
+      lastFiredAt: "", lastFiredBy: "", history: [],
+    };
+    try {
+      if (fs.existsSync(heartbeatPath)) heartbeat = JSON.parse(fs.readFileSync(heartbeatPath, "utf-8"));
+    } catch {}
+
     const allUsers = await storage.getAllUsers();
     let sent = 0;
     const errors: string[] = [];
@@ -4707,13 +4716,52 @@ export async function registerRoutes(
           `Daily Reporting Reminder — ${new Date().toLocaleDateString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" })}`,
           html
         );
+        // Per-user audit: mark the most recent successful reminder send.
+        try {
+          await storage.updateUser(u.id, { lastDailyReminderAt: new Date().toISOString() } as any);
+        } catch {}
         sent++;
       } catch (e: any) {
         errors.push(`${u.username}: ${e.message}`);
       }
     }
 
+    // Persist heartbeat with last 30 fires
+    try {
+      heartbeat.lastFiredAt = new Date().toISOString();
+      heartbeat.lastFiredBy = isInternalCron ? "cron" : "manual";
+      heartbeat.history = (heartbeat.history || []).concat([{
+        at: heartbeat.lastFiredAt,
+        by: heartbeat.lastFiredBy,
+        sent, errors: errors.length,
+      }]).slice(-30);
+      fs.writeFileSync(heartbeatPath, JSON.stringify(heartbeat, null, 2));
+    } catch (e) { console.error("[reminders] heartbeat write failed:", e); }
+    console.log(`[reminders] Fired by ${heartbeat.lastFiredBy} — sent ${sent}, errors ${errors.length}`);
+
     res.json({ sent, errors });
+  });
+
+  // Admin diagnostic: when did the daily reminder last fire?
+  // Helps catch silent cron failures (e.g. after a deploy).
+  app.get("/api/admin/reminder-status", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    const heartbeatPath = path.resolve(dataDir, "reminder-heartbeat.json");
+    let heartbeat: any = {};
+    try {
+      if (fs.existsSync(heartbeatPath)) heartbeat = JSON.parse(fs.readFileSync(heartbeatPath, "utf-8"));
+    } catch {}
+    const users = await storage.getAllUsers();
+    const enabled = users
+      .filter((u: any) => u.dailyReminderEnabled && u.email && !u.archived)
+      .map((u: any) => ({
+        displayName: u.displayName,
+        email: u.email,
+        role: u.role,
+        lastDailyReminderAt: u.lastDailyReminderAt || null,
+      }));
+    res.json({ heartbeat, enabledUsers: enabled });
   });
 
   // ---- User Documents ----

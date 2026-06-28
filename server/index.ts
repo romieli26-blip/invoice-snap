@@ -170,8 +170,8 @@ app.use((req, res, next) => {
 
       // Daily 7pm Florida-time reminder (Mon–Sat). Uses America/New_York
       // tz so DST is auto-handled. Sundays excluded.
-      cron.schedule("0 19 * * 1-6", () => {
-        log("Daily 7pm reminder cron triggered", "cron");
+      function fireDailyReminders(source: string) {
+        log(`Daily 7pm reminder triggered (${source})`, "cron");
         const http = require("http");
         const req = http.request({
           hostname: "localhost", port, path: "/api/admin/daily-7pm-reminders",
@@ -180,14 +180,50 @@ app.use((req, res, next) => {
         }, (res: any) => {
           let body = "";
           res.on("data", (c: any) => body += c);
-          res.on("end", () => log(`Daily 7pm reminders result: ${body}`, "cron"));
+          res.on("end", () => log(`Daily 7pm reminders result (${source}): ${body}`, "cron"));
         });
-        req.on("error", (err: any) => log(`Daily 7pm reminders error: ${err.message}`, "cron"));
+        req.on("error", (err: any) => log(`Daily 7pm reminders error (${source}): ${err.message}`, "cron"));
         req.write("{}");
         req.end();
-      }, { timezone: "America/New_York" });
+      }
 
-      log("Daily 7pm reminder scheduler active (Mon–Sat ET)", "cron");
+      cron.schedule("0 19 * * 1-6", () => fireDailyReminders("cron"),
+        { timezone: "America/New_York" });
+
+      // Boot-time catch-up: if the server starts AFTER 7pm ET on a Mon–Sat
+      // and there's no heartbeat from today, fire the reminder once. This
+      // protects against Railway restarting the container around 7pm and
+      // letting the cron slot slip silently.
+      try {
+        const fs = require("fs");
+        const path = require("path");
+        const dataDir = process.env.DATA_DIR || ".";
+        const heartbeatPath = path.resolve(dataDir, "reminder-heartbeat.json");
+        const nowET = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+        const todayET = nowET.toISOString().split("T")[0];
+        const dayET = nowET.getDay(); // 0=Sun ... 6=Sat
+        const hourET = nowET.getHours();
+        if (dayET !== 0 && hourET >= 19) {
+          let last = "";
+          if (fs.existsSync(heartbeatPath)) {
+            try {
+              const hb = JSON.parse(fs.readFileSync(heartbeatPath, "utf-8"));
+              last = (hb.lastFiredAt || "").split("T")[0];
+            } catch {}
+          }
+          if (last !== todayET) {
+            log(`Boot-time catch-up: reminder hasn't fired today (last=${last || "never"}), firing now`, "cron");
+            // Slight delay so HTTP server is fully accepting connections
+            setTimeout(() => fireDailyReminders("boot-catchup"), 5000);
+          } else {
+            log(`Boot-time check: reminder already fired today (${last})`, "cron");
+          }
+        }
+      } catch (e: any) {
+        log(`Boot-time catch-up check failed: ${e.message}`, "cron");
+      }
+
+      log("Daily 7pm reminder scheduler active (Mon–Sat ET) with boot catch-up", "cron");
     },
   );
 })();

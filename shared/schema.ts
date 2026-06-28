@@ -74,6 +74,10 @@ export const users = sqliteTable("users", {
   createdByUserId: integer("created_by_user_id"),
   allowMiles: integer("allow_miles").default(1),
   dailyReminderEnabled: integer("daily_reminder_enabled").default(0),
+  // Audit timestamp: the ISO time of the most recent successful daily reminder
+  // email to this user. Lets the Admin Panel surface whether the schedule has
+  // actually been firing for each user.
+  lastDailyReminderAt: text("last_daily_reminder_at"),
   allowFlatRate: integer("allow_flat_rate").default(0),
   docReminderEnabled: integer("doc_reminder_enabled").default(0),
   docReminderDays: integer("doc_reminder_days").default(3),
