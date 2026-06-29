@@ -1666,6 +1666,16 @@ export default function HistoryPage() {
               disabled={!depositPhotoPath || depositSaving || depositUploading}
               onClick={async () => {
                 if (!depositingCheck) return;
+                // Explicit "are you sure?" confirmation before committing, to
+                // avoid accidental deposits when reviewing a check on hand.
+                const ok = window.confirm(
+                  `Mark this check as deposited?\n\n` +
+                  `Amount: $${depositingCheck.amount}\n` +
+                  `From: ${depositingCheck.payerName || "—"}\n` +
+                  `Property: ${depositingCheck.property}\n\n` +
+                  `Once confirmed, the check will be removed from Checks on Hand and the deposit slip will be filed.`
+                );
+                if (!ok) return;
                 setDepositSaving(true);
                 try {
                   await apiRequest("POST", `/api/check-transactions/${depositingCheck.id}/deposit`, {
