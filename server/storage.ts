@@ -221,6 +221,8 @@ sqlite.exec(`
 try { sqlite.exec("ALTER TABLE invoices ADD COLUMN edit_history TEXT"); } catch {}
 // Audit: timestamp of the most recent successful daily-reminder email per user
 try { sqlite.exec("ALTER TABLE users ADD COLUMN last_daily_reminder_at TEXT"); } catch {}
+// Photo uploaded when a check is marked deposited
+try { sqlite.exec("ALTER TABLE check_transactions ADD COLUMN deposit_photo_path TEXT"); } catch {}
 // Multi-position support (item 2 in June 2026 update)
 try { sqlite.exec("ALTER TABLE users ADD COLUMN positions TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE time_reports ADD COLUMN position_name TEXT"); } catch {}
@@ -271,6 +273,7 @@ sqlite.exec(`
     photo_paths TEXT,
     deposited INTEGER NOT NULL DEFAULT 0,
     deposited_at TEXT,
+    deposit_photo_path TEXT,
     record_number INTEGER,
     property_code TEXT,
     edit_history TEXT,

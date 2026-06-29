@@ -237,6 +237,10 @@ export const checkTransactions = sqliteTable("check_transactions", {
   // Deposit lifecycle
   deposited: integer("deposited").notNull().default(0),
   depositedAt: text("deposited_at"),
+  // Photo of the deposit slip / mobile-deposit confirmation. Captured at
+  // the moment the user marks the check deposited, mirroring the original
+  // check-photo step at submission.
+  depositPhotoPath: text("deposit_photo_path"),
   // Record IDs (parallel to cash/invoice)
   recordNumber: integer("record_number"),
   propertyCode: text("property_code"),

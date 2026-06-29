@@ -381,6 +381,15 @@ export default function HistoryPage() {
   const [showReceipts, setShowReceipts] = useState(true);
   const [showCashTxs, setShowCashTxs] = useState(false);
   const [showCheckTxs, setShowCheckTxs] = useState(false);
+  // Deposit dialog state — captures the slip/confirmation photo at the
+  // moment of marking a check deposited (mirrors the original check-photo step).
+  const [depositingCheck, setDepositingCheck] = useState<any | null>(null);
+  const [depositPhotoPath, setDepositPhotoPath] = useState("");
+  const [depositPhotoPreview, setDepositPhotoPreview] = useState("");
+  const [depositUploading, setDepositUploading] = useState(false);
+  const [depositSaving, setDepositSaving] = useState(false);
+  const depositCameraRef = useRef<HTMLInputElement | null>(null);
+  const depositFileRef = useRef<HTMLInputElement | null>(null);
   const [showWorkReports, setShowWorkReports] = useState(false);
   const [showFlatRates, setShowFlatRates] = useState(false);
   const [showWorkCredits, setShowWorkCredits] = useState(false);
@@ -1166,16 +1175,12 @@ export default function HistoryPage() {
                             <Button
                               size="sm" variant="outline"
                               className="h-7 text-xs px-2 border-emerald-300 text-emerald-700 hover:bg-emerald-50"
-                              onClick={async () => {
-                                try {
-                                  await apiRequest("POST", `/api/check-transactions/${tx.id}/deposit`);
-                                  queryClient.invalidateQueries({ queryKey: ["/api/check-transactions"] });
-                                  queryClient.invalidateQueries({ queryKey: ["/api/check-transactions/balances"] });
-                                  toast({ title: "Marked as deposited" });
-                                } catch (e: any) {
-                                  toast({ title: "Failed", description: e.message, variant: "destructive" });
-                                }
+                              onClick={() => {
+                                setDepositingCheck(tx);
+                                setDepositPhotoPath("");
+                                setDepositPhotoPreview("");
                               }}
+                              data-testid={`button-mark-deposited-${tx.id}`}
                             >
                               Mark Deposited
                             </Button>
@@ -1537,6 +1542,148 @@ export default function HistoryPage() {
             }}>
               {editSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
               Save Changes
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Mark-as-Deposited dialog: requires a photo of the deposit slip /
+         mobile-deposit confirmation before completing the deposit. */}
+      <Dialog
+        open={depositingCheck !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDepositingCheck(null);
+            setDepositPhotoPath("");
+            setDepositPhotoPreview("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Mark Check as Deposited</DialogTitle>
+          </DialogHeader>
+          {depositingCheck && (
+            <div className="rounded-md border bg-muted/40 p-3 text-sm">
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                <span className="text-muted-foreground">Amount</span>
+                <span className="font-semibold text-right">${depositingCheck.amount}</span>
+                <span className="text-muted-foreground">From</span>
+                <span className="text-right">{depositingCheck.payerName || "—"}</span>
+                <span className="text-muted-foreground">Property</span>
+                <span className="text-right">{depositingCheck.property}</span>
+              </div>
+            </div>
+          )}
+          <div className="space-y-2 mt-2">
+            <label className="text-sm font-medium">
+              Deposit slip / mobile-deposit confirmation <span className="text-red-500">*</span>
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Take a photo of the deposit slip or the mobile-deposit confirmation screen.
+            </p>
+            {depositPhotoPreview ? (
+              <div className="relative">
+                <img src={depositPhotoPreview} alt="Deposit slip" className="w-full rounded-md" />
+                <button
+                  type="button"
+                  className="absolute top-1 right-1 bg-black/60 text-white rounded-full p-1"
+                  onClick={() => { setDepositPhotoPath(""); setDepositPhotoPreview(""); }}
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                <Button type="button" variant="outline" disabled={depositUploading} onClick={() => depositCameraRef.current?.click()}>
+                  <Camera className="w-4 h-4 mr-1" /> Take Photo
+                </Button>
+                <Button type="button" variant="outline" disabled={depositUploading} onClick={() => depositFileRef.current?.click()}>
+                  <Download className="w-4 h-4 mr-1 rotate-180" /> Upload
+                </Button>
+                <input
+                  ref={depositCameraRef} type="file" accept="image/*" capture="environment" className="hidden"
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    setDepositUploading(true);
+                    try {
+                      const form = new FormData();
+                      form.append("photo", f);
+                      const r = await fetch(`${API_BASE}/api/upload`, {
+                        method: "POST",
+                        headers: { Authorization: `Bearer ${getAuthToken()}` },
+                        body: form,
+                      });
+                      if (!r.ok) throw new Error("Upload failed");
+                      const data = await r.json();
+                      setDepositPhotoPath(data.path);
+                      setDepositPhotoPreview(URL.createObjectURL(f));
+                    } catch (err: any) {
+                      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+                    } finally { setDepositUploading(false); }
+                  }}
+                />
+                <input
+                  ref={depositFileRef} type="file" accept="image/*,application/pdf" className="hidden"
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    setDepositUploading(true);
+                    try {
+                      const form = new FormData();
+                      form.append("photo", f);
+                      const r = await fetch(`${API_BASE}/api/upload`, {
+                        method: "POST",
+                        headers: { Authorization: `Bearer ${getAuthToken()}` },
+                        body: form,
+                      });
+                      if (!r.ok) throw new Error("Upload failed");
+                      const data = await r.json();
+                      setDepositPhotoPath(data.path);
+                      setDepositPhotoPreview(URL.createObjectURL(f));
+                    } catch (err: any) {
+                      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+                    } finally { setDepositUploading(false); }
+                  }}
+                />
+              </div>
+            )}
+          </div>
+          <div className="flex gap-2 justify-end mt-3">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDepositingCheck(null);
+                setDepositPhotoPath("");
+                setDepositPhotoPreview("");
+              }}
+              disabled={depositSaving}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={!depositPhotoPath || depositSaving || depositUploading}
+              onClick={async () => {
+                if (!depositingCheck) return;
+                setDepositSaving(true);
+                try {
+                  await apiRequest("POST", `/api/check-transactions/${depositingCheck.id}/deposit`, {
+                    depositPhotoPath,
+                  });
+                  queryClient.invalidateQueries({ queryKey: ["/api/check-transactions"] });
+                  queryClient.invalidateQueries({ queryKey: ["/api/check-transactions/balances"] });
+                  toast({ title: "Marked as deposited" });
+                  setDepositingCheck(null);
+                  setDepositPhotoPath("");
+                  setDepositPhotoPreview("");
+                } catch (e: any) {
+                  toast({ title: "Failed", description: e.message, variant: "destructive" });
+                } finally { setDepositSaving(false); }
+              }}
+            >
+              {depositSaving && <Loader2 className="w-4 h-4 animate-spin mr-1" />}
+              Confirm Deposit
             </Button>
           </div>
         </DialogContent>

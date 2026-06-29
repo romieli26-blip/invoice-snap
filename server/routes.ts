@@ -3369,7 +3369,7 @@ export async function registerRoutes(
     if (!checkSheetsConfig?.spreadsheetId) return { ok: false, reason: "no-config" };
     const headers = [
       "Date", "Property", "Amount", "From", "Unit/Lot",
-      "Check #", "Notes", "Deposited", "Deposited At",
+      "Check #", "Notes", "Deposited", "Deposited At", "Deposit Slip",
       "Submitted By", "Submitted At", "Record #", "Property Code",
     ];
     await createSheetTab(checkSheetsConfig.spreadsheetId, propertyName, headers);
@@ -3388,6 +3388,7 @@ export async function registerRoutes(
       c.checkNumber || "", c.notes || "",
       c.deposited ? "Yes" : "No",
       c.depositedAt || "",
+      (c as any).depositPhotoPath || "",
       userMap.get(c.userId) || `User ${c.userId}`,
       c.createdAt,
       String(c.recordNumber || ""),
@@ -3534,6 +3535,8 @@ export async function registerRoutes(
   });
 
   // Convenience endpoint for the "Mark as deposited" button.
+  // Body: { depositPhotoPath: string }  — photo of the deposit slip /
+  // mobile-deposit confirmation, captured at the moment of deposit.
   app.post("/api/check-transactions/:id/deposit", async (req, res) => {
     const session = await requireAuth(req, res);
     if (!session) return;
@@ -3543,13 +3546,43 @@ export async function registerRoutes(
     if (existing.userId !== session.userId && !isAdminRole(session.role)) {
       return res.status(403).json({ error: "Not authorized" });
     }
+    const { depositPhotoPath } = req.body || {};
+    if (!depositPhotoPath) {
+      return res.status(400).json({ error: "depositPhotoPath is required (upload the deposit slip first)" });
+    }
     const updated = await storage.updateCheckTransaction(id, {
       deposited: 1,
       depositedAt: new Date().toISOString(),
-    });
+      depositPhotoPath,
+    } as any);
     res.json(updated);
     setImmediate(async () => {
       try { await rebuildCheckSheetForProperty(existing.property); } catch {}
+      // Also push the deposit slip to Drive next to the check photo.
+      if (isGoogleEnabled() && depositPhotoPath) {
+        try {
+          const filePath = path.resolve(dataDir, "uploads", depositPhotoPath.replace(/^\/api\/uploads\//, ""));
+          if (fs.existsSync(filePath)) {
+            let rootFolder = propertyFolderCache.get("__check_root") || null;
+            if (!rootFolder) {
+              const main = await ensureDriveFolder("Credit Card and Cash Receipts");
+              if (main) {
+                rootFolder = await ensureDriveFolder("Check Receipts", main);
+                if (rootFolder) propertyFolderCache.set("__check_root", rootFolder);
+              }
+            }
+            let propFolder = propertyFolderCache.get("check_" + existing.property) || null;
+            if (!propFolder && rootFolder) {
+              propFolder = await ensureDriveFolder(existing.property, rootFolder);
+              if (propFolder) propertyFolderCache.set("check_" + existing.property, propFolder);
+            }
+            const ext = path.extname(filePath).slice(1) || "jpg";
+            const codeSuffix = existing.propertyCode ? ` ${existing.propertyCode}` : "";
+            const driveFileName = `Deposit_${existing.property}_${existing.date}${codeSuffix}.${ext}`;
+            await uploadToDrive(filePath, driveFileName, propFolder || rootFolder || undefined);
+          }
+        } catch (e) { console.error("[check-deposit-drive] sync error:", e); }
+      }
     });
   });
 
