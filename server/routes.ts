@@ -3681,6 +3681,18 @@ export async function registerRoutes(
       cacheKeys: Array.from(propertyFolderCache.keys()),
     });
   });
+  // Force the discovery to run NOW so the folder ID gets persisted before any
+  // upload happens. Idempotent — calls getReceiptsRootFolderId() which only
+  // searches if there's no cached ID, then writes the config.
+  app.post("/api/admin/drive-folder/discover", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    if (!isGoogleEnabled()) return res.status(400).json({ error: "Google API not configured" });
+    const id = await getReceiptsRootFolderId();
+    if (!id) return res.status(500).json({ error: "Could not find or create the Credit Card and Cash Receipts folder" });
+    res.json({ ok: true, receiptsRootId: id });
+  });
+
   app.post("/api/admin/drive-folder", async (req, res) => {
     const session = await requireAdmin(req, res);
     if (!session) return;
