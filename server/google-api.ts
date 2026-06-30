@@ -400,6 +400,25 @@ export async function uploadToDrive(
  * Ensure a folder exists in Drive. Returns the folder ID.
  * If parentFolderId is provided, looks/creates inside that folder.
  */
+// Quick existence + non-trashed check for a known folder ID. Returns true if
+// the folder is still usable. Used by the persistent receipts-root cache so we
+// don't blindly re-search by name (which would re-create a new folder when the
+// user renames or moves the existing one).
+export async function driveFolderExists(folderId: string): Promise<boolean> {
+  if (!driveApi) return false;
+  try {
+    const info = await driveApi.files.get({
+      fileId: folderId,
+      fields: "id, name, mimeType, trashed",
+    });
+    return !!info.data?.id
+      && info.data.mimeType === "application/vnd.google-apps.folder"
+      && !info.data.trashed;
+  } catch {
+    return false;
+  }
+}
+
 export async function ensureDriveFolder(
   folderName: string,
   parentFolderId?: string

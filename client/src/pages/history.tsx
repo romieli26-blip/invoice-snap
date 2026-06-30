@@ -1547,8 +1547,7 @@ export default function HistoryPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Mark-as-Deposited dialog: requires a photo of the deposit slip /
-         mobile-deposit confirmation before completing the deposit. */}
+      {/* Mark-as-Deposited dialog — a simple confirmation, no slip upload. */}
       <Dialog
         open={depositingCheck !== null}
         onOpenChange={(open) => {
@@ -1562,6 +1561,9 @@ export default function HistoryPage() {
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>Mark Check as Deposited</DialogTitle>
+            <DialogDescription>
+              Confirm this is the check you've deposited. It will be removed from Checks on Hand.
+            </DialogDescription>
           </DialogHeader>
           {depositingCheck && (
             <div className="rounded-md border bg-muted/40 p-3 text-sm">
@@ -1572,121 +1574,32 @@ export default function HistoryPage() {
                 <span className="text-right">{depositingCheck.payerName || "—"}</span>
                 <span className="text-muted-foreground">Property</span>
                 <span className="text-right">{depositingCheck.property}</span>
+                {depositingCheck.checkNumber && (<>
+                  <span className="text-muted-foreground">Check #</span>
+                  <span className="text-right">{depositingCheck.checkNumber}</span>
+                </>)}
               </div>
             </div>
           )}
-          <div className="space-y-2 mt-2">
-            <label className="text-sm font-medium">
-              Deposit slip / mobile-deposit confirmation <span className="text-red-500">*</span>
-            </label>
-            <p className="text-xs text-muted-foreground">
-              Take a photo of the deposit slip or the mobile-deposit confirmation screen.
-            </p>
-            {depositPhotoPreview ? (
-              <div className="relative">
-                <img src={depositPhotoPreview} alt="Deposit slip" className="w-full rounded-md" />
-                <button
-                  type="button"
-                  className="absolute top-1 right-1 bg-black/60 text-white rounded-full p-1"
-                  onClick={() => { setDepositPhotoPath(""); setDepositPhotoPreview(""); }}
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-2">
-                <Button type="button" variant="outline" disabled={depositUploading} onClick={() => depositCameraRef.current?.click()}>
-                  <Camera className="w-4 h-4 mr-1" /> Take Photo
-                </Button>
-                <Button type="button" variant="outline" disabled={depositUploading} onClick={() => depositFileRef.current?.click()}>
-                  <Download className="w-4 h-4 mr-1 rotate-180" /> Upload
-                </Button>
-                <input
-                  ref={depositCameraRef} type="file" accept="image/*" capture="environment" className="hidden"
-                  onChange={async (e) => {
-                    const f = e.target.files?.[0];
-                    if (!f) return;
-                    setDepositUploading(true);
-                    try {
-                      const form = new FormData();
-                      form.append("photo", f);
-                      const r = await fetch(`${API_BASE}/api/upload`, {
-                        method: "POST",
-                        headers: { Authorization: `Bearer ${getAuthToken()}` },
-                        body: form,
-                      });
-                      if (!r.ok) throw new Error("Upload failed");
-                      const data = await r.json();
-                      setDepositPhotoPath(data.path);
-                      setDepositPhotoPreview(URL.createObjectURL(f));
-                    } catch (err: any) {
-                      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
-                    } finally { setDepositUploading(false); }
-                  }}
-                />
-                <input
-                  ref={depositFileRef} type="file" accept="image/*,application/pdf" className="hidden"
-                  onChange={async (e) => {
-                    const f = e.target.files?.[0];
-                    if (!f) return;
-                    setDepositUploading(true);
-                    try {
-                      const form = new FormData();
-                      form.append("photo", f);
-                      const r = await fetch(`${API_BASE}/api/upload`, {
-                        method: "POST",
-                        headers: { Authorization: `Bearer ${getAuthToken()}` },
-                        body: form,
-                      });
-                      if (!r.ok) throw new Error("Upload failed");
-                      const data = await r.json();
-                      setDepositPhotoPath(data.path);
-                      setDepositPhotoPreview(URL.createObjectURL(f));
-                    } catch (err: any) {
-                      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
-                    } finally { setDepositUploading(false); }
-                  }}
-                />
-              </div>
-            )}
-          </div>
           <div className="flex gap-2 justify-end mt-3">
             <Button
               variant="outline"
-              onClick={() => {
-                setDepositingCheck(null);
-                setDepositPhotoPath("");
-                setDepositPhotoPreview("");
-              }}
+              onClick={() => setDepositingCheck(null)}
               disabled={depositSaving}
             >
               Cancel
             </Button>
             <Button
-              disabled={!depositPhotoPath || depositSaving || depositUploading}
+              disabled={depositSaving}
               onClick={async () => {
                 if (!depositingCheck) return;
-                // Explicit "are you sure?" confirmation before committing, to
-                // avoid accidental deposits when reviewing a check on hand.
-                const ok = window.confirm(
-                  `Mark this check as deposited?\n\n` +
-                  `Amount: $${depositingCheck.amount}\n` +
-                  `From: ${depositingCheck.payerName || "—"}\n` +
-                  `Property: ${depositingCheck.property}\n\n` +
-                  `Once confirmed, the check will be removed from Checks on Hand and the deposit slip will be filed.`
-                );
-                if (!ok) return;
                 setDepositSaving(true);
                 try {
-                  await apiRequest("POST", `/api/check-transactions/${depositingCheck.id}/deposit`, {
-                    depositPhotoPath,
-                  });
+                  await apiRequest("POST", `/api/check-transactions/${depositingCheck.id}/deposit`, {});
                   queryClient.invalidateQueries({ queryKey: ["/api/check-transactions"] });
                   queryClient.invalidateQueries({ queryKey: ["/api/check-transactions/balances"] });
                   toast({ title: "Marked as deposited" });
                   setDepositingCheck(null);
-                  setDepositPhotoPath("");
-                  setDepositPhotoPreview("");
                 } catch (e: any) {
                   toast({ title: "Failed", description: e.message, variant: "destructive" });
                 } finally { setDepositSaving(false); }

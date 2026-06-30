@@ -43,16 +43,9 @@ export default function CheckTransactionPage() {
   const [submitted, setSubmitted] = useState(false);
   // After save, ask the user whether the check was already deposited so we
   // know whether to count it toward "Checks on Hand" or not.
-  // Two-stage confirmation:
-  //   "ask"  — "Was this check already deposited?" yes/no
-  //   "slip" — (only when yes) take/upload the deposit slip photo
-  //   null   — dialog closed
-  const [depositStage, setDepositStage] = useState<null | "ask" | "slip">(null);
-  const [depositSlipPath, setDepositSlipPath] = useState("");
-  const [depositSlipPreview, setDepositSlipPreview] = useState("");
-  const [depositSlipUploading, setDepositSlipUploading] = useState(false);
-  const slipCameraRef = useRef<HTMLInputElement | null>(null);
-  const slipFileRef = useRef<HTMLInputElement | null>(null);
+  // Single-stage confirmation: "Was this check already deposited?" yes/no.
+  // No slip upload — the confirmation alone is enough.
+  const [askDeposited, setAskDeposited] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -97,7 +90,7 @@ export default function CheckTransactionPage() {
     return null;
   }
 
-  async function doSubmit(depositedNow: boolean, slipPath?: string) {
+  async function doSubmit(depositedNow: boolean) {
     setSubmitting(true);
     try {
       await apiRequest("POST", "/api/check-transactions", {
@@ -107,7 +100,6 @@ export default function CheckTransactionPage() {
         notes: notes.trim() || undefined,
         photoPath,
         deposited: depositedNow,
-        depositPhotoPath: slipPath || undefined,
       });
       queryClient.invalidateQueries({ queryKey: ["/api/check-transactions"] });
       queryClient.invalidateQueries({ queryKey: ["/api/check-transactions/balances"] });
@@ -121,28 +113,7 @@ export default function CheckTransactionPage() {
       });
     } finally {
       setSubmitting(false);
-      setDepositStage(null);
-    }
-  }
-
-  async function uploadSlip(file: File) {
-    setDepositSlipUploading(true);
-    try {
-      const form = new FormData();
-      form.append("photo", file);
-      const r = await fetch(`${API_BASE}/api/upload`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${getAuthToken()}` },
-        body: form,
-      });
-      if (!r.ok) throw new Error("Upload failed");
-      const data = await r.json();
-      setDepositSlipPath(data.path);
-      setDepositSlipPreview(URL.createObjectURL(file));
-    } catch (err: any) {
-      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
-    } finally {
-      setDepositSlipUploading(false);
+      setAskDeposited(false);
     }
   }
 
@@ -153,7 +124,7 @@ export default function CheckTransactionPage() {
       toast({ title: err, variant: "destructive" });
       return;
     }
-    setDepositStage("ask");
+    setAskDeposited(true);
   }
 
   if (submitted) {
@@ -285,103 +256,38 @@ export default function CheckTransactionPage() {
         </div>
       </div>
 
-      {/* Two-stage deposit confirmation dialog.
-         Stage 1: "already deposited?" yes/no.
-         Stage 2 (only on yes): take/upload the deposit slip photo. */}
-      <Dialog
-        open={depositStage !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setDepositStage(null);
-            setDepositSlipPath("");
-            setDepositSlipPreview("");
-          }
-        }}
-      >
+      {/* Single-stage deposit confirmation dialog. */}
+      <Dialog open={askDeposited} onOpenChange={(open) => { if (!open) setAskDeposited(false); }}>
         <DialogContent className="sm:max-w-sm">
-          {depositStage === "ask" && (
-            <>
-              <DialogHeader>
-                <DialogTitle>Was this check already deposited?</DialogTitle>
-                <DialogDescription>
-                  If yes, we'll ask for a photo of the deposit slip next. If no, it sits in Checks on Hand until you deposit it.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="rounded-md border bg-muted/40 p-3 text-sm">
-                <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-                  <span className="text-muted-foreground">Amount</span>
-                  <span className="font-semibold text-right">${parseFloat(amount || "0").toFixed(2)}</span>
-                  <span className="text-muted-foreground">From</span>
-                  <span className="text-right">{payerName}</span>
-                  <span className="text-muted-foreground">Property</span>
-                  <span className="text-right">{property}</span>
-                  {checkNumber && <><span className="text-muted-foreground">Check #</span><span className="text-right">{checkNumber}</span></>}
-                </div>
-              </div>
-              <div className="flex flex-col gap-2 mt-3">
-                <Button onClick={() => setDepositStage("slip")} disabled={submitting}>
-                  Yes, already deposited
-                </Button>
-                <Button variant="outline" onClick={() => doSubmit(false)} disabled={submitting}>
-                  No, hold in Checks on Hand
-                </Button>
-                <Button variant="ghost" onClick={() => setDepositStage(null)} disabled={submitting} size="sm">
-                  Cancel
-                </Button>
-              </div>
-            </>
-          )}
-          {depositStage === "slip" && (
-            <>
-              <DialogHeader>
-                <DialogTitle>Upload the deposit slip</DialogTitle>
-                <DialogDescription>
-                  Take a photo of the deposit slip or mobile-deposit confirmation. This is filed with the check.
-                </DialogDescription>
-              </DialogHeader>
-              {depositSlipPreview ? (
-                <div className="relative">
-                  <img src={depositSlipPreview} alt="Deposit slip" className="w-full rounded-md" />
-                  <button
-                    type="button"
-                    className="absolute top-1 right-1 bg-black/60 text-white rounded-full p-1"
-                    onClick={() => { setDepositSlipPath(""); setDepositSlipPreview(""); }}
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-2">
-                  <Button type="button" variant="outline" disabled={depositSlipUploading} onClick={() => slipCameraRef.current?.click()}>
-                    <Camera className="w-4 h-4 mr-1" /> Take Photo
-                  </Button>
-                  <Button type="button" variant="outline" disabled={depositSlipUploading} onClick={() => slipFileRef.current?.click()}>
-                    <Upload className="w-4 h-4 mr-1" /> Upload
-                  </Button>
-                  <input
-                    ref={slipCameraRef} type="file" accept="image/*" capture="environment" className="hidden"
-                    onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadSlip(f); }}
-                  />
-                  <input
-                    ref={slipFileRef} type="file" accept="image/*,application/pdf" className="hidden"
-                    onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadSlip(f); }}
-                  />
-                </div>
-              )}
-              <div className="flex flex-col gap-2 mt-3">
-                <Button
-                  onClick={() => doSubmit(true, depositSlipPath)}
-                  disabled={!depositSlipPath || submitting || depositSlipUploading}
-                >
-                  {submitting && <Loader2 className="w-4 h-4 animate-spin mr-1" />}
-                  Submit Check + Deposit Slip
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => setDepositStage("ask")} disabled={submitting}>
-                  Back
-                </Button>
-              </div>
-            </>
-          )}
+          <DialogHeader>
+            <DialogTitle>Was this check already deposited?</DialogTitle>
+            <DialogDescription>
+              If yes, the check won't be added to Checks on Hand. If no, it sits in Checks on Hand until you deposit it.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-md border bg-muted/40 p-3 text-sm">
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+              <span className="text-muted-foreground">Amount</span>
+              <span className="font-semibold text-right">${parseFloat(amount || "0").toFixed(2)}</span>
+              <span className="text-muted-foreground">From</span>
+              <span className="text-right">{payerName}</span>
+              <span className="text-muted-foreground">Property</span>
+              <span className="text-right">{property}</span>
+              {checkNumber && <><span className="text-muted-foreground">Check #</span><span className="text-right">{checkNumber}</span></>}
+            </div>
+          </div>
+          <div className="flex flex-col gap-2 mt-3">
+            <Button onClick={() => doSubmit(true)} disabled={submitting}>
+              {submitting && <Loader2 className="w-4 h-4 animate-spin mr-1" />}
+              Yes, already deposited
+            </Button>
+            <Button variant="outline" onClick={() => doSubmit(false)} disabled={submitting}>
+              No, hold in Checks on Hand
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setAskDeposited(false)} disabled={submitting}>
+              Cancel
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </LogoBackground>

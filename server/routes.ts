@@ -8,7 +8,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
 import pdfParse from "pdf-parse";
-import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, getDriveFolderWebViewLink, hideSheetTab, unhideSheetTab, deleteSheetTab, listDriveFolderChildren, moveDriveFile, trashDriveFile } from "./google-api";
+import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, driveFolderExists, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, getDriveFolderWebViewLink, hideSheetTab, unhideSheetTab, deleteSheetTab, listDriveFolderChildren, moveDriveFile, trashDriveFile } from "./google-api";
 // nodemailer removed — using Gmail API instead (SMTP blocked on Railway)
 
 // Ensure uploads directory exists
@@ -570,6 +570,49 @@ async function requireAdmin(req: Request, res: Response): Promise<{ userId: numb
 let mainFolderId: string | null = null;
 const propertyFolderCache = new Map<string, string>();
 
+// Persistent Drive folder map. Stored on disk so the receipt root folder is
+// remembered across restarts — prevents the app from creating a duplicate
+// "Credit Card and Cash Receipts" folder when the user renames the original
+// one in Drive. Schema: { receiptsRootId: "<drive folder id>" }
+const DRIVE_FOLDER_CONFIG_PATH = path.resolve(process.cwd(), "drive-folder-config.json");
+let driveFolderConfig: { receiptsRootId?: string } = {};
+try {
+  if (fs.existsSync(DRIVE_FOLDER_CONFIG_PATH)) {
+    driveFolderConfig = JSON.parse(fs.readFileSync(DRIVE_FOLDER_CONFIG_PATH, "utf-8"));
+    console.log(`[drive-folders] Config loaded: receiptsRootId=${driveFolderConfig.receiptsRootId}`);
+  }
+} catch {}
+function saveDriveFolderConfig() {
+  try {
+    fs.writeFileSync(DRIVE_FOLDER_CONFIG_PATH, JSON.stringify(driveFolderConfig, null, 2));
+  } catch (e) { console.error("[drive-folders] Save failed:", e); }
+}
+
+// Resolve the single shared receipts root folder. If we already have its ID,
+// verify it still exists in Drive (not trashed, not renamed elsewhere); if so
+// we use it as-is regardless of its current display name. Otherwise we search
+// by the canonical name, and if nothing is found we create it once.
+async function getReceiptsRootFolderId(): Promise<string | null> {
+  if (!isGoogleEnabled()) return null;
+  // 1) Cached ID is still valid? Trust it even if the user renamed the folder.
+  if (driveFolderConfig.receiptsRootId) {
+    try {
+      const ok = await driveFolderExists(driveFolderConfig.receiptsRootId);
+      if (ok) return driveFolderConfig.receiptsRootId;
+    } catch {}
+    // ID stale (folder deleted/trashed) — fall through to discovery.
+    driveFolderConfig.receiptsRootId = undefined;
+  }
+  // 2) Search by canonical name.
+  let id = await ensureDriveFolder("Credit Card and Cash Receipts");
+  if (id) {
+    driveFolderConfig.receiptsRootId = id;
+    saveDriveFolderConfig();
+    return id;
+  }
+  return null;
+}
+
 async function syncToDrive(invoice: any): Promise<boolean> {
   const allPaths: string[] = invoice.photoPaths ? JSON.parse(invoice.photoPaths) : [invoice.photoPath];
   const safeDesc = (invoice.description || "receipt").replace(/[^a-zA-Z0-9 _-]/g, "").slice(0, 40);
@@ -580,7 +623,7 @@ async function syncToDrive(invoice: any): Promise<boolean> {
       // Folder structure: Credit Card and Cash Receipts > Credit Card Receipts > Property
       let ccReceiptsFolder = propertyFolderCache.get("__cc_receipts_root") || null;
       if (!ccReceiptsFolder) {
-        const mainReceiptsFolder = await ensureDriveFolder("Credit Card and Cash Receipts");
+        const mainReceiptsFolder = await getReceiptsRootFolderId();
         if (mainReceiptsFolder) {
           ccReceiptsFolder = await ensureDriveFolder("Credit Card Receipts", mainReceiptsFolder);
           if (ccReceiptsFolder) propertyFolderCache.set("__cc_receipts_root", ccReceiptsFolder);
@@ -3160,7 +3203,7 @@ export async function registerRoutes(
             // Folder structure: Credit Card and Cash Receipts > Cash Receipts > Property
             let cashFolder = propertyFolderCache.get("__cash_root") || null;
             if (!cashFolder) {
-              const mainReceiptsFolder = await ensureDriveFolder("Credit Card and Cash Receipts");
+              const mainReceiptsFolder = await getReceiptsRootFolderId();
               if (mainReceiptsFolder) {
                 cashFolder = await ensureDriveFolder("Cash Receipts", mainReceiptsFolder);
                 if (cashFolder) propertyFolderCache.set("__cash_root", cashFolder);
@@ -3447,7 +3490,7 @@ export async function registerRoutes(
           if (fs.existsSync(filePath)) {
             let rootFolder = propertyFolderCache.get("__check_root") || null;
             if (!rootFolder) {
-              const main = await ensureDriveFolder("Credit Card and Cash Receipts");
+              const main = await getReceiptsRootFolderId();
               if (main) {
                 rootFolder = await ensureDriveFolder("Check Receipts", main);
                 if (rootFolder) propertyFolderCache.set("__check_root", rootFolder);
@@ -3546,14 +3589,15 @@ export async function registerRoutes(
     if (existing.userId !== session.userId && !isAdminRole(session.role)) {
       return res.status(403).json({ error: "Not authorized" });
     }
+    // The deposit-slip photo is now OPTIONAL. The dashboard confirmation
+    // dialog alone is sufficient for marking a check deposited; if the user
+    // still wants to attach a slip later we'll re-add it as an explicit
+    // optional upload UI rather than gating the flow on it.
     const { depositPhotoPath } = req.body || {};
-    if (!depositPhotoPath) {
-      return res.status(400).json({ error: "depositPhotoPath is required (upload the deposit slip first)" });
-    }
     const updated = await storage.updateCheckTransaction(id, {
       deposited: 1,
       depositedAt: new Date().toISOString(),
-      depositPhotoPath,
+      depositPhotoPath: depositPhotoPath || null,
     } as any);
     res.json(updated);
     setImmediate(async () => {
@@ -3565,7 +3609,7 @@ export async function registerRoutes(
           if (fs.existsSync(filePath)) {
             let rootFolder = propertyFolderCache.get("__check_root") || null;
             if (!rootFolder) {
-              const main = await ensureDriveFolder("Credit Card and Cash Receipts");
+              const main = await getReceiptsRootFolderId();
               if (main) {
                 rootFolder = await ensureDriveFolder("Check Receipts", main);
                 if (rootFolder) propertyFolderCache.set("__check_root", rootFolder);
@@ -3621,6 +3665,41 @@ export async function registerRoutes(
   });
 
   // Admin-only: provision the Check spreadsheet and create one tab per property.
+  // Admin diagnostic / control for the receipts root Drive folder. Lets you
+  // see the currently-active folder ID and (if needed) point the app at a
+  // specific Drive folder ID so all uploads go into the same one.
+  app.get("/api/admin/drive-folder", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    let exists = false;
+    if (driveFolderConfig.receiptsRootId && isGoogleEnabled()) {
+      try { exists = await driveFolderExists(driveFolderConfig.receiptsRootId); } catch {}
+    }
+    res.json({
+      receiptsRootId: driveFolderConfig.receiptsRootId || null,
+      exists,
+      cacheKeys: Array.from(propertyFolderCache.keys()),
+    });
+  });
+  app.post("/api/admin/drive-folder", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    const { receiptsRootId } = req.body || {};
+    if (!receiptsRootId || typeof receiptsRootId !== "string") {
+      return res.status(400).json({ error: "receiptsRootId is required" });
+    }
+    // Verify the ID is real and is a folder before committing.
+    if (isGoogleEnabled()) {
+      const ok = await driveFolderExists(receiptsRootId).catch(() => false);
+      if (!ok) return res.status(400).json({ error: "Folder not found or not accessible" });
+    }
+    driveFolderConfig.receiptsRootId = receiptsRootId;
+    saveDriveFolderConfig();
+    // Bust property-folder cache so subfolders re-resolve under the new root.
+    propertyFolderCache.clear();
+    res.json({ ok: true, receiptsRootId });
+  });
+
   app.post("/api/admin/init-check-sheet", async (req, res) => {
     const session = await requireAdmin(req, res);
     if (!session) return;
