@@ -4204,6 +4204,49 @@ export async function registerRoutes(
       return res.status(400).json({ error: "Missing required fields" });
     }
 
+    // Block reporting in the future — based on Foley, AL time (Central Time).
+    // If a user tries to submit a same-day report whose end time (or any block's
+    // end time) is later than the current wall-clock in America/Chicago, reject.
+    // Future dates are also blocked outright. Past dates are always fine.
+    try {
+      const nowInFoley = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
+      const todayInFoley = nowInFoley.toISOString().split("T")[0];
+      if (date > todayInFoley) {
+        return res.status(400).json({
+          error: `Cannot report for a future date. Today in Foley (Central Time) is ${todayInFoley}.`,
+        });
+      }
+      if (date === todayInFoley) {
+        const nowMinutes = nowInFoley.getHours() * 60 + nowInFoley.getMinutes();
+        // Collect every block end (and start) for a same-day report; use the
+        // largest end. Old-style single startTime/endTime rows fall back to those.
+        let latestEndMinutes = 0;
+        let latestEndLabel = "";
+        if (timeBlocks && Array.isArray(timeBlocks) && timeBlocks.length > 0) {
+          for (const b of timeBlocks) {
+            if (!b?.end) continue;
+            const [eh, em] = String(b.end).split(":").map(Number);
+            const em0 = eh * 60 + em;
+            if (em0 > latestEndMinutes) {
+              latestEndMinutes = em0;
+              latestEndLabel = b.end;
+            }
+          }
+        } else if (endTime) {
+          const [eh, em] = String(endTime).split(":").map(Number);
+          latestEndMinutes = eh * 60 + em;
+          latestEndLabel = endTime;
+        }
+        if (latestEndMinutes > nowMinutes) {
+          const hh = String(Math.floor(nowMinutes / 60)).padStart(2, "0");
+          const mm = String(nowMinutes % 60).padStart(2, "0");
+          return res.status(400).json({
+            error: `Reported end time (${latestEndLabel}) is later than the current time in Foley (Central Time). It's ${hh}:${mm} there right now — you can't report hours that haven't happened yet.`,
+          });
+        }
+      }
+    } catch (e) { console.error("[time-reports] future-time check failed:", e); }
+
     // Check for overlapping time blocks with existing reports by same user on same day
     const existingReports = await storage.getTimeReportsByUserAndDate(session.userId, date);
     if (existingReports.length > 0 && timeBlocks && Array.isArray(timeBlocks)) {

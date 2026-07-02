@@ -182,6 +182,34 @@ export default function TimeReportPage() {
         return;
       }
     }
+
+    // Block reporting hours that haven't happened yet. Uses Foley, AL time
+    // (America/Chicago) so it doesn't matter what timezone the phone/browser is on.
+    try {
+      const nowInFoley = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
+      const todayInFoley = nowInFoley.toISOString().split("T")[0];
+      if (date > todayInFoley) {
+        toast({ title: `Cannot report a future date. It's ${todayInFoley} in Foley (Central).`, variant: "destructive" });
+        return;
+      }
+      if (date === todayInFoley) {
+        const nowMinutes = nowInFoley.getHours() * 60 + nowInFoley.getMinutes();
+        for (let i = 0; i < timeBlocks.length; i++) {
+          const b = timeBlocks[i];
+          const [eh, em] = b.end.split(":").map(Number);
+          if (eh * 60 + em > nowMinutes) {
+            const hh = String(Math.floor(nowMinutes / 60)).padStart(2, "0");
+            const mm = String(nowMinutes % 60).padStart(2, "0");
+            toast({
+              title: `Block ${i + 1}: end time ${b.end} is in the future`,
+              description: `Right now in Foley (Central) it's ${hh}:${mm}. You can only report hours that have already happened.`,
+              variant: "destructive",
+            });
+            return;
+          }
+        }
+      }
+    } catch {}
     if (requireFinancialConfirm) {
       setShowConfirm(true);
     } else {
