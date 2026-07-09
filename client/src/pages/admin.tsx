@@ -388,10 +388,48 @@ export default function AdminPage() {
                   <div className="text-right font-medium">{wfResult.summary.daysWorked}</div>
                   <div className="text-muted-foreground">Total Hours</div>
                   <div className="text-right font-medium">{wfResult.summary.totalHours} hrs</div>
-                  <div className="text-muted-foreground">Rate</div>
-                  <div className="text-right font-medium">${wfResult.summary.baseRate}/hr</div>
-                  <div className="text-muted-foreground">Labor ({wfResult.summary.totalHours}h × ${wfResult.summary.baseRate})</div>
-                  <div className="text-right font-semibold">${wfResult.summary.laborCost?.toFixed(2)}</div>
+                  {/* Rate breakdown — splits labor by rate when multiple
+                      rates were used (e.g. two positions, or on-site mixed
+                      with off-site). Single-rate reports render the classic
+                      Rate + Labor pair. */}
+                  {(() => {
+                    const byRate = new Map<number, number>();
+                    for (const r of (wfResult.reports || []) as any[]) {
+                      const rate = Number(r.rate || 0);
+                      if (!rate) continue;
+                      const hrs = Number(r.calculatedHours ?? r.hours ?? 0);
+                      byRate.set(rate, (byRate.get(rate) || 0) + hrs);
+                    }
+                    const rateGroups = Array.from(byRate.entries())
+                      .sort((a, b) => b[0] - a[0]);
+                    if (rateGroups.length <= 1) {
+                      const rate = rateGroups[0]?.[0] ?? Number(wfResult.summary.baseRate);
+                      return (
+                        <>
+                          <div className="text-muted-foreground">Rate</div>
+                          <div className="text-right font-medium">${rate}/hr</div>
+                          <div className="text-muted-foreground">
+                            Labor ({wfResult.summary.totalHours}h × ${rate})
+                          </div>
+                          <div className="text-right font-semibold">${wfResult.summary.laborCost?.toFixed(2)}</div>
+                        </>
+                      );
+                    }
+                    return (
+                      <>
+                        {rateGroups.map(([rate, hrs]) => (
+                          <div key={rate} className="col-span-2 grid grid-cols-2 gap-x-4">
+                            <div className="text-muted-foreground">
+                              Labor ({hrs.toFixed(1)}h × ${rate})
+                            </div>
+                            <div className="text-right">${(hrs * rate).toFixed(2)}</div>
+                          </div>
+                        ))}
+                        <div className="text-muted-foreground font-medium">Labor Subtotal</div>
+                        <div className="text-right font-semibold">${wfResult.summary.laborCost?.toFixed(2)}</div>
+                      </>
+                    );
+                  })()}
                   <div className="text-muted-foreground">Mileage ({wfResult.summary.totalMiles} mi)</div>
                   <div className="text-right">${wfResult.summary.totalMileagePay?.toFixed(2)}</div>
                   <div className="text-muted-foreground">Special Terms / Travel</div>
