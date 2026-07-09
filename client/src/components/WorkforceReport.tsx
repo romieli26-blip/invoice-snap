@@ -158,7 +158,9 @@ export function WorkforceReport({
                 for (const r of (wfResult.reports || []) as any[]) {
                   const rate = Number(r.rate || 0);
                   if (!rate) continue;
-                  const hrs = Number(r.hours || 0);
+                  // Server enriches each report with `calculatedHours` — the
+                  // raw `hours` field doesn't exist on the DB row.
+                  const hrs = Number(r.calculatedHours ?? r.hours ?? 0);
                   byRate.set(rate, (byRate.get(rate) || 0) + hrs);
                 }
                 const rateGroups = Array.from(byRate.entries())
