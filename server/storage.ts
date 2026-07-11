@@ -236,6 +236,7 @@ try { sqlite.exec("ALTER TABLE cash_transactions ADD COLUMN notes TEXT"); } catc
 // Property short code + Marketing URL
 try { sqlite.exec("ALTER TABLE properties ADD COLUMN code TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE properties ADD COLUMN marketing_url TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE properties ADD COLUMN master_sheet_url TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE cash_transactions ADD COLUMN edit_history TEXT"); } catch {}
 
 // Cash transactions table
@@ -312,6 +313,7 @@ export interface IStorage {
   updatePropertySheetsTabId(id: number, tabId: number): Promise<void>;
   updatePropertyCode(id: number, code: string | null): Promise<void>;
   updatePropertyMarketingUrl(id: number, marketingUrl: string | null): Promise<void>;
+  updatePropertyMasterSheetUrl(id: number, masterSheetUrl: string | null): Promise<void>;
   getNextPropertyCode(propertyName: string): Promise<string>;
   backfillPropertyCodes(dryRun: boolean): Promise<Array<{ table: string; id: number; property: string; newCode: string }>>;
   // User-property assignment methods
@@ -447,6 +449,10 @@ export class DatabaseStorage implements IStorage {
 
   async updatePropertyMarketingUrl(id: number, marketingUrl: string | null): Promise<void> {
     db.update(properties).set({ marketingUrl } as any).where(eq(properties.id, id)).run();
+  }
+
+  async updatePropertyMasterSheetUrl(id: number, masterSheetUrl: string | null): Promise<void> {
+    db.update(properties).set({ masterSheetUrl } as any).where(eq(properties.id, id)).run();
   }
 
   /**

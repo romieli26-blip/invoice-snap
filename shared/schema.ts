@@ -27,6 +27,10 @@ export const properties = sqliteTable("properties", {
   // Per-property URL the Marketing button opens for property managers. Editable
   // by admins via the Marketing Links section. May be empty.
   marketingUrl: text("marketing_url"),
+  // Per-property URL the "Master Sheet" button opens for property managers.
+  // Same access model as marketingUrl (PMs see their home-base link, admins
+  // see all). Editable by admins in the Properties section. May be empty.
+  masterSheetUrl: text("master_sheet_url"),
 });
 
 export const users = sqliteTable("users", {

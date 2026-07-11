@@ -1483,9 +1483,14 @@ function PropertyAdminCard({
   const [expanded, setExpanded] = useState(false);
   const [code, setCode] = useState<string>(prop.code || "");
   const [marketingUrl, setMarketingUrl] = useState<string>(prop.marketingUrl || "");
+  const [masterSheetUrl, setMasterSheetUrl] = useState<string>(prop.masterSheetUrl || "");
 
   const saveMutation = useMutation({
-    mutationFn: async (body: { code?: string | null; marketingUrl?: string | null }) => {
+    mutationFn: async (body: {
+      code?: string | null;
+      marketingUrl?: string | null;
+      masterSheetUrl?: string | null;
+    }) => {
       const res = await apiRequest("PUT", `/api/properties/${prop.id}`, body);
       return res.json();
     },
@@ -1502,6 +1507,7 @@ function PropertyAdminCard({
     saveMutation.mutate({
       code: code.trim() === "" ? null : code.trim().toUpperCase(),
       marketingUrl: marketingUrl.trim() === "" ? null : marketingUrl.trim(),
+      masterSheetUrl: masterSheetUrl.trim() === "" ? null : masterSheetUrl.trim(),
     });
   };
 
@@ -1528,6 +1534,11 @@ function PropertyAdminCard({
                 {prop.marketingUrl && (
                   <Badge variant="outline" className="text-[10px] py-0 h-4 border-orange-500/60 text-orange-700 dark:text-orange-400">
                     Marketing link set
+                  </Badge>
+                )}
+                {prop.masterSheetUrl && (
+                  <Badge variant="outline" className="text-[10px] py-0 h-4 border-blue-500/60 text-blue-700 dark:text-blue-400">
+                    Master Sheet link set
                   </Badge>
                 )}
               </div>
@@ -1576,6 +1587,19 @@ function PropertyAdminCard({
               />
               <p className="text-[11px] text-muted-foreground">
                 Where the dashboard Marketing button takes property managers. Must start with <code>http://</code> or <code>https://</code>. Leave blank to hide.
+              </p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">PM Master Sheet URL</Label>
+              <Input
+                value={masterSheetUrl}
+                onChange={e => setMasterSheetUrl(e.target.value)}
+                placeholder="https://docs.google.com/spreadsheets/d/..."
+                className="h-8 text-sm"
+                type="url"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Where the dashboard <strong>Master Sheet</strong> button takes property managers. Must start with <code>http://</code> or <code>https://</code>. Leave blank to hide.
               </p>
             </div>
             <Button

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
-import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, ChevronDown, DollarSign, Clock, UserPlus, UsersRound, Wallet, BookOpen, Megaphone } from "lucide-react";
+import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, ChevronDown, DollarSign, Clock, UserPlus, UsersRound, Wallet, BookOpen, Megaphone, Sheet } from "lucide-react";
 import { apiRequest, queryClient, getAuthToken } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
@@ -126,6 +126,10 @@ function PlaybookButton({ role }: { role: string | undefined }) {
 // that URL directly. For PMs/admins covering multiple properties, it opens a
 // small picker so they can choose which property's marketing page to visit.
 // Hidden entirely when no property they manage has a URL configured.
+//
+// The Master Sheet button just below shares the same access model — PMs see
+// their home-base link, admins/super_admins see every property that has a URL
+// set. If you change one, mirror the change in the other.
 function MarketingButton({ role, homeProperty, compact }: { role: string | undefined; homeProperty?: string | null; compact?: boolean }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const eligible = role === "manager" || role === "admin" || role === "super_admin";
@@ -197,6 +201,91 @@ function MarketingButton({ role, homeProperty, compact }: { role: string | undef
                 >
                   <span className="font-medium">{p.name}</span>
                   <span className="text-xs text-muted-foreground truncate max-w-[60%]">{p.marketingUrl}</span>
+                </a>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// Master Sheet button — same access model as MarketingButton. PMs see the link
+// only for their home-base property; admins/super_admins see every property
+// that has a `masterSheetUrl` set. If the user manages just one property with
+// a URL, clicking opens it directly; otherwise a small picker lets them choose
+// which property's sheet to open. Hidden entirely if no scoped property has a
+// URL configured.
+function MasterSheetButton({ role, homeProperty, compact }: { role: string | undefined; homeProperty?: string | null; compact?: boolean }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const eligible = role === "manager" || role === "admin" || role === "super_admin";
+  const isAdmin = role === "admin" || role === "super_admin";
+  const { data: properties } = useQuery<any[]>({
+    queryKey: ["/api/properties"],
+    enabled: eligible,
+  });
+  if (!eligible || !properties) return null;
+
+  const scoped = isAdmin
+    ? properties
+    : (homeProperty ? properties.filter(p => p.name === homeProperty) : []);
+  const withUrl = scoped.filter(p => !!p.masterSheetUrl);
+  if (withUrl.length === 0) return null;
+
+  const handleClick = () => {
+    if (withUrl.length === 1) {
+      window.open(withUrl[0].masterSheetUrl, "_blank", "noopener,noreferrer");
+    } else {
+      setPickerOpen(true);
+    }
+  };
+
+  return (
+    <>
+      <Button
+        className={compact
+          ? "w-full h-16 text-sm gap-1.5 bg-blue-600 hover:bg-blue-700 text-white flex-col leading-tight"
+          : "w-full h-12 text-sm gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"}
+        onClick={handleClick}
+        data-testid="button-master-sheet"
+      >
+        <Sheet className={compact ? "w-5 h-5" : "w-4 h-4"} />
+        Master Sheet
+      </Button>
+      {pickerOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+          onClick={() => setPickerOpen(false)}
+        >
+          <div
+            className="bg-card rounded-lg max-w-md w-full p-5 space-y-3"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-lg bg-blue-100 dark:bg-blue-950/40 flex items-center justify-center">
+                  <Sheet className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                </div>
+                <h3 className="font-semibold">Master Sheet</h3>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => setPickerOpen(false)}>
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">Choose a property:</p>
+            <div className="space-y-2">
+              {withUrl.map(p => (
+                <a
+                  key={p.id}
+                  href={p.masterSheetUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-md border hover:bg-accent text-sm"
+                  onClick={() => setPickerOpen(false)}
+                >
+                  <span className="font-medium">{p.name}</span>
+                  <span className="text-xs text-muted-foreground truncate max-w-[60%]">{p.masterSheetUrl}</span>
                 </a>
               ))}
             </div>
@@ -584,22 +673,26 @@ export default function HistoryPage() {
           </Button>
         )}
 
-        {/* New Check Transaction + Marketing share a single row. The Check
-           button is shown to everyone who can submit transactions (not
-           contractors). Marketing is conditional on the user's role and home
-           base, so when it's hidden the Check button still takes the full row. */}
+        {/* Row: New Check Transaction (full width). Marketing + Master Sheet
+           share the next row so PMs get both quick-links side by side. Each
+           of the link buttons hides itself if no property they manage has a
+           URL set, in which case the row collapses gracefully. */}
+        {user?.role !== "contractor" && (
+          <Button
+            className="w-full h-16 text-sm gap-1.5 flex-col leading-tight bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border border-emerald-300"
+            variant="outline"
+            onClick={() => setLocation("/check")}
+            data-testid="button-new-check"
+          >
+            <Camera className="w-5 h-5" />
+            <span className="text-center">New Check Transaction</span>
+          </Button>
+        )}
+
         {user?.role !== "contractor" && (
           <div className="grid grid-cols-2 gap-3">
-            <Button
-              className="h-16 text-sm gap-1.5 flex-col leading-tight bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border border-emerald-300"
-              variant="outline"
-              onClick={() => setLocation("/check")}
-              data-testid="button-new-check"
-            >
-              <Camera className="w-5 h-5" />
-              <span className="text-center">New Check<br/>Transaction</span>
-            </Button>
             <MarketingButton role={user?.role} homeProperty={(user as any)?.homeProperty} compact />
+            <MasterSheetButton role={user?.role} homeProperty={(user as any)?.homeProperty} compact />
           </div>
         )}
 
