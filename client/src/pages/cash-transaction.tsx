@@ -33,6 +33,10 @@ const INCOME_CATEGORIES = [
   { value: "dryer", label: "Dryer" },
   { value: "vending", label: "Vending" },
   { value: "store_items", label: "Store Items" },
+  // End-of-day reconciliation entry. Property managers use this to record
+  // physical cash still on hand at close (e.g. Pop's Grill till counts). It's
+  // categorised as income so it feeds the property's running cash balance.
+  { value: "eod_cash_on_hand", label: "End of Day - Cash on Hand" },
   { value: "other", label: "Other" },
 ];
 

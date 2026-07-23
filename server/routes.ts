@@ -872,10 +872,130 @@ export async function registerRoutes(
         }
       }
 
+      // ---- Check transactions spreadsheet ----
+      // Checks live in their own dedicated sheet (checkSheetsConfig). Rebuild
+      // per-property via the existing helper so undeposited/deposited state
+      // and column layout stay in lockstep with the live-write path.
+      if (checkSheetsConfig?.spreadsheetId && !dryRun) {
+        for (const prop of targetProps) {
+          try {
+            const outcome = await rebuildCheckSheetForProperty(prop.name);
+            summary.push({ sheet: "Check", tab: prop.name, ...outcome });
+          } catch (e: any) {
+            summary.push({ sheet: "Check", tab: prop.name, error: e.message?.slice(0, 120) });
+          }
+        }
+      } else if (dryRun && checkSheetsConfig?.spreadsheetId) {
+        // For dry-run we just count DB rows that WOULD be written per property.
+        const allChecks = await storage.getAllCheckTransactions();
+        for (const prop of targetProps) {
+          const n = allChecks.filter(c => c.property === prop.name).length;
+          summary.push({ sheet: "Check", tab: prop.name, rowsWritten: n });
+        }
+      }
+
+      // Also flag the previously-unsynced rows as synced so /sync-status
+      // reports a clean bill of health after a successful rebuild.
+      if (!dryRun) {
+        try {
+          const allCash = await storage.getAllCashTransactions();
+          for (const tx of allCash) {
+            if (!tx.syncedToSheets) await storage.updateCashTransactionSyncStatus(tx.id, "sheets", true);
+          }
+          const allInv = await storage.getAllInvoices();
+          for (const inv of allInv) {
+            if (!inv.syncedToSheets) await storage.updateInvoiceSyncStatus(inv.id, "sheets", true);
+          }
+        } catch (e) { console.error("[resync-sheets] flag-synced cleanup failed:", e); }
+      }
+
       res.json({ ok: true, dryRun, summary });
     } catch (e: any) {
       console.error("[resync-sheets] failed:", e);
       res.status(500).json({ error: e.message?.slice(0, 200) || "resync failed" });
+    }
+  });
+
+  // Admin: at-a-glance sync-status. Returns, per property, how many rows in the
+  // local DB haven't yet been mirrored to Google Sheets, plus a small sample of
+  // the missed rows so admins can spot patterns (e.g. a whole property missing).
+  // Used by the Sync Status panel in the Admin UI. Runs read-only — pair with
+  // POST /api/admin/resync-sheets to actually repair the sheets.
+  app.get("/api/admin/sync-status", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+
+    try {
+      const allProps = await storage.getAllProperties();
+      const propNames = new Set(allProps.map(p => p.name));
+
+      const allInvoices = await storage.getAllInvoices();
+      const allCash = await storage.getAllCashTransactions();
+      const allChecks = await storage.getAllCheckTransactions();
+
+      const perProperty: Record<string, {
+        invoicesUnsynced: number;
+        cashUnsynced: number;
+        checksUnsynced: number;
+        totalRows: number;
+      }> = {};
+      for (const name of propNames) {
+        perProperty[name] = { invoicesUnsynced: 0, cashUnsynced: 0, checksUnsynced: 0, totalRows: 0 };
+      }
+
+      const missedSamples: Array<{ kind: string; property: string; id: number; recordNumber: number | null; amount: string; date: string }> = [];
+      const push = (kind: string, tx: any) => {
+        if (missedSamples.length < 30) {
+          missedSamples.push({
+            kind,
+            property: tx.property,
+            id: tx.id,
+            recordNumber: tx.recordNumber ?? null,
+            amount: String(tx.amount ?? ""),
+            date: tx.date || tx.purchaseDate || "",
+          });
+        }
+      };
+
+      for (const inv of allInvoices) {
+        if (perProperty[inv.property]) perProperty[inv.property].totalRows += 1;
+        if (!inv.syncedToSheets) {
+          if (perProperty[inv.property]) perProperty[inv.property].invoicesUnsynced += 1;
+          push("invoice", inv);
+        }
+      }
+      for (const tx of allCash) {
+        if (perProperty[tx.property]) perProperty[tx.property].totalRows += 1;
+        if (!tx.syncedToSheets) {
+          if (perProperty[tx.property]) perProperty[tx.property].cashUnsynced += 1;
+          push("cash", tx);
+        }
+      }
+      for (const tx of allChecks) {
+        if (perProperty[tx.property]) perProperty[tx.property].totalRows += 1;
+        if (!tx.syncedToSheets) {
+          if (perProperty[tx.property]) perProperty[tx.property].checksUnsynced += 1;
+          push("check", tx);
+        }
+      }
+
+      const totalUnsynced = Object.values(perProperty).reduce(
+        (n, p) => n + p.invoicesUnsynced + p.cashUnsynced + p.checksUnsynced, 0
+      );
+
+      res.json({
+        totalUnsynced,
+        perProperty,
+        missedSamples,
+        counts: {
+          invoices: allInvoices.length,
+          cash: allCash.length,
+          checks: allChecks.length,
+        },
+      });
+    } catch (e: any) {
+      console.error("[sync-status] failed:", e);
+      res.status(500).json({ error: e.message?.slice(0, 200) || "sync-status failed" });
     }
   });
 

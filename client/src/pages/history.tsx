@@ -34,6 +34,28 @@ function isImagePath(photoPath: string | undefined | null): boolean {
   const ext = photoPath.split(".").pop()?.toLowerCase().split("?")[0] || "";
   return ["jpg", "jpeg", "png", "webp", "gif", "heic", "heif"].includes(ext);
 }
+// Pretty-print a cash transaction category value (e.g. "eod_cash_on_hand" →
+// "End of Day - Cash on Hand"). Falls back to a snake-case-cleaned version for
+// unknown values so legacy data still displays cleanly.
+const CASH_CATEGORY_LABELS: Record<string, string> = {
+  rental_income: "Rental Income",
+  washer: "Washer",
+  dryer: "Dryer",
+  vending: "Vending",
+  store_items: "Store Items",
+  eod_cash_on_hand: "End of Day - Cash on Hand",
+  other: "Other",
+  bank_deposit: "Bank Deposit",
+  item_purchased: "Item Purchased",
+  contractor_pay: "Contractor Pay",
+  check: "Check",
+};
+function formatCashCategory(cat: string | null | undefined): string {
+  if (!cat) return "";
+  if (CASH_CATEGORY_LABELS[cat]) return CASH_CATEGORY_LABELS[cat];
+  return cat.replace(/_/g, " ").replace(/\b\w/g, s => s.toUpperCase());
+}
+
 function isPdfPath(photoPath: string | undefined | null): boolean {
   if (!photoPath) return false;
   return photoPath.toLowerCase().endsWith(".pdf");
@@ -381,7 +403,7 @@ function ZoomablePhoto({ src, zoom, onZoomChange }: { src: string; zoom: number;
   );
 }
 
-function PhotoThumb({ paths, onClick }: { paths: string[]; onClick: () => void }) {
+function PhotoThumb({ paths, onClick }: { paths: string[]; onClick: (e?: any) => void }) {
   const first = paths[0];
   const extra = paths.length > 1 ? paths.length : 0;
   const isPdf = isPdfPath(first);
@@ -389,7 +411,7 @@ function PhotoThumb({ paths, onClick }: { paths: string[]; onClick: () => void }
   return (
     <div
       className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center flex-shrink-0 overflow-hidden cursor-pointer relative"
-      onClick={onClick}
+      onClick={(e) => { e.stopPropagation(); onClick(e); }}
     >
       {isImg ? (
         <img src={authImgUrl(first)} alt="Receipt" className="w-full h-full object-cover" />
@@ -1114,14 +1136,41 @@ export default function HistoryPage() {
           </div>
           {showCashTxs && (filteredCashTxs && filteredCashTxs.length > 0 ? (
             <div className="space-y-2">
-              {filteredCashTxs.map((tx: any) => (
-                <Card key={tx.id}>
+              {filteredCashTxs.map((tx: any) => {
+                // Whole-card tap opens the details modal (mirrors the CC card
+                // detail view). Inner controls (photo thumb, pencil, trash,
+                // description link) call stopPropagation to keep their own
+                // behavior.
+                const openDetails = () => setDetailsModal({
+                  title: tx.description || (tx.category ? formatCashCategory(tx.category) : "Cash transaction"),
+                  lines: [
+                    { label: "Description", value: tx.description || "" },
+                    { label: "Amount", value: `$${tx.amount}` },
+                    { label: "Type", value: tx.type === "income" ? "Income" : "Spent" },
+                    { label: "Category", value: formatCashCategory(tx.category) },
+                    { label: "Property", value: tx.property || "" },
+                    { label: "Date", value: tx.date || "" },
+                    { label: "Unit / Lot", value: tx.unitLotNumber || "" },
+                    { label: "Tenant / From", value: tx.tenantName || tx.payerName || "" },
+                    { label: "Bank", value: tx.bankName || "" },
+                    { label: "Notes", value: tx.notes || "" },
+                    { label: "Record ID", value: tx.propertyCode || (tx.recordNumber != null ? `#${tx.recordNumber}` : "") },
+                    { label: "Submitted by", value: tx.submittedBy || "" },
+                  ].filter(l => l.value),
+                });
+                return (
+                <Card
+                  key={tx.id}
+                  onClick={openDetails}
+                  className="cursor-pointer hover:bg-accent/40 transition-colors"
+                  data-testid={`cash-card-${tx.id}`}
+                >
                   <CardContent className="py-3 flex gap-3">
                     {/* Photo thumbnail (image, PDF, or other) */}
                     {tx.photoPath && (
                       <PhotoThumb
                         paths={tx.photoPaths || [tx.photoPath]}
-                        onClick={() => setViewingPhotos(tx.photoPaths || [tx.photoPath])}
+                        onClick={(e?: any) => { e?.stopPropagation?.(); setViewingPhotos(tx.photoPaths || [tx.photoPath]); }}
                       />
                     )}
                     <div className="flex items-start justify-between gap-2 flex-1">
@@ -1130,7 +1179,7 @@ export default function HistoryPage() {
                           <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${tx.type === "income" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
                             {tx.type === "income" ? "Income" : "Spent"}
                           </span>
-                          <span className="text-xs text-muted-foreground">{(tx.category || "").replace(/_/g, " ")}</span>
+                          <span className="text-xs text-muted-foreground">{formatCashCategory(tx.category)}</span>
                         </div>
                         <p className="text-sm font-medium mt-1">${tx.amount}</p>
                         <div className="flex items-center gap-2 mt-1 flex-wrap">
@@ -1141,25 +1190,8 @@ export default function HistoryPage() {
                           <span className="text-xs text-muted-foreground">{tx.date}</span>
                           {tx.description && (
                             <span
-                              className="text-xs text-muted-foreground truncate max-w-[120px] cursor-pointer"
-                              title="Tap to view full details"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setDetailsModal({
-                                  title: tx.description,
-                                  lines: [
-                                    { label: "Description", value: tx.description || "" },
-                                    { label: "Amount", value: `$${tx.amount}` },
-                                    { label: "Category", value: tx.category || "" },
-                                    { label: "Property", value: tx.property || "" },
-                                    { label: "Date", value: tx.date || "" },
-                                    { label: "Unit / Lot", value: tx.unitLotNumber || "" },
-                                    { label: "Tenant", value: tx.tenantName || "" },
-                                    { label: "Bank", value: tx.bankName || "" },
-                                    { label: "Submitted by", value: tx.submittedBy || "" },
-                                  ].filter(l => l.value),
-                                });
-                              }}
+                              className="text-xs text-muted-foreground truncate max-w-[120px]"
+                              title="Tap card to view full details"
                             >
                               {tx.description}
                             </span>
@@ -1175,7 +1207,8 @@ export default function HistoryPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-1 flex-shrink-0">
-                        <button className="text-muted-foreground hover:text-primary p-0.5" onClick={() => {
+                        <button className="text-muted-foreground hover:text-primary p-0.5" onClick={(e) => {
+                          e.stopPropagation();
                           if (window.confirm("You are about to edit this item. Are you sure?")) {
                             setEditingCashTx(tx);
                             setEditCashAmount(tx.amount);
@@ -1188,14 +1221,15 @@ export default function HistoryPage() {
                         }}>
                           <Pencil className="w-3.5 h-3.5" />
                         </button>
-                        <button className="text-muted-foreground hover:text-destructive p-0.5" onClick={() => handleCashDelete(tx.id)}>
+                        <button className="text-muted-foreground hover:text-destructive p-0.5" onClick={(e) => { e.stopPropagation(); handleCashDelete(tx.id); }}>
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </div>
                   </CardContent>
                 </Card>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground text-center py-4">No cash transactions yet.</p>
@@ -1739,7 +1773,7 @@ export default function HistoryPage() {
                 <SelectTrigger data-testid="select-cash-category"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {/* Show categories matching the current transaction's direction. */}
-                  {(editingCashTx && ["rental_income","check","washer","dryer","vending","store_items"].includes(editingCashTx.category)) ? (
+                  {(editingCashTx && ["rental_income","check","washer","dryer","vending","store_items","eod_cash_on_hand"].includes(editingCashTx.category)) ? (
                     <>
                       <SelectItem value="rental_income">Rental Income</SelectItem>
                       <SelectItem value="check">Check</SelectItem>
@@ -1747,6 +1781,7 @@ export default function HistoryPage() {
                       <SelectItem value="dryer">Dryer</SelectItem>
                       <SelectItem value="vending">Vending</SelectItem>
                       <SelectItem value="store_items">Store Items</SelectItem>
+                      <SelectItem value="eod_cash_on_hand">End of Day - Cash on Hand</SelectItem>
                       <SelectItem value="other">Other</SelectItem>
                     </>
                   ) : (

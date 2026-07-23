@@ -14,7 +14,7 @@ const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
 import { useToast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Plus, Trash2, UserCircle, Shield, Loader2, Building2, Settings, Pencil, LogIn, Clock, Archive, ArchiveRestore, BookOpen, Upload, Download, FileText, ChevronRight } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, UserCircle, Shield, Loader2, Building2, Settings, Pencil, LogIn, Clock, Archive, ArchiveRestore, BookOpen, Upload, Download, FileText, ChevronRight, RefreshCw, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { LogoBackground } from "@/components/LogoBackground";
 
 interface UserItem {
@@ -316,6 +316,8 @@ export default function AdminPage() {
         >
           Send Daily Report
         </Button>
+
+        <SyncStatusPanel />
 
         {/* ---- WORKFORCE REPORT SECTION ---- */}
         <section className="space-y-3 border rounded-lg p-3">
@@ -1615,5 +1617,125 @@ function PropertyAdminCard({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// SyncStatusPanel — a small compliance dashboard so admins can spot rows in
+// the local DB that haven't reached Google Sheets. The API is read-only; the
+// "Fix All" button below calls the existing /api/admin/resync-sheets endpoint
+// which rebuilds every property tab from the DB. Auto-refetches every 60s so
+// stray drift is visible without a page reload.
+function SyncStatusPanel() {
+  const { toast } = useToast();
+  const [expanded, setExpanded] = useState(false);
+  const { data, isLoading, refetch } = useQuery<any>({
+    queryKey: ["/api/admin/sync-status"],
+    refetchInterval: 60_000,
+  });
+
+  const fixAll = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/resync-sheets", {});
+      return res.json();
+    },
+    onSuccess: (r: any) => {
+      toast({ title: "Sync repair complete", description: `Rebuilt ${(r.summary || []).length} property tabs across CC/Cash/Check sheets.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/sync-status"] });
+      refetch();
+    },
+    onError: (e: any) => toast({ title: "Fix All failed", description: e.message || "Error", variant: "destructive" }),
+  });
+
+  const total = data?.totalUnsynced ?? 0;
+  const clean = !isLoading && total === 0;
+
+  return (
+    <section className="space-y-3 border rounded-lg p-3">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-base font-semibold flex items-center gap-2">
+          {clean ? (
+            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+          ) : (
+            <AlertTriangle className={`w-4 h-4 ${total > 0 ? "text-amber-600" : "text-muted-foreground"}`} />
+          )}
+          Sheet Sync Status
+        </h2>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 px-2"
+          onClick={() => refetch()}
+          disabled={isLoading}
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
+        </Button>
+      </div>
+
+      {isLoading && (
+        <p className="text-xs text-muted-foreground">Checking sheets…</p>
+      )}
+
+      {!isLoading && clean && (
+        <p className="text-xs text-emerald-700 dark:text-emerald-400">
+          Every row in the DB is mirrored to Google Sheets. Nothing missed.
+        </p>
+      )}
+
+      {!isLoading && total > 0 && data && (
+        <>
+          <p className="text-xs text-amber-700 dark:text-amber-400">
+            <strong>{total}</strong> row{total === 1 ? "" : "s"} in the DB haven't reached Google Sheets. Click <strong>Fix All</strong> to rebuild every property tab from the local DB.
+          </p>
+          <div className="text-[11px] grid grid-cols-2 gap-x-3 gap-y-1">
+            {Object.entries(data.perProperty as Record<string, any>)
+              .filter(([, v]: any) => v.invoicesUnsynced + v.cashUnsynced + v.checksUnsynced > 0)
+              .map(([name, v]: any) => (
+                <div key={name} className="flex items-center justify-between gap-2 rounded px-2 py-1 bg-amber-50 dark:bg-amber-950/20">
+                  <span className="font-medium">{name}</span>
+                  <span className="text-amber-700 dark:text-amber-400">
+                    {v.invoicesUnsynced > 0 && `${v.invoicesUnsynced} CC `}
+                    {v.cashUnsynced > 0 && `${v.cashUnsynced} Cash `}
+                    {v.checksUnsynced > 0 && `${v.checksUnsynced} Check`}
+                  </span>
+                </div>
+              ))}
+          </div>
+          <Button
+            size="sm"
+            className="w-full gap-2"
+            onClick={() => fixAll.mutate()}
+            disabled={fixAll.isPending}
+          >
+            {fixAll.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+            Fix All ({total} missed)
+          </Button>
+        </>
+      )}
+
+      {!isLoading && data && (data.missedSamples || []).length > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded(x => !x)}
+          className="w-full text-left text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+        >
+          <ChevronRight className={`w-3 h-3 transition-transform ${expanded ? "rotate-90" : ""}`} />
+          {expanded ? "Hide" : "Show"} up to {data.missedSamples.length} missed row{data.missedSamples.length === 1 ? "" : "s"}
+        </button>
+      )}
+
+      {expanded && data && (
+        <div className="text-[11px] space-y-1 max-h-40 overflow-auto border rounded p-2">
+          {data.missedSamples.map((m: any, i: number) => (
+            <div key={i} className="flex items-center justify-between gap-2">
+              <span>
+                <span className="inline-block px-1 rounded bg-muted text-[10px] uppercase mr-1">{m.kind}</span>
+                {m.property} · #{m.recordNumber ?? m.id} · {m.date}
+              </span>
+              <span className="text-muted-foreground">${m.amount}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
