@@ -685,6 +685,15 @@ async function syncToDrive(invoice: any): Promise<boolean> {
   }
 }
 
+// RFC 2047 encode a mail Subject header when it contains any non-ASCII byte.
+// Without this, characters like em-dash (—), accented letters, or emoji render
+// as mojibake in Gmail's web UI (e.g. "—" → "Ã¢€”"). Pure-ASCII subjects are
+// returned unchanged so the raw text stays human-readable in server logs.
+function encodeMailSubject(subject: string): string {
+  if (!/[^\x20-\x7e]/.test(subject)) return subject;
+  return `=?UTF-8?B?${Buffer.from(subject, "utf-8").toString("base64")}?=`;
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -1536,7 +1545,7 @@ export async function registerRoutes(
         const mime = [
           `To: ${user.displayName} <${user.email}>`,
           `From: "Jetsetter Reporting" <jetsetterinvoices1@gmail.com>`,
-          `Subject: ${subject}`,
+          `Subject: ${encodeMailSubject(subject)}`,
           `MIME-Version: 1.0`,
           `Content-Type: text/html; charset="UTF-8"`,
           ``,
