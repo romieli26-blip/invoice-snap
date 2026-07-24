@@ -971,6 +971,34 @@ export async function registerRoutes(
     }
   });
 
+  // Admin: introspect the current sheet configurations. Handy when the admin
+  // is looking at what LOOKS like the right spreadsheet but the server may
+  // actually be writing to a different one. Returns just the IDs and a link
+  // for each so it's easy to compare against the URL bar in Sheets.
+  app.get("/api/admin/sheets-config", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    const idToUrl = (id: string | undefined) =>
+      id ? `https://docs.google.com/spreadsheets/d/${id}` : null;
+    res.json({
+      cc: {
+        spreadsheetId: sheetsConfig?.spreadsheetId || null,
+        url: idToUrl(sheetsConfig?.spreadsheetId),
+        tabs: sheetsConfig ? Object.keys(sheetsConfig.tabs || {}) : [],
+      },
+      cash: {
+        spreadsheetId: cashSheetsConfig?.spreadsheetId || null,
+        url: idToUrl(cashSheetsConfig?.spreadsheetId),
+        tabs: cashSheetsConfig ? Object.keys(cashSheetsConfig.tabs || {}) : [],
+      },
+      check: {
+        spreadsheetId: checkSheetsConfig?.spreadsheetId || null,
+        url: idToUrl(checkSheetsConfig?.spreadsheetId),
+        tabs: checkSheetsConfig ? Object.keys(checkSheetsConfig.tabs || {}) : [],
+      },
+    });
+  });
+
   // Admin: sync-status endpoint. Two modes:
   //
   //   ?deep=0 (default) — fast path. Compares the DB `syncedToSheets` flag on

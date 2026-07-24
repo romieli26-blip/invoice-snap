@@ -1796,22 +1796,64 @@ function SyncStatusPanel() {
 
       <details className="text-[11px] text-muted-foreground">
         <summary className="cursor-pointer hover:text-foreground">Advanced</summary>
-        <div className="pt-2 space-y-2">
-          <p>
-            <strong>Reset sync flags</strong> clears the per-row synced marker in the DB. Use this if the panel got out of sync with reality due to an older bug — the next Fix All will re-establish accurate flags. Nothing in Google Sheets is touched.
-          </p>
-          <Button
-            size="sm"
-            variant="outline"
-            className="w-full h-7 text-xs"
-            onClick={() => resetFlags.mutate()}
-            disabled={resetFlags.isPending}
-          >
-            {resetFlags.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
-            Reset sync flags
-          </Button>
+        <div className="pt-2 space-y-3">
+          <SheetsConfigLinks />
+          <div className="space-y-2">
+            <p>
+              <strong>Reset sync flags</strong> clears the per-row synced marker in the DB. Use this if the panel got out of sync with reality due to an older bug — the next Fix All will re-establish accurate flags. Nothing in Google Sheets is touched.
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full h-7 text-xs"
+              onClick={() => resetFlags.mutate()}
+              disabled={resetFlags.isPending}
+            >
+              {resetFlags.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+              Reset sync flags
+            </Button>
+          </div>
         </div>
       </details>
     </section>
+  );
+}
+
+// Small link block that reveals which spreadsheet the server is currently
+// writing to for each transaction type. Critical when the admin is looking
+// at "the wrong" Check Transactions doc in Drive — makes it obvious.
+function SheetsConfigLinks() {
+  const { data } = useQuery<any>({
+    queryKey: ["/api/admin/sheets-config"],
+  });
+  if (!data) return null;
+  const row = (label: string, cfg: any) => (
+    <div className="flex items-center justify-between gap-2">
+      <span className="font-medium">{label}</span>
+      {cfg?.url ? (
+        <a
+          href={cfg.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-600 dark:text-blue-400 hover:underline truncate max-w-[60%]"
+          title={cfg.spreadsheetId}
+        >
+          {cfg.spreadsheetId}
+        </a>
+      ) : (
+        <span className="text-destructive">Not configured</span>
+      )}
+    </div>
+  );
+  return (
+    <div className="space-y-1 border rounded p-2 bg-muted/30">
+      <p className="font-medium text-foreground">Server is writing to these spreadsheets:</p>
+      {row("CC Invoices", data.cc)}
+      {row("Cash Transactions", data.cash)}
+      {row("Check Transactions", data.check)}
+      <p className="pt-1 text-[10px]">
+        If a link above doesn't match the URL of the sheet you're viewing, you're looking at a different (orphan) document — that's why rows don't show up. Click the ID to open the sheet the server is actually writing to.
+      </p>
+    </div>
   );
 }
