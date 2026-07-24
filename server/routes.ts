@@ -8,7 +8,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
 import pdfParse from "pdf-parse";
-import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, driveFolderExists, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, getDriveFolderWebViewLink, hideSheetTab, unhideSheetTab, deleteSheetTab, listDriveFolderChildren, moveDriveFile, trashDriveFile, readSheetRange } from "./google-api";
+import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, driveFolderExists, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, getDriveFolderWebViewLink, hideSheetTab, unhideSheetTab, deleteSheetTab, listDriveFolderChildren, moveDriveFile, trashDriveFile, readSheetRange, listMyDriveRootChildren } from "./google-api";
 // nodemailer removed — using Gmail API instead (SMTP blocked on Railway)
 
 // Ensure uploads directory exists
@@ -4123,6 +4123,339 @@ export async function registerRoutes(
     // Bust property-folder cache so subfolders re-resolve under the new root.
     propertyFolderCache.clear();
     res.json({ ok: true, receiptsRootId });
+  });
+
+
+  // ============================================================
+  // Drive Cleanup
+  //
+  // Two endpoints work together:
+  //   1) POST /api/admin/drive-cleanup/preview
+  //      Inventories My Drive root and classifies every item into:
+  //        - PROTECTED  (spreadsheets/folders the server actively writes to;
+  //                      NEVER moved or trashed)
+  //        - KEEP       (well-named active folder we want to keep at root)
+  //        - LEGACY     (name contains "(legacy" or " - old" — user tagged
+  //                      these; will be moved into _Archived)
+  //        - DUP_PDF    (same-named PDF exists 2+ times; the newest wins,
+  //                      others go to _Archived)
+  //        - DUP_FOLDER (two candidate "receipts" folders — the master (the
+  //                      one pinned in driveFolderConfig, or the newer one)
+  //                      is KEEP; the other's contents are moved INTO the
+  //                      master and the emptied source is moved to _Archived)
+  //        - DUP_SHEET  (two same-named spreadsheets like "Check
+  //                      Transactions" — the server's active ID is KEEP;
+  //                      inactive twins go to _Archived. NO row copy is
+  //                      attempted from an inactive twin because the schema
+  //                      is server-owned; user can copy rows manually
+  //                      afterwards from the archived copy.)
+  //        - OTHER      (anything we don't touch; reported for transparency)
+  //
+  //      Returns a planned action list. NOTHING IS MOVED. Panel shows the
+  //      plan and asks the admin to confirm.
+  //
+  //   2) POST /api/admin/drive-cleanup/execute
+  //      Re-runs the classification and performs the moves. If the plan
+  //      would touch any PROTECTED item, the endpoint aborts. Everything
+  //      is done via Drive's `moveDriveFile` / `trashDriveFile`; the
+  //      "archive" bucket is a folder named "_Archived (do not use)" that
+  //      lives at Drive root and is created on demand.
+  // ============================================================
+
+  async function buildDriveCleanupPlan(): Promise<{
+    protectedIds: Set<string>;
+    archiveFolderId: string | null;
+    actions: Array<{
+      kind: "LEGACY" | "DUP_PDF" | "DUP_FOLDER" | "DUP_SHEET" | "SKIP";
+      itemId: string;
+      itemName: string;
+      itemMime: string;
+      why: string;
+      // What we plan to do. Populated for actionable rows only.
+      planned:
+        | { op: "move_to_archive" }
+        | { op: "consolidate_into"; targetFolderId: string; targetName: string }
+        | { op: "keep" }
+        | { op: "skip" };
+    }>;
+    keeps: Array<{ id: string; name: string; mimeType: string; reason: string }>;
+    warnings: string[];
+    root: any[]; // for debug / UI
+  }> {
+    const warnings: string[] = [];
+    // Collect protected IDs first — the union of every spreadsheet the app
+    // writes to plus the pinned receipts root.
+    const protectedIds = new Set<string>();
+    if (sheetsConfig?.spreadsheetId) protectedIds.add(sheetsConfig.spreadsheetId);
+    if (cashSheetsConfig?.spreadsheetId) protectedIds.add(cashSheetsConfig.spreadsheetId);
+    if (checkSheetsConfig?.spreadsheetId) protectedIds.add(checkSheetsConfig.spreadsheetId);
+    if (driveFolderConfig?.receiptsRootId) protectedIds.add(driveFolderConfig.receiptsRootId);
+
+    const root = await listMyDriveRootChildren();
+
+    // Look for existing _Archived folder at root. Don't create yet — that
+    // happens in execute() so preview is truly read-only.
+    const archiveFolder = root.find(
+      f => f.mimeType === "application/vnd.google-apps.folder" && f.name === "_Archived (do not use)"
+    );
+    const archiveFolderId = archiveFolder?.id || null;
+
+    const actions: any[] = [];
+    const keeps: any[] = [];
+
+    // ---------- 1) LEGACY folders (name-based) ----------
+    // The user's convention is to append "(legacy, not in use)" or " - old"
+    // to items they no longer want visible. Anything matching goes into
+    // _Archived.
+    const legacyPattern = /\((legacy|old|not in use)|\bold\b|\bnot in use\b/i;
+    for (const item of root) {
+      if (protectedIds.has(item.id)) continue;
+      if (legacyPattern.test(item.name)) {
+        actions.push({
+          kind: "LEGACY",
+          itemId: item.id,
+          itemName: item.name,
+          itemMime: item.mimeType,
+          why: "Name matches legacy pattern (e.g. '(legacy, not in use)' or ' - old').",
+          planned: { op: "move_to_archive" },
+        });
+      }
+    }
+    const legacyIds = new Set(actions.filter(a => a.kind === "LEGACY").map(a => a.itemId));
+
+    // ---------- 2) Duplicate PDFs (exact-name matches) ----------
+    // Group PDFs by exact name; if 2+ share a name, keep the newest and
+    // archive the rest.
+    const pdfByName = new Map<string, any[]>();
+    for (const item of root) {
+      if (item.mimeType !== "application/pdf") continue;
+      if (protectedIds.has(item.id) || legacyIds.has(item.id)) continue;
+      const list = pdfByName.get(item.name) || [];
+      list.push(item);
+      pdfByName.set(item.name, list);
+    }
+    for (const [name, items] of pdfByName) {
+      if (items.length < 2) continue;
+      // Newest wins. Ties broken by ID (arbitrary but stable).
+      const sorted = [...items].sort((a, b) => (b.modifiedTime || "").localeCompare(a.modifiedTime || ""));
+      const keeper = sorted[0];
+      keeps.push({ id: keeper.id, name: keeper.name, mimeType: keeper.mimeType, reason: `Newest copy of duplicate PDF "${name}".` });
+      for (let i = 1; i < sorted.length; i++) {
+        const dup = sorted[i];
+        actions.push({
+          kind: "DUP_PDF",
+          itemId: dup.id,
+          itemName: dup.name,
+          itemMime: dup.mimeType,
+          why: `Duplicate of "${name}" — newest copy (${keeper.modifiedTime?.slice(0, 10)}) kept as ${keeper.id}.`,
+          planned: { op: "move_to_archive" },
+        });
+      }
+    }
+
+    // ---------- 3) The two receipts-parent folders ----------
+    // User confirmed the *newer* "Credit Card, Checks and Cash Receipts" is
+    // the master. We move the contents of the older "Credit Card and Cash
+    // Receipts" INTO the master, then move the (now-empty) source folder to
+    // _Archived.
+    //
+    // Safety: if either folder ID matches driveFolderConfig.receiptsRootId,
+    // it becomes the master regardless of naming. Server sync is anchored to
+    // that ID and must never move.
+    const receiptFolders = root.filter(
+      f => f.mimeType === "application/vnd.google-apps.folder" &&
+           !legacyIds.has(f.id) &&
+           /credit card.*(cash|check).*receipts?/i.test(f.name)
+    );
+    if (receiptFolders.length >= 2) {
+      // Master selection: pinned server folder wins > newest wins > name-length.
+      let master: any = null;
+      for (const f of receiptFolders) {
+        if (f.id === driveFolderConfig.receiptsRootId) { master = f; break; }
+      }
+      if (!master) {
+        master = [...receiptFolders].sort((a, b) => (b.modifiedTime || "").localeCompare(a.modifiedTime || ""))[0];
+      }
+      keeps.push({
+        id: master.id,
+        name: master.name,
+        mimeType: master.mimeType,
+        reason: master.id === driveFolderConfig.receiptsRootId
+          ? "Server-pinned receipts root folder."
+          : "Newest 'Credit Card, Checks and Cash Receipts' folder (chosen as master).",
+      });
+      for (const f of receiptFolders) {
+        if (f.id === master.id) continue;
+        if (protectedIds.has(f.id)) {
+          warnings.push(`Refusing to touch "${f.name}" (${f.id}) — server is actively writing to it. Skipping.`);
+          continue;
+        }
+        actions.push({
+          kind: "DUP_FOLDER",
+          itemId: f.id,
+          itemName: f.name,
+          itemMime: f.mimeType,
+          why: `Duplicate receipts parent — contents will be moved INTO "${master.name}" (${master.id}), then this empty folder goes to _Archived.`,
+          planned: { op: "consolidate_into", targetFolderId: master.id, targetName: master.name },
+        });
+      }
+    } else if (receiptFolders.length === 1) {
+      keeps.push({
+        id: receiptFolders[0].id,
+        name: receiptFolders[0].name,
+        mimeType: receiptFolders[0].mimeType,
+        reason: "Only receipts parent folder — no consolidation needed.",
+      });
+    }
+
+    // ---------- 4) Duplicate spreadsheets (Check / Cash / CC) ----------
+    // Same-named Google Sheets at root that duplicate the server's active
+    // spreadsheet. The active one is protected; twins get archived.
+    const sheetGroups = new Map<string, any[]>();
+    for (const item of root) {
+      if (item.mimeType !== "application/vnd.google-apps.spreadsheet") continue;
+      if (legacyIds.has(item.id)) continue;
+      const key = item.name.trim().toLowerCase();
+      const list = sheetGroups.get(key) || [];
+      list.push(item);
+      sheetGroups.set(key, list);
+    }
+    for (const [name, items] of sheetGroups) {
+      if (items.length < 2) continue;
+      // Master: the one that matches a protected ID (i.e. server writes to
+      // it). If none matches, fall back to newest.
+      let master: any = null;
+      for (const s of items) {
+        if (protectedIds.has(s.id)) { master = s; break; }
+      }
+      if (!master) {
+        master = [...items].sort((a, b) => (b.modifiedTime || "").localeCompare(a.modifiedTime || ""))[0];
+        warnings.push(`Duplicate spreadsheet "${name}" but none is the active server target. Keeping newest (${master.id}); please verify manually.`);
+      }
+      keeps.push({
+        id: master.id,
+        name: master.name,
+        mimeType: master.mimeType,
+        reason: protectedIds.has(master.id)
+          ? "Active spreadsheet the server writes to."
+          : "Newest copy (fallback).",
+      });
+      for (const s of items) {
+        if (s.id === master.id) continue;
+        if (protectedIds.has(s.id)) {
+          warnings.push(`Two spreadsheets named "${name}" are both server-protected — that shouldn't happen. Skipping both.`);
+          continue;
+        }
+        actions.push({
+          kind: "DUP_SHEET",
+          itemId: s.id,
+          itemName: s.name,
+          itemMime: s.mimeType,
+          why: `Duplicate spreadsheet — server writes to ${master.id}. This copy will move to _Archived; copy any rows you need first if it has data.`,
+          planned: { op: "move_to_archive" },
+        });
+      }
+    }
+
+    return { protectedIds, archiveFolderId, actions, keeps, warnings, root };
+  }
+
+  app.get("/api/admin/drive-cleanup/preview", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    if (!isGoogleEnabled()) return res.status(400).json({ error: "Google Drive not configured" });
+    try {
+      const plan = await buildDriveCleanupPlan();
+      res.json({
+        ok: true,
+        actionable: plan.actions.length,
+        actions: plan.actions,
+        keeps: plan.keeps,
+        warnings: plan.warnings,
+        protectedIds: Array.from(plan.protectedIds),
+        archiveFolderExists: !!plan.archiveFolderId,
+        totalRootItems: plan.root.length,
+      });
+    } catch (e: any) {
+      console.error("[drive-cleanup] preview failed:", e);
+      res.status(500).json({ error: e.message?.slice(0, 200) || "preview failed" });
+    }
+  });
+
+  app.post("/api/admin/drive-cleanup/execute", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    if (!isGoogleEnabled()) return res.status(400).json({ error: "Google Drive not configured" });
+    try {
+      const plan = await buildDriveCleanupPlan();
+
+      // Belt-and-suspenders: none of the planned actions may touch a
+      // protected ID. If any does, refuse to proceed.
+      const touchesProtected = plan.actions.find(a => plan.protectedIds.has(a.itemId));
+      if (touchesProtected) {
+        return res.status(400).json({
+          error: `Refusing to run — plan would touch protected item ${touchesProtected.itemId} (${touchesProtected.itemName}).`,
+        });
+      }
+
+      // Ensure _Archived folder exists.
+      let archiveFolderId = plan.archiveFolderId;
+      if (!archiveFolderId) {
+        archiveFolderId = await ensureDriveFolder("_Archived (do not use)");
+        if (!archiveFolderId) {
+          return res.status(500).json({ error: "Failed to create _Archived folder" });
+        }
+      }
+
+      const results: Array<{ itemId: string; itemName: string; kind: string; ok: boolean; detail?: string }> = [];
+
+      for (const a of plan.actions) {
+        // Extra guard per-iteration.
+        if (plan.protectedIds.has(a.itemId)) {
+          results.push({ itemId: a.itemId, itemName: a.itemName, kind: a.kind, ok: false, detail: "protected — skipped" });
+          continue;
+        }
+
+        if (a.planned.op === "move_to_archive") {
+          const ok = await moveDriveFile(a.itemId, archiveFolderId);
+          results.push({ itemId: a.itemId, itemName: a.itemName, kind: a.kind, ok, detail: ok ? "moved to _Archived" : "move failed" });
+        } else if (a.planned.op === "consolidate_into") {
+          // Move every non-protected child of source into target, then move
+          // the (empty) source itself into _Archived.
+          const targetId = a.planned.targetFolderId;
+          const children = await listDriveFolderChildren(a.itemId);
+          let moved = 0;
+          let refused = 0;
+          for (const c of children) {
+            if (plan.protectedIds.has(c.id)) { refused++; continue; }
+            const ok = await moveDriveFile(c.id, targetId);
+            if (ok) moved++;
+          }
+          const archOk = await moveDriveFile(a.itemId, archiveFolderId);
+          results.push({
+            itemId: a.itemId,
+            itemName: a.itemName,
+            kind: a.kind,
+            ok: archOk,
+            detail: `moved ${moved} child(ren) into "${a.planned.targetName}"${refused ? `, refused ${refused} protected` : ""}; source ${archOk ? "archived" : "archive FAILED"}`,
+          });
+        }
+      }
+
+      const okCount = results.filter(r => r.ok).length;
+      res.json({
+        ok: true,
+        archiveFolderId,
+        actionsPlanned: plan.actions.length,
+        actionsSucceeded: okCount,
+        actionsFailed: plan.actions.length - okCount,
+        results,
+        warnings: plan.warnings,
+      });
+    } catch (e: any) {
+      console.error("[drive-cleanup] execute failed:", e);
+      res.status(500).json({ error: e.message?.slice(0, 200) || "execute failed" });
+    }
   });
 
   app.post("/api/admin/init-check-sheet", async (req, res) => {

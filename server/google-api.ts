@@ -573,6 +573,51 @@ export async function moveDriveFile(
 }
 
 /**
+ * List every top-level item (children of My Drive root) belonging to the
+ * authenticated user. Returns { id, name, mimeType, parents, modifiedTime,
+ * size }. Skips trashed files. Used by the Drive Cleanup admin flow to
+ * inventory duplicates + legacy folders.
+ */
+export async function listMyDriveRootChildren(): Promise<Array<{
+  id: string;
+  name: string;
+  mimeType: string;
+  parents: string[];
+  modifiedTime: string;
+  size: string;
+}>> {
+  if (!driveApi) return [];
+  const out: Array<any> = [];
+  try {
+    let pageToken: string | undefined = undefined;
+    do {
+      const resp = await driveApi.files.list({
+        q: `'root' in parents and trashed = false`,
+        fields: "nextPageToken, files(id, name, mimeType, parents, modifiedTime, size)",
+        spaces: "drive",
+        pageSize: 1000,
+        pageToken,
+      });
+      for (const f of resp.data.files || []) {
+        if (!f.id || !f.name) continue;
+        out.push({
+          id: f.id,
+          name: f.name,
+          mimeType: f.mimeType || "",
+          parents: f.parents || [],
+          modifiedTime: f.modifiedTime || "",
+          size: f.size || "",
+        });
+      }
+      pageToken = resp.data.nextPageToken || undefined;
+    } while (pageToken);
+  } catch (err: any) {
+    console.error(`[google-api] listMyDriveRootChildren failed:`, err.message?.slice(0, 200));
+  }
+  return out;
+}
+
+/**
  * Send a Drive file or folder to the Trash. Idempotent.
  */
 export async function trashDriveFile(fileId: string): Promise<boolean> {

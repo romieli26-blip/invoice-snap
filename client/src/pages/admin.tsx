@@ -328,6 +328,8 @@ export default function AdminPage() {
 
         <SyncStatusPanel />
 
+        <DriveCleanupPanel />
+
         {/* ---- WORKFORCE REPORT SECTION ---- */}
         <section className="space-y-3 border rounded-lg p-3">
           <h2 className="text-base font-semibold flex items-center gap-2">
@@ -1855,5 +1857,152 @@ function SheetsConfigLinks() {
         If a link above doesn't match the URL of the sheet you're viewing, you're looking at a different (orphan) document — that's why rows don't show up. Click the ID to open the sheet the server is actually writing to.
       </p>
     </div>
+  );
+}
+
+// DriveCleanupPanel — one-click Drive tidy-up. Preview is read-only and
+// shows exactly what will happen; Execute performs the moves via the server's
+// own Drive credentials so it can never touch a spreadsheet or folder the
+// server actively writes to.
+function DriveCleanupPanel() {
+  const { toast } = useToast();
+  const [preview, setPreview] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [executing, setExecuting] = useState(false);
+  const [result, setResult] = useState<any>(null);
+
+  const runPreview = async () => {
+    setLoading(true);
+    setResult(null);
+    try {
+      const res = await apiRequest("GET", "/api/admin/drive-cleanup/preview");
+      const j = await res.json();
+      setPreview(j);
+    } catch (e: any) {
+      toast({ title: "Preview failed", description: e.message || "Error", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const runExecute = async () => {
+    if (!window.confirm("Move duplicate + legacy items into _Archived (do not use)? Server-active sheets and folders will NOT be touched.")) return;
+    setExecuting(true);
+    try {
+      const res = await apiRequest("POST", "/api/admin/drive-cleanup/execute", {});
+      const j = await res.json();
+      setResult(j);
+      toast({
+        title: "Drive cleanup complete",
+        description: `${j.actionsSucceeded} of ${j.actionsPlanned} moves succeeded.`,
+      });
+      // Refresh preview so the panel reflects the new state.
+      await runPreview();
+    } catch (e: any) {
+      toast({ title: "Cleanup failed", description: e.message || "Error", variant: "destructive" });
+    } finally {
+      setExecuting(false);
+    }
+  };
+
+  const groups = (preview?.actions || []).reduce((acc: any, a: any) => {
+    (acc[a.kind] = acc[a.kind] || []).push(a);
+    return acc;
+  }, {});
+  const kindLabel: Record<string, string> = {
+    LEGACY: "Legacy folders (name-tagged)",
+    DUP_PDF: "Duplicate PDFs",
+    DUP_FOLDER: "Duplicate receipts folders (consolidate)",
+    DUP_SHEET: "Duplicate spreadsheets",
+    SKIP: "Skipped",
+  };
+
+  return (
+    <section className="space-y-3 border rounded-lg p-3">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-base font-semibold flex items-center gap-2">
+          <Archive className="w-4 h-4" />
+          Drive Cleanup
+        </h2>
+        <Button size="sm" variant="ghost" className="h-7 px-2" onClick={runPreview} disabled={loading}>
+          {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+        </Button>
+      </div>
+
+      {!preview && !loading && (
+        <>
+          <p className="text-xs text-muted-foreground">
+            Consolidates duplicate receipts folders, archives legacy folders (name-tagged as "(legacy)" or "- old"), and moves duplicate PDFs + duplicate spreadsheets into a top-level <strong>_Archived (do not use)</strong> folder. Server-active sheets and folders are never touched.
+          </p>
+          <Button size="sm" variant="outline" className="w-full gap-2" onClick={runPreview}>
+            <Archive className="w-3.5 h-3.5" />
+            Scan Drive
+          </Button>
+        </>
+      )}
+
+      {loading && <p className="text-xs text-muted-foreground">Scanning My Drive…</p>}
+
+      {preview && (
+        <>
+          <p className="text-xs">
+            <strong>{preview.actionable}</strong> item{preview.actionable === 1 ? "" : "s"} would be touched · {preview.totalRootItems} total at root · {preview.protectedIds.length} server-protected item{preview.protectedIds.length === 1 ? "" : "s"}.
+          </p>
+
+          {(preview.warnings || []).length > 0 && (
+            <div className="text-[11px] border rounded p-2 bg-amber-50 dark:bg-amber-950/20 space-y-1">
+              {preview.warnings.map((w: string, i: number) => (
+                <div key={i} className="text-amber-700 dark:text-amber-400">⚠ {w}</div>
+              ))}
+            </div>
+          )}
+
+          {Object.entries(groups).map(([kind, items]: [string, any]) => (
+            <div key={kind} className="space-y-1">
+              <p className="text-[11px] font-medium">{kindLabel[kind] || kind} ({items.length})</p>
+              <div className="text-[11px] space-y-1 border rounded p-2">
+                {items.map((a: any, i: number) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <span className="font-medium truncate max-w-[45%]">{a.itemName}</span>
+                    <span className="text-muted-foreground flex-1 truncate">{a.why}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {preview.actionable > 0 ? (
+            <Button
+              size="sm"
+              className="w-full gap-2"
+              onClick={runExecute}
+              disabled={executing}
+            >
+              {executing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Archive className="w-3.5 h-3.5" />}
+              Execute cleanup ({preview.actionable} item{preview.actionable === 1 ? "" : "s"})
+            </Button>
+          ) : (
+            <p className="text-xs text-emerald-700 dark:text-emerald-400">
+              Nothing to clean up — your Drive root is already tidy.
+            </p>
+          )}
+        </>
+      )}
+
+      {result && (
+        <div className="text-[11px] border rounded p-2 bg-muted/40 space-y-1">
+          <p className="font-medium">Cleanup result</p>
+          {(result.results || []).map((r: any, i: number) => (
+            <div key={i} className="flex items-start gap-2">
+              <span className={r.ok ? "text-emerald-700 dark:text-emerald-400" : "text-destructive"}>
+                {r.ok ? "✓" : "✗"}
+              </span>
+              <span className="font-medium truncate max-w-[35%]">{r.itemName}</span>
+              <span className="text-muted-foreground flex-1 truncate">{r.detail || r.kind}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
