@@ -927,6 +927,13 @@ export async function registerRoutes(
           for (const inv of allInv) {
             if (!inv.syncedToSheets) await storage.updateInvoiceSyncStatus(inv.id, "sheets", true);
           }
+          // Checks were missing from the cleanup before, which is what made the
+          // Sheet Sync Status panel look permanently red for every property
+          // that ever had a check submitted.
+          const allChecks = await storage.getAllCheckTransactions();
+          for (const tx of allChecks) {
+            if (!tx.syncedToSheets) await storage.updateCheckTransactionSyncStatus(tx.id, "sheets", true);
+          }
         } catch (e) { console.error("[resync-sheets] flag-synced cleanup failed:", e); }
       }
 
@@ -3695,6 +3702,15 @@ export async function registerRoutes(
       c.propertyCode || "",
     ]);
     await updateSheetRange(checkSheetsConfig.spreadsheetId, `'${propertyName}'!A2`, rows);
+    // Flag every row we just wrote as synced. Without this the Sheet Sync
+    // Status panel keeps counting these rows as "missed" indefinitely, which
+    // is what surfaced as the Trails End / Cedar Ridge / Pop's Grill checks
+    // showing up over and over even after Fix All. This has to run after the
+    // batch write above, not before, so we don't mark rows synced that the
+    // Sheets API failed on.
+    for (const c of sorted) {
+      try { await storage.updateCheckTransactionSyncStatus(c.id, "sheets", true); } catch {}
+    }
     return { ok: true, rows: rows.length };
   }
 

@@ -338,6 +338,7 @@ export interface IStorage {
   getNextCashRecordNumber(property: string): Promise<number>;
   updateCashTransaction(id: number, data: any): Promise<CashTransaction | undefined>;
   updateCashTransactionSyncStatus(id: number, target: "drive" | "sheets", synced: boolean): Promise<void>;
+  updateCheckTransactionSyncStatus(id: number, target: "drive" | "sheets", synced: boolean): Promise<void>;
   getCashBalanceByProperty(property: string): Promise<number>;
 }
 
@@ -597,6 +598,18 @@ export class DatabaseStorage implements IStorage {
       db.update(cashTransactions).set({ syncedToDrive: val }).where(eq(cashTransactions.id, id)).run();
     } else {
       db.update(cashTransactions).set({ syncedToSheets: val }).where(eq(cashTransactions.id, id)).run();
+    }
+  }
+
+  // Mirror of the cash version above. Missing until now, which caused the
+  // Sheet Sync Status panel to permanently show every check row as unsynced
+  // even right after they'd been written into the check spreadsheet.
+  async updateCheckTransactionSyncStatus(id: number, target: "drive" | "sheets", synced: boolean): Promise<void> {
+    const val = synced ? 1 : 0;
+    if (target === "drive") {
+      db.update(checkTransactions).set({ syncedToDrive: val }).where(eq(checkTransactions.id, id)).run();
+    } else {
+      db.update(checkTransactions).set({ syncedToSheets: val }).where(eq(checkTransactions.id, id)).run();
     }
   }
   async getDailyReportSubscribers(): Promise<User[]> {
