@@ -59,7 +59,9 @@ export default function AdminPage() {
   const [editingUser, setEditingUser] = useState<any>(null);
   const [editUserName, setEditUserName] = useState("");
   const [editUserEmail, setEditUserEmail] = useState("");
-  const [editUserPassword, setEditUserPassword] = useState("");
+  // Admin-side password editing was removed — users recover their own credentials
+  // via the "Recover Login Details" link on the login screen, and change them
+  // via the Change Password screen after they sign in.
   const [editUserRole, setEditUserRole] = useState("manager");
   const [editUserDailyTimeReport, setEditUserDailyTimeReport] = useState(false);
   const [editUserDailyTxReport, setEditUserDailyTxReport] = useState(false);
@@ -204,9 +206,16 @@ export default function AdminPage() {
       const res = await apiRequest("POST", `/api/users/${id}/unarchive`);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (r: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      toast({ title: "User restored" });
+      // On unarchive the server rotates the user's password and emails them
+      // fresh credentials. Surface that so the admin doesn't wonder why.
+      toast({
+        title: "User restored",
+        description: r?.emailed
+          ? "A fresh temporary password was emailed to the user. They'll be prompted to change it on first login."
+          : "Password was rotated. Add an email to the user's profile and use “Recover Login Details” to send them new credentials.",
+      });
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -870,7 +879,7 @@ export default function AdminPage() {
                             setEditingUser(u);
                             setEditUserName(u.displayName);
                             setEditUserEmail((u as any).email || "");
-                            setEditUserPassword("");
+                            // no password state — self-service only.
                             setEditUserRole(u.role);
                             setEditUserDailyTimeReport((u as any).dailyTimeReport === 1);
                             setEditUserDailyTxReport((u as any).dailyTransactionReport === 1);
@@ -998,10 +1007,11 @@ export default function AdminPage() {
                 <Label className="text-xs">Email (optional)</Label>
                 <Input type="email" value={editUserEmail} onChange={e => setEditUserEmail(e.target.value)} placeholder="user@example.com" />
               </div>
-              <div className="space-y-1">
-                <Label className="text-xs">New Password (leave blank to keep current)</Label>
-                <Input type="password" value={editUserPassword} onChange={e => setEditUserPassword(e.target.value)} placeholder="Leave blank to keep unchanged" />
-              </div>
+              {/* Password field intentionally removed — users recover their own
+                  credentials via the Login screen's "Recover Login Details"
+                  link and can change them from the header "Change Password"
+                  button after signing in. Archived users are automatically
+                  emailed a fresh temporary password on unarchive. */}
               <div className="space-y-1">
                 <Label className="text-xs">Role</Label>
                 <Select value={editUserRole} onValueChange={setEditUserRole}>
@@ -1232,7 +1242,7 @@ export default function AdminPage() {
                   await apiRequest("PUT", `/api/users/${editingUser.id}`, {
                     displayName: editUserName,
                     email: editUserEmail || undefined,
-                    password: editUserPassword || undefined,
+                    // password field removed — self-service only.
                     role: editUserRole,
                     dailyTimeReport: editUserDailyTimeReport,
                     dailyTransactionReport: editUserDailyTxReport,

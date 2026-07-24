@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
-import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, ChevronDown, DollarSign, Clock, UserPlus, UsersRound, Wallet, BookOpen, Megaphone, Sheet } from "lucide-react";
+import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, ChevronDown, DollarSign, Clock, UserPlus, UsersRound, Wallet, BookOpen, Megaphone, Sheet, KeyRound } from "lucide-react";
 import { apiRequest, queryClient, getAuthToken } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
@@ -646,6 +646,18 @@ export default function HistoryPage() {
                 <Users className="w-5 h-5" />
               </Button>
             )}
+            {/* Self-service password change — replaces the old admin-side
+                "New Password" field so admins never need to touch user
+                credentials. */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setLocation("/change-password")}
+              data-testid="button-change-password"
+              title="Change Password"
+            >
+              <KeyRound className="w-5 h-5" />
+            </Button>
             <Button
               variant="ghost"
               size="icon"

@@ -305,6 +305,7 @@ export interface IStorage {
   createSession(token: string, userId: number, role: string): Promise<void>;
   getSession(token: string): Promise<{ userId: number; role: string } | undefined>;
   deleteSession(token: string): Promise<void>;
+  deleteSessionsForUser(userId: number): Promise<void>;
   // Property methods
   getAllProperties(): Promise<Property[]>;
   getPropertyByName(name: string): Promise<Property | undefined>;
@@ -420,6 +421,14 @@ export class DatabaseStorage implements IStorage {
 
   async deleteSession(token: string): Promise<void> {
     db.delete(sessions).where(eq(sessions.token, token)).run();
+  }
+
+  // Nuke every active session for a user. Used when they're archived, their
+  // password is reset, or their role is downgraded — anywhere a lingering
+  // Bearer token in someone's localStorage could keep them signed in past the
+  // point where they should no longer have access.
+  async deleteSessionsForUser(userId: number): Promise<void> {
+    db.delete(sessions).where(eq(sessions.userId, userId)).run();
   }
 
   // ---- Properties ----

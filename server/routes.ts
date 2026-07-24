@@ -427,6 +427,18 @@ async function requireAuth(req: Request, res: Response): Promise<{ userId: numbe
     res.status(401).json({ error: "Unauthorized" });
     return null;
   }
+  // Belt-and-suspenders archive enforcement: even if a stale Bearer token is
+  // still floating around (e.g. archived user hadn't logged out), reject every
+  // request. Client sees 403 and force-logs-out via the react-query default
+  // handler. Also proactively purge their sessions so the token can't be reused.
+  const u = await storage.getUser(session.userId);
+  if (!u || (u as any).archived) {
+    if (u) {
+      try { await storage.deleteSessionsForUser(session.userId); } catch {}
+    }
+    res.status(403).json({ error: "Account archived", archived: true });
+    return null;
+  }
   return session;
 }
 
@@ -1487,19 +1499,30 @@ export async function registerRoutes(
   }
 
   // ---- FORGOT PASSWORD (public, no auth) ----
-  app.post("/api/forgot-password", async (req, res) => {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: "Email is required" });
-
-    const allUsers = await storage.getAllUsers();
-    const user = allUsers.find(u => u.email && u.email.toLowerCase() === email.toLowerCase());
-
-    if (!user) {
-      return res.json({ ok: true, message: "If an account with that email exists, login details have been sent." });
-    }
-
+  // Shared helper: reset a user's password to a fresh random string and email
+  // both the username and the temp password. Used by /api/forgot-password and
+  // by /api/users/:id/unarchive so both flows behave identically — the admin
+  // never sees the password and the user is expected to log in and change it
+  // themselves via /api/me/password.
+  //
+  // Returns the temp password (only for logging) but callers should NOT expose
+  // it to non-admin API responses.
+  async function resetUserPasswordAndEmail(
+    user: any,
+    subject: string,
+    intro: string,
+    logPrefix: string,
+  ): Promise<string> {
     const tempPassword = crypto.randomBytes(4).toString("hex");
     await storage.updateUser(user.id, { password: tempPassword });
+    // Invalidate any active sessions — the user's next action must be a fresh
+    // login with the temp password.
+    try { await storage.deleteSessionsForUser(user.id); } catch {}
+
+    if (!user.email) {
+      console.log(`[${logPrefix}] User ${user.username} has no email on file — temp password NOT sent.`);
+      return tempPassword;
+    }
 
     try {
       const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -1513,28 +1536,96 @@ export async function registerRoutes(
         const mime = [
           `To: ${user.displayName} <${user.email}>`,
           `From: "Jetsetter Reporting" <jetsetterinvoices1@gmail.com>`,
-          `Subject: Receipt App - Your Login Details`,
+          `Subject: ${subject}`,
           `MIME-Version: 1.0`,
           `Content-Type: text/html; charset="UTF-8"`,
           ``,
-          `<h3>Login Details</h3>
+          `<h3>Jetsetter Reporting — Login Details</h3>
            <p>Hi ${user.displayName},</p>
-           <p>Your login details for the Receipt App:</p>
+           <p>${intro}</p>
            <p><strong>Username:</strong> ${user.username}</p>
            <p><strong>Temporary Password:</strong> ${tempPassword}</p>
-           <p>Please log in and ask your admin to update your password.</p>
-           <p style="color:#888;font-size:12px;margin-top:16px;">- Receipt App</p>`,
+           <p>Sign in, then open the <strong>Change Password</strong> screen (key icon in the header) to set a password you'll remember. The temporary password will remain valid until you change it.</p>
+           <p style="color:#888;font-size:12px;margin-top:16px;">— Jetsetter Reporting</p>`,
         ].join("\r\n");
 
         const raw = Buffer.from(mime).toString("base64url");
         await gmail.users.messages.send({ userId: "me", requestBody: { raw } });
-        console.log(`[forgot-password] Sent login details to ${user.email}`);
+        console.log(`[${logPrefix}] Sent login details to ${user.email}`);
       }
     } catch (err: any) {
-      console.error("[forgot-password] Email failed:", err.message?.slice(0, 200));
+      console.error(`[${logPrefix}] Email failed:`, err.message?.slice(0, 200));
+    }
+    return tempPassword;
+  }
+
+  app.post("/api/forgot-password", async (req, res) => {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: "Email is required" });
+
+    const allUsers = await storage.getAllUsers();
+    const user = allUsers.find(u => u.email && u.email.toLowerCase() === email.toLowerCase());
+
+    if (!user) {
+      return res.json({ ok: true, message: "If an account with that email exists, login details have been sent." });
     }
 
+    // Refuse to reset archived users — they can't log in anyway, and we don't
+    // want to email them credentials that would immediately fail.
+    if ((user as any).archived) {
+      return res.json({ ok: true, message: "If an account with that email exists, login details have been sent." });
+    }
+
+    await resetUserPasswordAndEmail(
+      user,
+      "Jetsetter Reporting — Your Login Details",
+      "You (or an admin on your behalf) asked us to recover your login. Here are your credentials:",
+      "forgot-password",
+    );
+
     res.json({ ok: true, message: "If an account with that email exists, login details have been sent." });
+  });
+
+  // Self-service password change. User must be signed in and provide their
+  // current password. On success we do NOT invalidate the current session so
+  // the user stays signed in on the device they used to change it.
+  app.post("/api/me/password", async (req, res) => {
+    const session = await requireAuth(req, res);
+    if (!session) return;
+    const { currentPassword, newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: "Current and new passwords are required" });
+    }
+    // Same rules as the create-user validator (6+, upper, lower, number, special).
+    const pwOk =
+      typeof newPassword === "string" &&
+      newPassword.length >= 6 &&
+      /[A-Z]/.test(newPassword) &&
+      /[a-z]/.test(newPassword) &&
+      /[0-9]/.test(newPassword) &&
+      /[^A-Za-z0-9]/.test(newPassword);
+    if (!pwOk) {
+      return res.status(400).json({
+        error: "New password must be at least 6 characters and include an uppercase letter, a lowercase letter, a number, and a special character.",
+      });
+    }
+    const user = await storage.getUser(session.userId);
+    if (!user) return res.status(404).json({ error: "User not found" });
+    if (user.password !== currentPassword) {
+      return res.status(401).json({ error: "Current password is incorrect" });
+    }
+    if (newPassword === currentPassword) {
+      return res.status(400).json({ error: "New password must be different from your current password" });
+    }
+    await storage.updateUser(session.userId, { password: newPassword });
+    // Kill every OTHER session belonging to this user (defensive — e.g. old
+    // phone that still had a token). Current request's token stays valid.
+    const currentToken = (req.headers.authorization || "").slice(7);
+    try {
+      await storage.deleteSessionsForUser(session.userId);
+      await storage.createSession(currentToken, session.userId, session.role);
+    } catch (e) { console.error("[change-password] session refresh failed:", e); }
+    res.json({ ok: true });
   });
 
   // ---- AUTH ----
@@ -2135,6 +2226,12 @@ export async function registerRoutes(
     const tabName = target.displayName || `User ${id}`;
 
     await storage.setUserArchived(id, true);
+    // Invalidate any active Bearer tokens the user might still have in
+    // localStorage on their phone or laptop. Their next request lands on the
+    // updated requireAuth() check, which returns 403 and forces re-login.
+    try { await storage.deleteSessionsForUser(id); } catch (e: any) {
+      console.error("[user-archive] Failed to purge sessions:", e.message?.slice(0, 100));
+    }
 
     let tabHidden = false;
     const trConfig = getTimeTrackingConfig();
@@ -2148,7 +2245,11 @@ export async function registerRoutes(
     res.json({ ok: true, tabHidden, tabName });
   });
 
-  // Restore a previously archived user.
+  // Restore a previously archived user. Also emails them a fresh temporary
+  // password so the admin never needs to see or hand out credentials. If the
+  // user has no email on file the reset still happens (temp password is
+  // written to the server log) — the admin can then use "Recover Login
+  // Details" once an email is added.
   app.post("/api/users/:id/unarchive", async (req, res) => {
     const session = await requireAdmin(req, res);
     if (!session) return;
@@ -2159,6 +2260,21 @@ export async function registerRoutes(
 
     await storage.setUserArchived(id, false);
 
+    // Force a password rotation on unarchive so the returning user must set
+    // up new credentials. The helper handles the email + session purge.
+    let emailed = false;
+    try {
+      await resetUserPasswordAndEmail(
+        target,
+        "Jetsetter Reporting — Welcome Back",
+        "Your account has been reactivated. Here are your fresh login details:",
+        "user-unarchive",
+      );
+      emailed = !!target.email;
+    } catch (e: any) {
+      console.error("[user-unarchive] Password rotation failed:", e.message?.slice(0, 120));
+    }
+
     let tabUnhidden = false;
     const trConfig = getTimeTrackingConfig();
     if (trConfig && isGoogleEnabled()) {
@@ -2168,7 +2284,9 @@ export async function registerRoutes(
         console.error("[user-unarchive] Failed to unhide sheet tab:", e.message?.slice(0, 100));
       }
     }
-    res.json({ ok: true, tabUnhidden, tabName });
+    // Include `emailed` so the client can show a helpful toast ("Fresh login
+    // details emailed to X").
+    res.json({ ok: true, tabUnhidden, tabName, emailed });
   });
 
   app.put("/api/users/:id", async (req, res) => {

@@ -41,6 +41,25 @@ async function throwIfResNotOk(res: Response) {
     window.location.reload();
     throw new Error("Session expired");
   }
+  // 403 + archived: the server tells us this account is disabled. Force-logout
+  // exactly like a 401, but surface a clearer message so the user knows why.
+  if (res.status === 403 && authToken) {
+    try {
+      const clone = res.clone();
+      const body = await clone.json();
+      if (body?.archived) {
+        authToken = null;
+        try { localStorage.removeItem(TOKEN_KEY); } catch {}
+        try { localStorage.removeItem("invoice_snap_user"); } catch {}
+        alert("Your account has been archived. Please contact your administrator.");
+        window.location.reload();
+        throw new Error("Account archived");
+      }
+    } catch (e: any) {
+      if (e?.message === "Account archived") throw e;
+      // fall through to generic 403 handling below
+    }
+  }
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
     throw new Error(`${res.status}: ${text}`);

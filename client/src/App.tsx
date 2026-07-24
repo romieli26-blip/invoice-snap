@@ -12,10 +12,10 @@ import InvoiceFormPage from "@/pages/invoice-form";
 import AdminPage from "@/pages/admin";
 import CashTransactionPage from "@/pages/cash-transaction";
 import CheckTransactionPage from "@/pages/check-transaction";
+import ChangePasswordPage from "@/pages/change-password";
 import ReconcilePage from "@/pages/reconcile";
 import TimeReportPage from "@/pages/time-report";
 import DocumentsPage from "@/pages/documents";
-import ChangePasswordPage from "@/pages/change-password";
 import WorkCreditPage from "@/pages/work-credit";
 import ContractorDocumentsPage from "@/pages/contractor-documents";
 import MyContractorsPage from "@/pages/my-contractors";
@@ -50,6 +50,7 @@ function AuthenticatedRouter() {
       <Route path="/admin" component={AdminPage} />
       <Route path="/cash" component={CashTransactionPage} />
       <Route path="/check" component={CheckTransactionPage} />
+      <Route path="/change-password" component={ChangePasswordPage} />
       <Route path="/reconcile" component={ReconcilePage} />
       <Route path="/time-report" component={TimeReportPage} />
       <Route path="/documents" component={DocumentsPage} />
