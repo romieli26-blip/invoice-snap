@@ -8,7 +8,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
 import pdfParse from "pdf-parse";
-import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, driveFolderExists, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, getDriveFolderWebViewLink, hideSheetTab, unhideSheetTab, deleteSheetTab, listDriveFolderChildren, moveDriveFile, trashDriveFile } from "./google-api";
+import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, driveFolderExists, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, getDriveFolderWebViewLink, hideSheetTab, unhideSheetTab, deleteSheetTab, listDriveFolderChildren, moveDriveFile, trashDriveFile, readSheetRange } from "./google-api";
 // nodemailer removed — using Gmail API instead (SMTP blocked on Railway)
 
 // Ensure uploads directory exists
@@ -835,11 +835,21 @@ export async function registerRoutes(
             ];
           });
 
-          summary.push({ sheet: "CC", tab: prop.name, rowsWritten: rows.length });
           if (!dryRun && rows.length > 0) {
             // Clear the data rows (keep header in row 1), then write fresh.
             await clearSheet(sheetsConfig.spreadsheetId, `${prop.name}!A2:L`);
-            await updateSheetRange(sheetsConfig.spreadsheetId, `${prop.name}!A2`, rows);
+            const okCc = await updateSheetRange(sheetsConfig.spreadsheetId, `${prop.name}!A2`, rows);
+            if (okCc) {
+              // Flag every invoice we just wrote so /sync-status reports truth.
+              for (const inv of propInvoices) {
+                try { await storage.updateInvoiceSyncStatus(inv.id, "sheets", true); } catch {}
+              }
+              summary.push({ sheet: "CC", tab: prop.name, rowsWritten: rows.length });
+            } else {
+              summary.push({ sheet: "CC", tab: prop.name, error: "sheets-write-failed" });
+            }
+          } else {
+            summary.push({ sheet: "CC", tab: prop.name, rowsWritten: rows.length });
           }
         }
       }
@@ -885,10 +895,19 @@ export async function registerRoutes(
             ]);
           }
 
-          summary.push({ sheet: "Cash", tab: prop.name, rowsWritten: rows.length });
           if (!dryRun && rows.length > 0) {
             await clearSheet(cashSheetsConfig.spreadsheetId, `${prop.name}!A2:L`);
-            await updateSheetRange(cashSheetsConfig.spreadsheetId, `${prop.name}!A2`, rows);
+            const okCash = await updateSheetRange(cashSheetsConfig.spreadsheetId, `${prop.name}!A2`, rows);
+            if (okCash) {
+              for (const tx of propCash) {
+                try { await storage.updateCashTransactionSyncStatus(tx.id, "sheets", true); } catch {}
+              }
+              summary.push({ sheet: "Cash", tab: prop.name, rowsWritten: rows.length });
+            } else {
+              summary.push({ sheet: "Cash", tab: prop.name, error: "sheets-write-failed" });
+            }
+          } else {
+            summary.push({ sheet: "Cash", tab: prop.name, rowsWritten: rows.length });
           }
         }
       }
@@ -915,27 +934,12 @@ export async function registerRoutes(
         }
       }
 
-      // Also flag the previously-unsynced rows as synced so /sync-status
-      // reports a clean bill of health after a successful rebuild.
-      if (!dryRun) {
-        try {
-          const allCash = await storage.getAllCashTransactions();
-          for (const tx of allCash) {
-            if (!tx.syncedToSheets) await storage.updateCashTransactionSyncStatus(tx.id, "sheets", true);
-          }
-          const allInv = await storage.getAllInvoices();
-          for (const inv of allInv) {
-            if (!inv.syncedToSheets) await storage.updateInvoiceSyncStatus(inv.id, "sheets", true);
-          }
-          // Checks were missing from the cleanup before, which is what made the
-          // Sheet Sync Status panel look permanently red for every property
-          // that ever had a check submitted.
-          const allChecks = await storage.getAllCheckTransactions();
-          for (const tx of allChecks) {
-            if (!tx.syncedToSheets) await storage.updateCheckTransactionSyncStatus(tx.id, "sheets", true);
-          }
-        } catch (e) { console.error("[resync-sheets] flag-synced cleanup failed:", e); }
-      }
+      // NB: we intentionally do NOT bulk-flag rows as synced here — the
+      // rebuild functions themselves flip syncedToSheets=1 only when the
+      // Sheets API actually accepted their write. A blanket flag-flip here
+      // was masking real failures (e.g. the Trails End check-sheet only
+      // getting 2 of 4 rows through), which made the Sheet Sync Status panel
+      // claim "nothing missed" while data was still missing from the sheet.
 
       res.json({ ok: true, dryRun, summary });
     } catch (e: any) {
@@ -944,14 +948,22 @@ export async function registerRoutes(
     }
   });
 
-  // Admin: at-a-glance sync-status. Returns, per property, how many rows in the
-  // local DB haven't yet been mirrored to Google Sheets, plus a small sample of
-  // the missed rows so admins can spot patterns (e.g. a whole property missing).
-  // Used by the Sync Status panel in the Admin UI. Runs read-only — pair with
-  // POST /api/admin/resync-sheets to actually repair the sheets.
+  // Admin: sync-status endpoint. Two modes:
+  //
+  //   ?deep=0 (default) — fast path. Compares the DB `syncedToSheets` flag on
+  //     each row against the local DB. Cheap, no Sheets API calls, safe to
+  //     poll every 60 s.
+  //
+  //   ?deep=1 — authoritative path. Reads the actual row counts from every
+  //     property tab in the CC / Cash / Check spreadsheets and compares them
+  //     to DB counts. Slower (up to ~3 Sheets reads per property), but this
+  //     is the truth: if the sheet is behind the DB, this tells you exactly
+  //     which tab and by how many rows. Use this from the "Verify Now" button.
   app.get("/api/admin/sync-status", async (req, res) => {
     const session = await requireAdmin(req, res);
     if (!session) return;
+
+    const deep = req.query.deep === "1";
 
     try {
       const allProps = await storage.getAllProperties();
@@ -961,12 +973,20 @@ export async function registerRoutes(
       const allCash = await storage.getAllCashTransactions();
       const allChecks = await storage.getAllCheckTransactions();
 
-      const perProperty: Record<string, {
+      type PropStats = {
         invoicesUnsynced: number;
         cashUnsynced: number;
         checksUnsynced: number;
         totalRows: number;
-      }> = {};
+        // Deep-verify counts (undefined when deep=false).
+        dbInvoices?: number;
+        dbCash?: number;
+        dbChecks?: number;
+        sheetInvoices?: number | null;
+        sheetCash?: number | null;
+        sheetChecks?: number | null;
+      };
+      const perProperty: Record<string, PropStats> = {};
       for (const name of propNames) {
         perProperty[name] = { invoicesUnsynced: 0, cashUnsynced: 0, checksUnsynced: 0, totalRows: 0 };
       }
@@ -1007,14 +1027,62 @@ export async function registerRoutes(
         }
       }
 
+      // Deep verification: for every property tab, read column A (Date) and
+      // count non-empty rows below the header. Compare to DB counts. Any
+      // discrepancy is the honest answer to "was anything missed?".
+      const deepMismatches: Array<{ property: string; kind: "CC" | "Cash" | "Check"; db: number; sheet: number | null }> = [];
+      if (deep) {
+        // Pre-index DB counts by property.
+        const ccByProp = new Map<string, number>();
+        const cashByProp = new Map<string, number>();
+        const checksByProp = new Map<string, number>();
+        for (const inv of allInvoices) ccByProp.set(inv.property, (ccByProp.get(inv.property) || 0) + 1);
+        for (const tx of allCash) cashByProp.set(tx.property, (cashByProp.get(tx.property) || 0) + 1);
+        for (const tx of allChecks) checksByProp.set(tx.property, (checksByProp.get(tx.property) || 0) + 1);
+
+        for (const prop of allProps) {
+          const stats = perProperty[prop.name];
+          stats.dbInvoices = ccByProp.get(prop.name) || 0;
+          stats.dbCash = cashByProp.get(prop.name) || 0;
+          stats.dbChecks = checksByProp.get(prop.name) || 0;
+
+          // CC — uses sheetsConfig, tab = property name, column A = Date.
+          if (sheetsConfig?.spreadsheetId) {
+            const rows = await readSheetRange(sheetsConfig.spreadsheetId, `'${prop.name}'!A2:A`);
+            stats.sheetInvoices = rows == null ? null : rows.filter(r => r[0] && r[0].trim() !== "").length;
+            if (rows != null && stats.sheetInvoices !== stats.dbInvoices) {
+              deepMismatches.push({ property: prop.name, kind: "CC", db: stats.dbInvoices, sheet: stats.sheetInvoices });
+            }
+          }
+          // Cash
+          if (cashSheetsConfig?.spreadsheetId && cashSheetsConfig.tabs[prop.name]) {
+            const rows = await readSheetRange(cashSheetsConfig.spreadsheetId, `'${prop.name}'!A2:A`);
+            stats.sheetCash = rows == null ? null : rows.filter(r => r[0] && r[0].trim() !== "").length;
+            if (rows != null && stats.sheetCash !== stats.dbCash) {
+              deepMismatches.push({ property: prop.name, kind: "Cash", db: stats.dbCash, sheet: stats.sheetCash });
+            }
+          }
+          // Check
+          if (checkSheetsConfig?.spreadsheetId) {
+            const rows = await readSheetRange(checkSheetsConfig.spreadsheetId, `'${prop.name}'!A2:A`);
+            stats.sheetChecks = rows == null ? null : rows.filter(r => r[0] && r[0].trim() !== "").length;
+            if (rows != null && stats.sheetChecks !== stats.dbChecks) {
+              deepMismatches.push({ property: prop.name, kind: "Check", db: stats.dbChecks, sheet: stats.sheetChecks });
+            }
+          }
+        }
+      }
+
       const totalUnsynced = Object.values(perProperty).reduce(
         (n, p) => n + p.invoicesUnsynced + p.cashUnsynced + p.checksUnsynced, 0
       );
 
       res.json({
+        deep,
         totalUnsynced,
         perProperty,
         missedSamples,
+        deepMismatches,
         counts: {
           invoices: allInvoices.length,
           cash: allCash.length,
@@ -3701,13 +3769,22 @@ export async function registerRoutes(
       String(c.recordNumber || ""),
       c.propertyCode || "",
     ]);
-    await updateSheetRange(checkSheetsConfig.spreadsheetId, `'${propertyName}'!A2`, rows);
-    // Flag every row we just wrote as synced. Without this the Sheet Sync
-    // Status panel keeps counting these rows as "missed" indefinitely, which
-    // is what surfaced as the Trails End / Cedar Ridge / Pop's Grill checks
-    // showing up over and over even after Fix All. This has to run after the
-    // batch write above, not before, so we don't mark rows synced that the
-    // Sheets API failed on.
+    const writeOk = await updateSheetRange(
+      checkSheetsConfig.spreadsheetId,
+      `'${propertyName}'!A2`,
+      rows,
+    );
+    if (!writeOk) {
+      // updateSheetRange swallows API errors and returns false. Surface that
+      // truthfully so callers (and the Sheet Sync Status panel) don't declare
+      // victory when nothing was actually written.
+      console.error(`[check-sheet-rebuild] Sheets API write FAILED for "${propertyName}" (${rows.length} rows). Leaving syncedToSheets=0.`);
+      return { ok: false, reason: "sheets-write-failed", rows: 0 };
+    }
+    // Only flag rows as synced after the batch write above actually succeeded.
+    // Previously this loop ran regardless, which is why the Sheet Sync Status
+    // panel could report "clean" even though 2 of 4 Trails End checks never
+    // reached the sheet.
     for (const c of sorted) {
       try { await storage.updateCheckTransactionSyncStatus(c.id, "sheets", true); } catch {}
     }

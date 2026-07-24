@@ -168,6 +168,20 @@ export async function createSpreadsheetInFolder(title: string, folderId: string)
   }
 }
 
+// Read a range from a sheet. Returns the raw 2D array (row-major) as strings,
+// or null on any error. Used by the sync-status diagnostic to compare what's
+// actually in Google Sheets against what the DB thinks got written.
+export async function readSheetRange(spreadsheetId: string, range: string): Promise<string[][] | null> {
+  if (!sheetsApi) return null;
+  try {
+    const res = await sheetsApi.spreadsheets.values.get({ spreadsheetId, range });
+    return (res.data.values || []) as string[][];
+  } catch (err: any) {
+    console.error(`[google-api] Failed to read range "${range}":`, err.message?.slice(0, 200));
+    return null;
+  }
+}
+
 export async function updateSheetRange(spreadsheetId: string, range: string, values: string[][]): Promise<boolean> {
   if (!sheetsApi) return false;
   try {
