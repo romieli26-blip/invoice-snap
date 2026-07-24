@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1631,39 +1631,57 @@ function PropertyAdminCard({
 }
 
 
-// SyncStatusPanel — a compliance dashboard so admins can spot rows in the
-// local DB that haven't reached Google Sheets.
+// SyncStatusPanel — dashboard for verifying that every row in the local DB is
+// mirrored in the corresponding Google Sheet.
 //
-// Two modes:
-//   - Fast poll (?deep=0, every 60s): trusts each row's `syncedToSheets` flag.
-//     Very cheap. Good enough for the "everything is fine" case.
-//   - Deep verify (?deep=1, on demand): actually reads every property tab from
-//     each spreadsheet and compares row counts to the DB. This is what tells
-//     you *for certain* whether the sheet is missing rows the app thinks are
-//     synced. It costs several Sheets API reads, so only run it when you want
-//     ground truth.
+// This component runs a deep verify (reads actual row counts from every
+// property tab and compares to the DB) automatically on mount, because the
+// fast per-row `syncedToSheets` flag was historically unreliable (older bug
+// wrote it to 1 even when the sheet write failed). The deep path is the only
+// trustworthy signal.
 function SyncStatusPanel() {
   const { toast } = useToast();
   const [expanded, setExpanded] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [deepResult, setDeepResult] = useState<any>(null);
+  const [lastFixSummary, setLastFixSummary] = useState<any[] | null>(null);
 
-  const { data, isLoading, refetch } = useQuery<any>({
-    queryKey: ["/api/admin/sync-status"],
-    refetchInterval: 60_000,
-  });
+  const runDeepVerify = async () => {
+    setVerifying(true);
+    try {
+      const res = await apiRequest("GET", "/api/admin/sync-status?deep=1");
+      const j = await res.json();
+      setDeepResult(j);
+      return j;
+    } catch (e: any) {
+      toast({ title: "Verify failed", description: e.message || "Error", variant: "destructive" });
+      return null;
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  // Auto-run on mount + every 5 min. Deep verify is expensive so we don't
+  // poll every 60s like the old fast-path version.
+  useEffect(() => {
+    runDeepVerify();
+    const t = setInterval(runDeepVerify, 5 * 60_000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fixAll = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/admin/resync-sheets", {});
       return res.json();
     },
-    onSuccess: (r: any) => {
+    onSuccess: async (r: any) => {
+      setLastFixSummary(r.summary || []);
       const errors = (r.summary || []).filter((s: any) => s.error);
       if (errors.length > 0) {
         toast({
           title: "Sync repair completed with errors",
-          description: `${errors.length} tab(s) failed to write to Google Sheets. Check the details below.`,
+          description: `${errors.length} tab(s) failed to write. See the errors below.`,
           variant: "destructive",
         });
       } else {
@@ -1672,45 +1690,34 @@ function SyncStatusPanel() {
           description: `Rebuilt ${(r.summary || []).length} property tabs across CC/Cash/Check sheets.`,
         });
       }
-      // Auto-run a deep verify so we know the numbers actually line up.
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/sync-status"] });
-      refetch();
-      runDeepVerify();
+      // Immediately re-verify from the actual sheets so the UI reflects truth.
+      const after = await runDeepVerify();
+      const mismatchCount = after?.deepMismatches?.length ?? 0;
+      if (mismatchCount === 0 && errors.length === 0) {
+        toast({ title: "All sheets verified", description: "Every property tab now matches the DB exactly." });
+      }
     },
     onError: (e: any) =>
       toast({ title: "Fix All failed", description: e.message || "Error", variant: "destructive" }),
   });
 
-  const runDeepVerify = async () => {
-    setVerifying(true);
-    try {
-      const res = await apiRequest("GET", "/api/admin/sync-status?deep=1");
-      const j = await res.json();
-      setDeepResult(j);
-      const mismatchCount = (j.deepMismatches || []).length;
-      if (mismatchCount === 0) {
-        toast({
-          title: "Sheets verified",
-          description: "Every property tab has the exact same number of rows as the DB.",
-        });
-      } else {
-        toast({
-          title: `${mismatchCount} tab${mismatchCount === 1 ? "" : "s"} out of sync`,
-          description: "See mismatches below. Click Fix All to rebuild.",
-          variant: "destructive",
-        });
-      }
-    } catch (e: any) {
-      toast({ title: "Verify failed", description: e.message || "Error", variant: "destructive" });
-    } finally {
-      setVerifying(false);
-    }
-  };
+  const resetFlags = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/reset-sync-flags", {});
+      return res.json();
+    },
+    onSuccess: async () => {
+      toast({ title: "Flags reset", description: "Running deep verify to see actual sheet state…" });
+      await runDeepVerify();
+    },
+    onError: (e: any) =>
+      toast({ title: "Reset failed", description: e.message || "Error", variant: "destructive" }),
+  });
 
-  const total = data?.totalUnsynced ?? 0;
   const deepMismatches = deepResult?.deepMismatches || [];
   const hasDeepDrift = deepMismatches.length > 0;
-  const clean = !isLoading && total === 0 && !hasDeepDrift;
+  const clean = !verifying && deepResult != null && !hasDeepDrift;
+  const errorTabs = (lastFixSummary || []).filter((s: any) => s.error);
 
   return (
     <section className="space-y-3 border rounded-lg p-3">
@@ -1719,71 +1726,36 @@ function SyncStatusPanel() {
           {clean ? (
             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
           ) : (
-            <AlertTriangle className={`w-4 h-4 ${total > 0 || hasDeepDrift ? "text-amber-600" : "text-muted-foreground"}`} />
+            <AlertTriangle className={`w-4 h-4 ${hasDeepDrift || errorTabs.length > 0 ? "text-amber-600" : "text-muted-foreground"}`} />
           )}
           Sheet Sync Status
         </h2>
-        <div className="flex items-center gap-1">
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 px-2 text-xs"
-            onClick={runDeepVerify}
-            disabled={verifying}
-            title="Read every property tab and compare to the DB. Slower but authoritative."
-          >
-            {verifying ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
-            Verify Now
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 px-2"
-            onClick={() => refetch()}
-            disabled={isLoading}
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
-          </Button>
-        </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 px-2"
+          onClick={runDeepVerify}
+          disabled={verifying}
+          title="Re-read every property tab and compare to the DB."
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${verifying ? "animate-spin" : ""}`} />
+        </Button>
       </div>
 
-      {isLoading && (
-        <p className="text-xs text-muted-foreground">Checking sheets…</p>
+      {verifying && !deepResult && (
+        <p className="text-xs text-muted-foreground">Reading every property tab and comparing to the DB…</p>
       )}
 
-      {!isLoading && clean && (
+      {clean && (
         <p className="text-xs text-emerald-700 dark:text-emerald-400">
-          Every row in the DB is mirrored to Google Sheets. Nothing missed.
-          {deepResult && " Deep verify confirmed row-for-row match."}
+          Every property tab in every spreadsheet has the exact same number of rows as the DB. Nothing missed.
         </p>
-      )}
-
-      {!isLoading && total > 0 && data && (
-        <>
-          <p className="text-xs text-amber-700 dark:text-amber-400">
-            <strong>{total}</strong> row{total === 1 ? "" : "s"} in the DB haven't reached Google Sheets. Click <strong>Fix All</strong> to rebuild every property tab from the local DB.
-          </p>
-          <div className="text-[11px] grid grid-cols-2 gap-x-3 gap-y-1">
-            {Object.entries(data.perProperty as Record<string, any>)
-              .filter(([, v]: any) => v.invoicesUnsynced + v.cashUnsynced + v.checksUnsynced > 0)
-              .map(([name, v]: any) => (
-                <div key={name} className="flex items-center justify-between gap-2 rounded px-2 py-1 bg-amber-50 dark:bg-amber-950/20">
-                  <span className="font-medium">{name}</span>
-                  <span className="text-amber-700 dark:text-amber-400">
-                    {v.invoicesUnsynced > 0 && `${v.invoicesUnsynced} CC `}
-                    {v.cashUnsynced > 0 && `${v.cashUnsynced} Cash `}
-                    {v.checksUnsynced > 0 && `${v.checksUnsynced} Check`}
-                  </span>
-                </div>
-              ))}
-          </div>
-        </>
       )}
 
       {hasDeepDrift && (
         <>
           <p className="text-xs text-amber-700 dark:text-amber-400">
-            <strong>Deep verify:</strong> {deepMismatches.length} property tab{deepMismatches.length === 1 ? "" : "s"} have a row-count mismatch between the DB and Google Sheets.
+            <strong>{deepMismatches.length} property tab{deepMismatches.length === 1 ? "" : "s"}</strong> have a row-count mismatch between the DB and Google Sheets.
           </p>
           <div className="text-[11px] space-y-1 border rounded p-2 bg-amber-50/50 dark:bg-amber-950/10">
             {deepMismatches.map((m: any, i: number) => (
@@ -1795,45 +1767,51 @@ function SyncStatusPanel() {
               </div>
             ))}
           </div>
+          <Button
+            size="sm"
+            className="w-full gap-2"
+            onClick={() => fixAll.mutate()}
+            disabled={fixAll.isPending}
+          >
+            {fixAll.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+            Fix All ({deepMismatches.length} tab{deepMismatches.length === 1 ? "" : "s"} to repair)
+          </Button>
         </>
       )}
 
-      {!isLoading && (total > 0 || hasDeepDrift) && (
-        <Button
-          size="sm"
-          className="w-full gap-2"
-          onClick={() => fixAll.mutate()}
-          disabled={fixAll.isPending}
-        >
-          {fixAll.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-          Fix All {total > 0 ? `(${total} missed)` : `(${deepMismatches.length} tab${deepMismatches.length === 1 ? "" : "s"} drifted)`}
-        </Button>
-      )}
-
-      {!isLoading && data && (data.missedSamples || []).length > 0 && (
-        <button
-          type="button"
-          onClick={() => setExpanded(x => !x)}
-          className="w-full text-left text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1"
-        >
-          <ChevronRight className={`w-3 h-3 transition-transform ${expanded ? "rotate-90" : ""}`} />
-          {expanded ? "Hide" : "Show"} up to {data.missedSamples.length} missed row{data.missedSamples.length === 1 ? "" : "s"}
-        </button>
-      )}
-
-      {expanded && data && (
-        <div className="text-[11px] space-y-1 max-h-40 overflow-auto border rounded p-2">
-          {data.missedSamples.map((m: any, i: number) => (
-            <div key={i} className="flex items-center justify-between gap-2">
-              <span>
-                <span className="inline-block px-1 rounded bg-muted text-[10px] uppercase mr-1">{m.kind}</span>
-                {m.property} · #{m.recordNumber ?? m.id} · {m.date}
-              </span>
-              <span className="text-muted-foreground">${m.amount}</span>
+      {errorTabs.length > 0 && (
+        <div className="text-[11px] border rounded p-2 bg-destructive/10 border-destructive/30 space-y-1">
+          <p className="font-medium text-destructive">Sheets API rejected these writes:</p>
+          {errorTabs.map((e: any, i: number) => (
+            <div key={i} className="flex items-start gap-2">
+              <span className="font-medium">{e.sheet} · {e.tab}</span>
+              <span className="text-muted-foreground flex-1">{e.error}</span>
             </div>
           ))}
+          <p className="text-muted-foreground pt-1">
+            Common causes: property name has a special character the sheet tab doesn't; Google auth is out of scope; or the tab was manually renamed. Send this to the developer.
+          </p>
         </div>
       )}
+
+      <details className="text-[11px] text-muted-foreground">
+        <summary className="cursor-pointer hover:text-foreground">Advanced</summary>
+        <div className="pt-2 space-y-2">
+          <p>
+            <strong>Reset sync flags</strong> clears the per-row synced marker in the DB. Use this if the panel got out of sync with reality due to an older bug — the next Fix All will re-establish accurate flags. Nothing in Google Sheets is touched.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="w-full h-7 text-xs"
+            onClick={() => resetFlags.mutate()}
+            disabled={resetFlags.isPending}
+          >
+            {resetFlags.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+            Reset sync flags
+          </Button>
+        </div>
+      </details>
     </section>
   );
 }

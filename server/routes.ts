@@ -948,6 +948,29 @@ export async function registerRoutes(
     }
   });
 
+  // Admin: hard reset all syncedToSheets flags so the fast path is forced to
+  // reflect reality. Useful after historical bad flag data (from earlier bugs)
+  // is polluting the panel. The next /resync-sheets or /sync-status?deep=1
+  // will correctly repopulate the flags for rows that actually made it to the
+  // sheet. NOTHING is deleted from Sheets or the DB — only the flag column.
+  app.post("/api/admin/reset-sync-flags", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    try {
+      const allInv = await storage.getAllInvoices();
+      for (const inv of allInv) await storage.updateInvoiceSyncStatus(inv.id, "sheets", false);
+      const allCash = await storage.getAllCashTransactions();
+      for (const tx of allCash) await storage.updateCashTransactionSyncStatus(tx.id, "sheets", false);
+      const allCheck = await storage.getAllCheckTransactions();
+      for (const tx of allCheck) await storage.updateCheckTransactionSyncStatus(tx.id, "sheets", false);
+      console.log(`[reset-sync-flags] Cleared syncedToSheets on ${allInv.length} invoices, ${allCash.length} cash, ${allCheck.length} checks.`);
+      res.json({ ok: true, invoicesReset: allInv.length, cashReset: allCash.length, checksReset: allCheck.length });
+    } catch (e: any) {
+      console.error("[reset-sync-flags] failed:", e);
+      res.status(500).json({ error: e.message?.slice(0, 200) || "reset failed" });
+    }
+  });
+
   // Admin: sync-status endpoint. Two modes:
   //
   //   ?deep=0 (default) — fast path. Compares the DB `syncedToSheets` flag on
@@ -3739,7 +3762,7 @@ export async function registerRoutes(
   // ============================================================
 
   // Helper: rebuild ONE property tab in the Checks spreadsheet.
-  async function rebuildCheckSheetForProperty(propertyName: string): Promise<{ ok: boolean; reason?: string; rows?: number }> {
+  async function rebuildCheckSheetForProperty(propertyName: string): Promise<{ ok: boolean; reason?: string; rows?: number; wrote?: number; error?: string }> {
     if (!isGoogleEnabled()) return { ok: false, reason: "google-disabled" };
     if (!checkSheetsConfig?.spreadsheetId) return { ok: false, reason: "no-config" };
     const headers = [
@@ -3747,13 +3770,25 @@ export async function registerRoutes(
       "Check #", "Notes", "Deposited", "Deposited At", "Deposit Slip",
       "Submitted By", "Submitted At", "Record #", "Property Code",
     ];
-    await createSheetTab(checkSheetsConfig.spreadsheetId, propertyName, headers);
-    await updateSheetRange(checkSheetsConfig.spreadsheetId, `'${propertyName}'!A1`, [headers]);
-    await clearSheet(checkSheetsConfig.spreadsheetId, `'${propertyName}'!A2:Z`);
+    // 1) Ensure the tab exists. createSheetTab is tolerant of "already exists".
+    const tabId = await createSheetTab(checkSheetsConfig.spreadsheetId, propertyName, headers);
+    console.log(`[check-sheet-rebuild:${propertyName}] tab check → ${tabId === -1 ? "existed" : tabId ? "created" : "FAILED"}`);
+    // 2) Rewrite headers (defensive; no-op if already correct).
+    const hOk = await updateSheetRange(checkSheetsConfig.spreadsheetId, `'${propertyName}'!A1`, [headers]);
+    if (!hOk) {
+      console.error(`[check-sheet-rebuild:${propertyName}] Failed to write header row — tab may not exist or auth is wrong.`);
+      return { ok: false, reason: "header-write-failed", rows: 0, error: "Header write failed" };
+    }
+    // 3) Clear existing data rows.
+    const clOk = await clearSheet(checkSheetsConfig.spreadsheetId, `'${propertyName}'!A2:Z`);
+    if (!clOk) {
+      console.error(`[check-sheet-rebuild:${propertyName}] clearSheet failed.`);
+    }
 
     const all = (await storage.getAllCheckTransactions()).filter(c => c.property === propertyName);
     const sorted = [...all].sort((a, b) => a.date.localeCompare(b.date));
-    if (sorted.length === 0) return { ok: true, rows: 0 };
+    console.log(`[check-sheet-rebuild:${propertyName}] DB has ${sorted.length} check row(s) to write`);
+    if (sorted.length === 0) return { ok: true, rows: 0, wrote: 0 };
 
     const allUsers = await storage.getAllUsers();
     const userMap = new Map(allUsers.map(u => [u.id, u.displayName]));
@@ -3769,26 +3804,26 @@ export async function registerRoutes(
       String(c.recordNumber || ""),
       c.propertyCode || "",
     ]);
+    // 4) Bulk write. If this fails, DO NOT flag rows as synced.
     const writeOk = await updateSheetRange(
       checkSheetsConfig.spreadsheetId,
       `'${propertyName}'!A2`,
       rows,
     );
     if (!writeOk) {
-      // updateSheetRange swallows API errors and returns false. Surface that
-      // truthfully so callers (and the Sheet Sync Status panel) don't declare
-      // victory when nothing was actually written.
-      console.error(`[check-sheet-rebuild] Sheets API write FAILED for "${propertyName}" (${rows.length} rows). Leaving syncedToSheets=0.`);
-      return { ok: false, reason: "sheets-write-failed", rows: 0 };
+      console.error(`[check-sheet-rebuild:${propertyName}] Sheets API write FAILED for ${rows.length} row(s). Leaving syncedToSheets=0.`);
+      // Also reset any stale syncedToSheets=1 flags so the fast-path panel
+      // reflects reality — those rows are NOT actually in the sheet.
+      for (const c of sorted) {
+        try { await storage.updateCheckTransactionSyncStatus(c.id, "sheets", false); } catch {}
+      }
+      return { ok: false, reason: "sheets-write-failed", rows: 0, wrote: 0, error: `Sheets API rejected the batch write of ${rows.length} row(s). Check tab "${propertyName}" exists.` };
     }
-    // Only flag rows as synced after the batch write above actually succeeded.
-    // Previously this loop ran regardless, which is why the Sheet Sync Status
-    // panel could report "clean" even though 2 of 4 Trails End checks never
-    // reached the sheet.
+    console.log(`[check-sheet-rebuild:${propertyName}] Wrote ${rows.length} row(s) successfully.`);
     for (const c of sorted) {
       try { await storage.updateCheckTransactionSyncStatus(c.id, "sheets", true); } catch {}
     }
-    return { ok: true, rows: rows.length };
+    return { ok: true, rows: rows.length, wrote: rows.length };
   }
 
   app.post("/api/check-transactions", async (req, res) => {
