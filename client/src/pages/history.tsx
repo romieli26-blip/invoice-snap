@@ -48,6 +48,7 @@ const CASH_CATEGORY_LABELS: Record<string, string> = {
   bank_deposit: "Bank Deposit",
   item_purchased: "Item Purchased",
   contractor_pay: "Contractor Pay",
+  cc_tips: "CC Tips",
   check: "Check",
 };
 function formatCashCategory(cat: string | null | undefined): string {
@@ -1801,6 +1802,7 @@ export default function HistoryPage() {
                       <SelectItem value="bank_deposit">Bank Deposit</SelectItem>
                       <SelectItem value="item_purchased">Item Purchased</SelectItem>
                       <SelectItem value="contractor_pay">Contractor Pay</SelectItem>
+                      <SelectItem value="cc_tips">CC Tips</SelectItem>
                       <SelectItem value="other">Other</SelectItem>
                     </>
                   )}

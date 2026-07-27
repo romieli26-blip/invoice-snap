@@ -44,6 +44,10 @@ const SPENT_CATEGORIES = [
   { value: "bank_deposit", label: "Bank Deposit" },
   { value: "item_purchased", label: "Item Purchased" },
   { value: "contractor_pay", label: "Contractor Pay" },
+  // Cash paid out to cover credit-card tips (e.g. tip-out from the till to
+  // staff). Receipt photo is optional — same soft-confirm flow as
+  // contractor_pay — because tip payouts often don't have a physical slip.
+  { value: "cc_tips", label: "CC Tips" },
   { value: "other", label: "Other" },
 ];
 
@@ -144,7 +148,7 @@ export default function CashTransactionPage() {
     if (txType === "spent" && category === "other") {
       if (!description.trim()) return "Please describe what the cash was spent on.";
     }
-    if (txType === "spent" && !photoPath && category !== "contractor_pay") {
+    if (txType === "spent" && !photoPath && category !== "contractor_pay" && category !== "cc_tips") {
       return "Please take a photo or upload a receipt/document for this transaction.";
     }
 
@@ -156,7 +160,7 @@ export default function CashTransactionPage() {
   function handlePreSubmit(e: React.FormEvent) {
     e.preventDefault();
     // For contractor pay without photo, ask confirmation first
-    if (txType === "spent" && category === "contractor_pay" && !photoPath && !showNoReceiptConfirm) {
+    if (txType === "spent" && (category === "contractor_pay" || category === "cc_tips") && !photoPath && !showNoReceiptConfirm) {
       setShowNoReceiptConfirm(true);
       return;
     }
@@ -432,8 +436,8 @@ export default function CashTransactionPage() {
                   <div className="space-y-2">
                     <Label>
                       {category === "check" ? "Check Photo" : "Photo / Receipt"}
-                      {(category !== "contractor_pay") && <span className="text-destructive"> *</span>}
-                      {category === "contractor_pay" && <span className="text-muted-foreground text-xs ml-1">(optional)</span>}
+                      {(category !== "contractor_pay" && category !== "cc_tips") && <span className="text-destructive"> *</span>}
+                      {(category === "contractor_pay" || category === "cc_tips") && <span className="text-muted-foreground text-xs ml-1">(optional)</span>}
                     </Label>
                     {photoPreview ? (
                       <div className="relative rounded-lg overflow-hidden bg-muted">
