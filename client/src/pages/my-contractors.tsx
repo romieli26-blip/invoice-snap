@@ -124,36 +124,29 @@ export default function MyContractorsPage() {
     }
   }
 
-  // Fetch time reports for the selected contractor
-  const { data: timeReports, isLoading: reportsLoading } = useQuery<TimeReport[]>({
+  // Fetch time reports for the selected contractor. Response shape:
+  //   { reports: (TimeReport & { calculatedHours, rate, laborCost, isOffSite })[],
+  //     summary: { totalHours, onSiteHours, offSiteHours, estimatedPay, ... } }
+  // The server enriches each row because raw DB rows only have startTime /
+  // endTime / timeBlocks — no precomputed hours — and the pay rules are
+  // non-trivial (position rate > off-site rate > base rate).
+  const { data: timeReportData, isLoading: reportsLoading } = useQuery<any>({
     queryKey: ["/api/pm/contractors", selectedContractor?.id, "time-reports"],
     enabled: !!selectedContractor,
     queryFn: async () => {
-      if (!selectedContractor) return [];
+      if (!selectedContractor) return { reports: [], summary: null };
       const res = await apiRequest("GET", `/api/pm/contractors/${selectedContractor.id}/time-reports`);
       return res.json();
     },
   });
 
-  // Calculate total hours & pay for the selected contractor
-  const totals = (() => {
-    if (!timeReports || !selectedContractor) return { hours: 0, pay: 0, onSiteHours: 0, offSiteHours: 0 };
-    const base = parseFloat(selectedContractor.baseRate || "0");
-    const off = parseFloat(selectedContractor.offSiteRate || "0");
-    let hours = 0, onSiteHours = 0, offSiteHours = 0, pay = 0;
-    for (const r of timeReports) {
-      const h = parseFloat(r.totalHours || "0");
-      hours += h;
-      if (r.onSite) {
-        onSiteHours += h;
-        pay += h * base;
-      } else {
-        offSiteHours += h;
-        pay += h * off;
-      }
-    }
-    return { hours, pay, onSiteHours, offSiteHours };
-  })();
+  const timeReports: any[] = timeReportData?.reports || [];
+  const totals = {
+    hours: timeReportData?.summary?.totalHours ?? 0,
+    pay: timeReportData?.summary?.estimatedPay ?? 0,
+    onSiteHours: timeReportData?.summary?.onSiteHours ?? 0,
+    offSiteHours: timeReportData?.summary?.offSiteHours ?? 0,
+  };
 
   return (
     <LogoBackground>
@@ -373,12 +366,19 @@ export default function MyContractorsPage() {
                               <div className="text-sm font-medium">{r.property}</div>
                               <div className="text-xs text-muted-foreground">
                                 {r.date} · {r.startTime}–{r.endTime}
-                                {!r.onSite && <span className="ml-1 text-amber-600">(off-site)</span>}
+                                {r.isOffSite && <span className="ml-1 text-amber-600">(off-site)</span>}
                               </div>
                               {r.notes && <div className="text-xs text-muted-foreground mt-1 italic truncate">{r.notes}</div>}
                             </div>
-                            <div className="text-sm font-semibold whitespace-nowrap">
-                              {parseFloat(r.totalHours).toFixed(2)}h
+                            <div className="text-right whitespace-nowrap">
+                              <div className="text-sm font-semibold">
+                                {Number(r.calculatedHours ?? 0).toFixed(2)}h
+                              </div>
+                              {r.laborCost != null && (
+                                <div className="text-[10px] text-muted-foreground">
+                                  {Number(r.calculatedHours ?? 0).toFixed(2)}h × ${Number(r.rate ?? 0)} = ${Number(r.laborCost).toFixed(2)}
+                                </div>
+                              )}
                             </div>
                           </div>
                         </CardContent>

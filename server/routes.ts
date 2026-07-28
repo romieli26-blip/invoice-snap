@@ -2305,8 +2305,73 @@ export async function registerRoutes(
     // Restrict to time reports for PM's properties
     const allProps = await storage.getAllProperties();
     const pmPropNames = new Set(allProps.filter(p => pmPropIds.has(p.id)).map(p => p.name));
-    const filtered = isAdminRole(session.role) ? reports : reports.filter(r => pmPropNames.has(r.property));
-    res.json(filtered);
+    const visible = isAdminRole(session.role) ? reports : reports.filter(r => pmPropNames.has(r.property));
+
+    // Enrich each report with computed hours + labor cost, using the same
+    // algorithm as the admin Pay Calculator (computeWorkforceReport). This
+    // fixes the "NaNh" display + $0.00 totals bug: the raw DB rows only
+    // carry startTime/endTime (or timeBlocks JSON), never a totalHours
+    // column, so the client can't compute hours from just the JSON body
+    // without duplicating this logic — and duplicating it would drift.
+    const contractor = await storage.getUser(contractorId);
+    const baseRate = parseFloat((contractor as any)?.baseRate || "0");
+    const offSiteRate = parseFloat((contractor as any)?.offSiteRate || "0");
+    const homeProperty = (contractor as any)?.homeProperty || null;
+
+    let totalHours = 0;
+    let onSiteHours = 0;
+    let offSiteHours = 0;
+    let estimatedPay = 0;
+
+    const enriched = visible.map(r => {
+      let hours = 0;
+      let blocks: { start: string; end: string }[] = [];
+      try { blocks = r.timeBlocks ? JSON.parse(r.timeBlocks) : []; } catch {}
+      if (blocks.length > 0) {
+        hours = blocks.reduce((sum, b) => {
+          const [bsh, bsm] = b.start.split(":").map(Number);
+          const [beh, bem] = b.end.split(":").map(Number);
+          return sum + ((beh * 60 + bem) - (bsh * 60 + bsm)) / 60;
+        }, 0);
+      } else {
+        const [sh, sm] = (r.startTime || "0:0").split(":").map(Number);
+        const [eh, em] = (r.endTime || "0:0").split(":").map(Number);
+        hours = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
+      }
+      // Off-site = worked at a property that is NOT the contractor's home base.
+      // Matches the Pay Calculator logic; we ignore `allowOffSite` here
+      // because if the report exists we treat it as legitimate.
+      const isOffSite = homeProperty ? r.property !== homeProperty : false;
+      const rate = r.positionRate
+        ? parseFloat(r.positionRate)
+        : (isOffSite ? offSiteRate : baseRate);
+      const laborCost = hours * rate;
+
+      totalHours += hours;
+      if (isOffSite) offSiteHours += hours; else onSiteHours += hours;
+      estimatedPay += laborCost;
+
+      return {
+        ...r,
+        calculatedHours: parseFloat(hours.toFixed(2)),
+        rate,
+        isOffSite,
+        laborCost: parseFloat(laborCost.toFixed(2)),
+      };
+    });
+
+    res.json({
+      reports: enriched,
+      summary: {
+        totalHours: parseFloat(totalHours.toFixed(2)),
+        onSiteHours: parseFloat(onSiteHours.toFixed(2)),
+        offSiteHours: parseFloat(offSiteHours.toFixed(2)),
+        estimatedPay: parseFloat(estimatedPay.toFixed(2)),
+        baseRate,
+        offSiteRate,
+        homeProperty,
+      },
+    });
   });
 
   // Helper: load the time-tracking spreadsheet config (spreadsheetId etc.)
