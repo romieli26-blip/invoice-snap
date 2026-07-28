@@ -1785,8 +1785,14 @@ export default function HistoryPage() {
               <Select value={editCashCategory} onValueChange={setEditCashCategory}>
                 <SelectTrigger data-testid="select-cash-category"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {/* Show categories matching the current transaction's direction. */}
-                  {(editingCashTx && ["rental_income","check","washer","dryer","vending","store_items","eod_cash_on_hand"].includes(editingCashTx.category)) ? (
+                  {/* Show categories matching the current transaction's
+                      direction. The DB stores the direction on `type`
+                      ("income" | "spent") — use that, not the category name,
+                      because some values ("other", "check") exist in BOTH
+                      lists and matching by name alone picked the wrong branch
+                      for ambiguous cases (e.g. an Income row with category
+                      "Other" would surface the Spent list). */}
+                  {(editingCashTx?.type === "income") ? (
                     <>
                       <SelectItem value="rental_income">Rental Income</SelectItem>
                       <SelectItem value="check">Check</SelectItem>
