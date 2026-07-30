@@ -552,12 +552,31 @@ export default function HistoryPage() {
     if (propertyFilter !== "all" && item.property !== propertyFilter) return false;
     return true;
   }
-  const filteredInvoices = useMemo(() => invoices?.filter(matchesFilter), [invoices, userFilter, propertyFilter]);
-  const filteredCashTxs = useMemo(() => cashTxs?.filter(matchesFilter), [cashTxs, userFilter, propertyFilter]);
-  const filteredCheckTxs = useMemo(() => checkTxs?.filter(matchesFilter), [checkTxs, userFilter, propertyFilter]);
-  const filteredTimeReports = useMemo(() => timeReports?.filter(matchesFilter), [timeReports, userFilter, propertyFilter]);
-  const filteredWorkCredits = useMemo(() => workCredits?.filter(matchesFilter), [workCredits, userFilter, propertyFilter]);
-  const filteredFlatRates = useMemo(() => flatRates?.filter(matchesFilter), [flatRates, userFilter, propertyFilter]);
+  // Sort transactions so the most recent record is always on top. Primary
+  // key is submittedAt / createdAt (whichever the row carries); secondary
+  // key is recordNumber. Every list on the dashboard uses this order so the
+  // property manager sees the same sequence as their spreadsheet (which
+  // also grows downward in time — the last row IS the most recent).
+  const sortByRecent = <T extends { submittedAt?: string | null; createdAt?: string | null; date?: string | null; recordNumber?: number | null }>(rows: T[] | undefined): T[] | undefined => {
+    if (!rows) return rows;
+    return [...rows].sort((a, b) => {
+      const at = String(a.submittedAt || a.createdAt || a.date || "");
+      const bt = String(b.submittedAt || b.createdAt || b.date || "");
+      if (at !== bt) return bt.localeCompare(at); // most recent first
+      // Tie-break by recordNumber so two rows submitted the same second
+      // still order deterministically.
+      const ar = a.recordNumber ?? 0;
+      const br = b.recordNumber ?? 0;
+      return br - ar;
+    });
+  };
+
+  const filteredInvoices = useMemo(() => sortByRecent(invoices?.filter(matchesFilter)), [invoices, userFilter, propertyFilter]);
+  const filteredCashTxs = useMemo(() => sortByRecent(cashTxs?.filter(matchesFilter)), [cashTxs, userFilter, propertyFilter]);
+  const filteredCheckTxs = useMemo(() => sortByRecent(checkTxs?.filter(matchesFilter)), [checkTxs, userFilter, propertyFilter]);
+  const filteredTimeReports = useMemo(() => sortByRecent(timeReports?.filter(matchesFilter)), [timeReports, userFilter, propertyFilter]);
+  const filteredWorkCredits = useMemo(() => sortByRecent(workCredits?.filter(matchesFilter)), [workCredits, userFilter, propertyFilter]);
+  const filteredFlatRates = useMemo(() => sortByRecent(flatRates?.filter(matchesFilter)), [flatRates, userFilter, propertyFilter]);
 
   // Cash transaction edit state
   // Full-text "details" modal. Clicking a truncated description opens this
@@ -1073,9 +1092,14 @@ export default function HistoryPage() {
                       {inv.purpose}
                     </p>
                     <div className="flex items-center gap-2 mt-1 flex-wrap">
-                      {inv.recordNumber && (
+                      {/* Show the property-scoped record identifier (e.g.
+                          CR-99) so the badge matches the Drive filename and
+                          the spreadsheet's Property Code column. Fall back to
+                          the legacy #<recordNumber> for rows without a
+                          propertyCode assigned. */}
+                      {((inv as any).propertyCode || inv.recordNumber) && (
                         <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 font-mono">
-                          #{inv.recordNumber}
+                          {(inv as any).propertyCode || `#${inv.recordNumber}`}
                         </Badge>
                       )}
                       {inv.property && (
@@ -1209,9 +1233,14 @@ export default function HistoryPage() {
                               {tx.description}
                             </span>
                           )}
-                          {tx.recordNumber && (
+                          {/* Show propertyCode (e.g. CR-71) instead of the
+                              internal record counter so the badge matches the
+                              Drive filename and the sheet's Property Code
+                              column. Falls back to #<recordNumber> for legacy
+                              rows that never got a propertyCode. */}
+                          {((tx as any).propertyCode || tx.recordNumber) && (
                             <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 font-mono">
-                              #{tx.recordNumber}
+                              {(tx as any).propertyCode || `#${tx.recordNumber}`}
                             </Badge>
                           )}
                           {(user?.role === "admin" || user?.role === "super_admin") && tx.submittedBy && (
