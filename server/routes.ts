@@ -1391,14 +1391,32 @@ export async function registerRoutes(
   const adminManualVersionsDir = () => path.resolve(dataDir, "admin-manual-versions");
   const contractorManualActivePath = () => path.resolve(dataDir, "contractor-manual.pdf");
   const contractorManualVersionsDir = () => path.resolve(dataDir, "contractor-manual-versions");
+  // NEW: dedicated Property Manager Manual slot. This is separate from the
+  // Playbook (which is a live-updated policy doc opened via the dashboard
+  // Playbook button). The Manual is the onboarding walkthrough attached to
+  // welcome emails. Historically they were the same PDF; splitting them
+  // means admins can revise each on its own cadence.
+  const pmManualActivePath = () => path.resolve(dataDir, "pm-manual.pdf");
+  const pmManualVersionsDir = () => path.resolve(dataDir, "pm-manual-versions");
 
   // Pick the manual filename + path that matches a given role. Returns null if no
   // manual is available on disk yet for that role.
   function manualForRole(role: string): { filename: string; path: string } | null {
     let active: string, friendly: string;
     if (role === "manager") {
-      active = playbookActivePath();
+      // Prefer the dedicated PM Manual slot. Fall back to the Playbook file
+      // for backward compatibility with the old single-file setup, so an
+      // instance that hasn't uploaded a Manual yet still emails *something*.
+      active = pmManualActivePath();
       friendly = "Property-Manager-Manual.pdf";
+      if (!fs.existsSync(active)) {
+        const fallback = playbookActivePath();
+        if (fs.existsSync(fallback)) {
+          return { filename: friendly, path: fallback };
+        }
+        return null;
+      }
+      return { filename: friendly, path: active };
     } else if (role === "admin" || role === "super_admin") {
       active = adminManualActivePath();
       friendly = "Admin-Manual.pdf";
@@ -1557,6 +1575,12 @@ export async function registerRoutes(
   app.post("/api/admin/contractor-manual", upload.single("manual"), fixUploadedExtension, async (req: any, res) =>
     handleManualUpload(req, res, contractorManualActivePath, contractorManualVersionsDir, "contractor-manual"));
 
+  // NEW: dedicated Property Manager Manual upload. Distinct from the
+  // Playbook (which uses /api/admin/playbook). The Manual is what gets
+  // attached to a new PM's welcome email.
+  app.post("/api/admin/pm-manual", upload.single("manual"), fixUploadedExtension, async (req: any, res) =>
+    handleManualUpload(req, res, pmManualActivePath, pmManualVersionsDir, "pm-manual"));
+
   // Metadata endpoint so the admin panel can show which manuals are loaded.
   app.get("/api/admin/manuals-info", async (req, res) => {
     const session = await requireAdmin(req, res);
@@ -1571,7 +1595,8 @@ export async function registerRoutes(
       };
     }
     res.json({
-      playbook: infoFor(playbookActivePath()),       // PM
+      playbook: infoFor(playbookActivePath()),       // PM Playbook (dashboard button)
+      pmManual: infoFor(pmManualActivePath()),        // PM Manual (welcome-email attachment)
       adminManual: infoFor(adminManualActivePath()),
       contractorManual: infoFor(contractorManualActivePath()),
     });
@@ -2033,8 +2058,7 @@ export async function registerRoutes(
           }
 
           const tutorialBlock = videoAttachment
-            ? `<p>The tutorial video is <b>attached to this email</b>. Open the attachment to watch it on any device.</p>
-               <p style="color:#666;font-size:12px;">Can't see the attachment? You can also <a href="${videoUrl}" style="color:#01696F;">watch it online</a> (requires a Google account that has been granted access).</p>`
+            ? `<p>The tutorial video is <b>attached to this email</b>. Open the attachment to watch it on any device.</p>`
             : `<p>Watch this short video to learn how to install and use the app on your mobile device:</p>
                <p style="text-align:center;"><a href="${videoUrl}" style="display:inline-block;background:#01696F;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold;">Watch Tutorial Video</a></p>
                <p style="color:#666;font-size:12px;text-align:center;">If the link asks for permission, contact your administrator to be added.</p>`;

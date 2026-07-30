@@ -618,6 +618,8 @@ export default function AdminPage() {
         {/* ---- PROPERTY MANAGER PLAYBOOK SECTION ---- */}
         <PlaybookAdminSection />
 
+        <RoleManualsSection />
+
         {/* ---- USERS SECTION ---- */}
         <section className="space-y-3">
           <div className="flex items-center justify-between">
@@ -2004,5 +2006,141 @@ function DriveCleanupPanel() {
         </div>
       )}
     </section>
+  );
+}
+
+// RoleManualsSection — one card per role manual (PM Manual, Admin Manual,
+// Contractor Manual). Each shows the currently-loaded file (with size + last
+// updated) and a Replace button that uploads a new PDF. New users onboarded
+// after upload get the latest file attached to their welcome email.
+//
+// The PM Manual is intentionally separate from the Playbook: the Playbook
+// (uploaded above) is the live policy document opened by the PM dashboard
+// button, while the Manual is the onboarding walkthrough emailed once at
+// account creation.
+function RoleManualsSection() {
+  const { data: info, refetch } = useQuery<any>({
+    queryKey: ["/api/admin/manuals-info"],
+  });
+
+  return (
+    <section className="space-y-3">
+      <h2 className="text-base font-semibold flex items-center gap-2">
+        <BookOpen className="w-4 h-4 text-amber-600" />
+        Role Manuals (welcome-email attachments)
+      </h2>
+      <p className="text-xs text-muted-foreground">
+        Each newly-onboarded user is emailed the manual that matches their role.
+        Uploading a new PDF here takes effect immediately for future accounts;
+        past emails are not resent.
+      </p>
+      <div className="grid grid-cols-1 gap-3">
+        <RoleManualCard
+          label="Property Manager Manual"
+          description="Attached to every property manager's welcome email."
+          endpoint="/api/admin/pm-manual"
+          info={info?.pmManual}
+          onDone={refetch}
+        />
+        <RoleManualCard
+          label="Admin Manual"
+          description="Attached to every admin / super-admin welcome email."
+          endpoint="/api/admin/admin-manual"
+          info={info?.adminManual}
+          onDone={refetch}
+        />
+        <RoleManualCard
+          label="Contractor Manual"
+          description="Attached to every contractor welcome email."
+          endpoint="/api/admin/contractor-manual"
+          info={info?.contractorManual}
+          onDone={refetch}
+        />
+      </div>
+    </section>
+  );
+}
+
+function RoleManualCard({
+  label,
+  description,
+  endpoint,
+  info,
+  onDone,
+}: {
+  label: string;
+  description: string;
+  endpoint: string;
+  info: { sizeMB?: number; updatedAt?: string } | null | undefined;
+  onDone: () => void;
+}) {
+  const { toast } = useToast();
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (!f.name.toLowerCase().endsWith(".pdf") && f.type !== "application/pdf") {
+      toast({ title: "Wrong file type", description: "Please choose a PDF.", variant: "destructive" });
+      return;
+    }
+    if (f.size > 10 * 1024 * 1024) {
+      toast({ title: "File too large", description: "Maximum 10 MB.", variant: "destructive" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("manual", f);
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE}${endpoint}`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body: fd,
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "Upload failed");
+      toast({ title: `${label} updated`, description: "Future welcome emails will attach this version." });
+      onDone();
+    } catch (err: any) {
+      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  return (
+    <Card>
+      <CardContent className="py-3 flex items-start gap-3">
+        <div className="w-9 h-9 rounded-lg bg-amber-100 dark:bg-amber-950/40 flex items-center justify-center flex-shrink-0">
+          <FileText className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium">{label}</p>
+          <p className="text-xs text-muted-foreground">{description}</p>
+          {info?.sizeMB != null ? (
+            <p className="text-xs text-muted-foreground mt-1">
+              Loaded: {info.sizeMB} MB · Updated {info.updatedAt ? new Date(info.updatedAt).toLocaleString() : "—"}
+            </p>
+          ) : (
+            <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">Not uploaded yet.</p>
+          )}
+        </div>
+        <div className="flex-shrink-0">
+          <input ref={fileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={onFile} />
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 text-xs"
+            onClick={() => fileRef.current?.click()}
+            disabled={busy}
+          >
+            {busy ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Upload className="w-3 h-3 mr-1" />}
+            {info?.sizeMB != null ? "Replace" : "Upload"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
