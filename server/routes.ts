@@ -767,13 +767,26 @@ export async function registerRoutes(
   // Walks every property's invoices + cash transactions in date order and labels
   // them 1..N (or PREFIX-1..PREFIX-N if the property has a code). Idempotent:
   // rows that already have a property_code are left untouched.
+  // Normalise every transaction's propertyCode so every row uses the
+  // property's short-code prefix (e.g. CR-99). Handles legacy bare-number
+  // codes ("21" -> "CR-21") and missing codes. Existing well-formed codes
+  // never change. Pair with POST /api/admin/resync-sheets afterwards to
+  // push the new codes to Google Sheets.
   app.post("/api/admin/backfill-property-codes", async (req, res) => {
     const session = await requireAdmin(req, res);
     if (!session) return;
     const dryRun = req.body?.dryRun === true;
     try {
       const updates = await storage.backfillPropertyCodes(dryRun);
-      res.json({ ok: true, dryRun, updates: updates.length, sample: updates.slice(0, 20) });
+      res.json({
+        ok: true,
+        dryRun,
+        updates: updates.length,
+        byProperty: updates.reduce((acc: Record<string, number>, u) => {
+          acc[u.property] = (acc[u.property] || 0) + 1; return acc;
+        }, {}),
+        sample: updates.slice(0, 40),
+      });
     } catch (e: any) {
       console.error("[backfill] failed:", e);
       res.status(500).json({ error: e.message?.slice(0, 200) || "backfill failed" });

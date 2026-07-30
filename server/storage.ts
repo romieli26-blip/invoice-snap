@@ -316,7 +316,7 @@ export interface IStorage {
   updatePropertyMarketingUrl(id: number, marketingUrl: string | null): Promise<void>;
   updatePropertyMasterSheetUrl(id: number, masterSheetUrl: string | null): Promise<void>;
   getNextPropertyCode(propertyName: string): Promise<string>;
-  backfillPropertyCodes(dryRun: boolean): Promise<Array<{ table: string; id: number; property: string; newCode: string }>>;
+  backfillPropertyCodes(dryRun: boolean): Promise<Array<{ table: string; id: number; property: string; oldCode: string | null; newCode: string }>>;
   // User-property assignment methods
   getPropertiesForUser(userId: number): Promise<Property[]>;
   setUserProperties(userId: number, propertyIds: number[]): Promise<void>;
@@ -478,45 +478,99 @@ export class DatabaseStorage implements IStorage {
    * property has a code). Idempotent — rows that already have a property_code
    * are skipped. Returns the list of changes that were (or would be) applied.
    */
-  async backfillPropertyCodes(dryRun: boolean): Promise<Array<{ table: string; id: number; property: string; newCode: string }>> {
+  // Normalize propertyCode on every transaction so every row uses the
+  // property's short-code prefix (e.g. "CR-99"). Handles three cases:
+  //
+  //   1) Correctly-formatted code (matches the property's prefix, e.g.
+  //      "CR-99" for Cedar Ridge)                                    -> untouched
+  //   2) Bare-number code (e.g. "21" without a prefix), left behind
+  //      by early edits before per-property prefixes existed          -> prefix
+  //      added in place ("21" -> "CR-21"), UNLESS that code is
+  //      already taken by another row, in which case the row gets
+  //      bumped to the next free number.
+  //   3) No code at all (null / empty)                                -> new
+  //      code assigned as the next free number for the property.
+  //
+  // Existing well-formed codes never change — that would desync the
+  // Drive filenames and the sheet's Property Code column, which the whole
+  // audit trail depends on.
+  //
+  // Covers all three transaction tables: invoices, cash_transactions,
+  // check_transactions.
+  async backfillPropertyCodes(dryRun: boolean): Promise<Array<{ table: string; id: number; property: string; oldCode: string | null; newCode: string }>> {
     const allProps = await this.getAllProperties();
-    const updates: Array<{ table: string; id: number; property: string; newCode: string }> = [];
+    const updates: Array<{ table: string; id: number; property: string; oldCode: string | null; newCode: string }> = [];
 
     for (const prop of allProps) {
       const propName = prop.name;
-      const codePrefix = (prop as any).code as string | null;
+      const codePrefix = ((prop as any).code as string | null) || null;
+      if (!codePrefix) continue; // Can't normalise without a prefix.
 
       const invs = sqlite.prepare("SELECT id, purchase_date, created_at, property_code FROM invoices WHERE property = ?").all(propName) as Array<any>;
       const cashes = sqlite.prepare("SELECT id, date, created_at, property_code FROM cash_transactions WHERE property = ?").all(propName) as Array<any>;
+      const checks = sqlite.prepare("SELECT id, date, created_at, property_code FROM check_transactions WHERE property = ?").all(propName) as Array<any>;
 
-      type Row = { table: "invoices" | "cash_transactions"; id: number; date: string; createdAt: string; propertyCode: string | null };
+      type Row = { table: "invoices" | "cash_transactions" | "check_transactions"; id: number; date: string; createdAt: string; propertyCode: string | null };
       const merged: Row[] = [
         ...invs.map((r: any): Row => ({ table: "invoices", id: r.id, date: r.purchase_date, createdAt: r.created_at, propertyCode: r.property_code })),
         ...cashes.map((r: any): Row => ({ table: "cash_transactions", id: r.id, date: r.date, createdAt: r.created_at, propertyCode: r.property_code })),
+        ...checks.map((r: any): Row => ({ table: "check_transactions", id: r.id, date: r.date, createdAt: r.created_at, propertyCode: r.property_code })),
       ].sort((a, b) => {
         if (a.date !== b.date) return a.date < b.date ? -1 : 1;
         return a.createdAt < b.createdAt ? -1 : 1;
       });
 
+      // Track which final codes are taken so bare-number promotion doesn't
+      // create a duplicate.
+      const taken = new Set<string>();
       let maxN = 0;
       for (const r of merged) {
-        const m = r.propertyCode?.match(/(\d+)\s*$/);
+        if (!r.propertyCode) continue;
+        // Perfect match: "CR-99"
+        if (r.propertyCode.startsWith(`${codePrefix}-`)) {
+          taken.add(r.propertyCode);
+        }
+        const m = r.propertyCode.match(/(\d+)\s*$/);
         if (m) maxN = Math.max(maxN, parseInt(m[1], 10));
       }
-      let nextN = maxN + 1;
+
+      const setPropertyCode = (table: Row["table"], id: number, newCode: string) => {
+        if (dryRun) return;
+        if (table === "invoices") {
+          db.update(invoices).set({ propertyCode: newCode } as any).where(eq(invoices.id, id)).run();
+        } else if (table === "cash_transactions") {
+          db.update(cashTransactions).set({ propertyCode: newCode } as any).where(eq(cashTransactions.id, id)).run();
+        } else {
+          db.update(checkTransactions).set({ propertyCode: newCode } as any).where(eq(checkTransactions.id, id)).run();
+        }
+      };
+      const nextFreeCode = () => {
+        while (taken.has(`${codePrefix}-${maxN + 1}`)) maxN++;
+        maxN++;
+        const c = `${codePrefix}-${maxN}`;
+        taken.add(c);
+        return c;
+      };
 
       for (const r of merged) {
-        if (r.propertyCode) continue;
-        const newCode = codePrefix ? `${codePrefix}-${nextN}` : String(nextN);
-        updates.push({ table: r.table, id: r.id, property: propName, newCode });
-        if (!dryRun) {
-          if (r.table === "invoices") {
-            db.update(invoices).set({ propertyCode: newCode } as any).where(eq(invoices.id, r.id)).run();
-          } else {
-            db.update(cashTransactions).set({ propertyCode: newCode } as any).where(eq(cashTransactions.id, r.id)).run();
-          }
+        const old = r.propertyCode;
+
+        // Case 1: already correctly formatted — skip.
+        if (old && old.startsWith(`${codePrefix}-`)) continue;
+
+        // Case 2: bare-number legacy code, e.g. "21".
+        if (old && /^\d+$/.test(old.trim())) {
+          const candidate = `${codePrefix}-${old.trim()}`;
+          const newCode = taken.has(candidate) ? nextFreeCode() : (taken.add(candidate), candidate);
+          updates.push({ table: r.table, id: r.id, property: propName, oldCode: old, newCode });
+          setPropertyCode(r.table, r.id, newCode);
+          continue;
         }
-        nextN++;
+
+        // Case 3: null / empty / weird format — assign the next free code.
+        const newCode = nextFreeCode();
+        updates.push({ table: r.table, id: r.id, property: propName, oldCode: old, newCode });
+        setPropertyCode(r.table, r.id, newCode);
       }
     }
 
@@ -532,8 +586,11 @@ export class DatabaseStorage implements IStorage {
     // un-prefixed ("3") values from past data.
     const invRows = sqlite.prepare("SELECT property_code FROM invoices WHERE property = ?").all(propertyName) as Array<{ property_code: string | null }>;
     const cashRows = sqlite.prepare("SELECT property_code FROM cash_transactions WHERE property = ?").all(propertyName) as Array<{ property_code: string | null }>;
+    // Include checks in the ceiling calculation so new checks never collide
+    // with existing invoice/cash codes for the same property.
+    const checkRows = sqlite.prepare("SELECT property_code FROM check_transactions WHERE property = ?").all(propertyName) as Array<{ property_code: string | null }>;
     let maxN = 0;
-    for (const row of [...invRows, ...cashRows]) {
+    for (const row of [...invRows, ...cashRows, ...checkRows]) {
       const raw = row.property_code;
       if (!raw) continue;
       const m = String(raw).match(/(\d+)\s*$/);

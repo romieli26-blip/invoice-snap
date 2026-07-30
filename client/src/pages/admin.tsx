@@ -1718,6 +1718,35 @@ function SyncStatusPanel() {
       toast({ title: "Reset failed", description: e.message || "Error", variant: "destructive" }),
   });
 
+  // Normalise every transaction's property code (e.g. bare "21" -> "CR-21")
+  // so the badge in the dashboard, the Drive filename, and the sheet's
+  // Property Code column always match. Two-step flow so admins never wonder
+  // what a click just changed: first a dry-run preview, then Apply.
+  const backfillPreview = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/backfill-property-codes", { dryRun: true });
+      return res.json();
+    },
+    onError: (e: any) =>
+      toast({ title: "Preview failed", description: e.message || "Error", variant: "destructive" }),
+  });
+  const backfillApply = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/backfill-property-codes", { dryRun: false });
+      return res.json();
+    },
+    onSuccess: async (r: any) => {
+      toast({
+        title: "Record IDs normalised",
+        description: `Updated ${r.updates} row(s). Click Fix All next to push the new codes to Google Sheets.`,
+      });
+      backfillPreview.reset();
+      await runDeepVerify();
+    },
+    onError: (e: any) =>
+      toast({ title: "Normalise failed", description: e.message || "Error", variant: "destructive" }),
+  });
+
   const deepMismatches = deepResult?.deepMismatches || [];
   const hasDeepDrift = deepMismatches.length > 0;
   const clean = !verifying && deepResult != null && !hasDeepDrift;
@@ -1816,6 +1845,68 @@ function SyncStatusPanel() {
               {resetFlags.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
               Reset sync flags
             </Button>
+          </div>
+
+          <div className="space-y-2">
+            <p>
+              <strong>Normalise record IDs</strong> makes sure every transaction shows a property-scoped code (e.g. <code>CR-99</code>) instead of a bare number left behind by early edits. Existing well-formed codes are never changed — the Drive filenames and sheet columns keep pointing at the same rows. After running, click <strong>Fix All</strong> above to push the new codes to Google Sheets.
+            </p>
+            {!backfillPreview.data && !backfillApply.isPending && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full h-7 text-xs"
+                onClick={() => backfillPreview.mutate()}
+                disabled={backfillPreview.isPending}
+              >
+                {backfillPreview.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+                Preview changes
+              </Button>
+            )}
+            {backfillPreview.data && (
+              <div className="space-y-2 border rounded p-2 bg-muted/40">
+                <p className="text-[11px]">
+                  Would update <strong>{backfillPreview.data.updates}</strong> row(s){" "}
+                  {backfillPreview.data.updates > 0 && (
+                    <>across{" "}
+                      {Object.entries(backfillPreview.data.byProperty || {}).map(([p, n]: any, i, arr) => (
+                        <span key={p}>{i > 0 ? ", " : ""}<strong>{p}</strong> ({n})</span>
+                      ))}
+                    </>
+                  )}.
+                </p>
+                {(backfillPreview.data.sample || []).length > 0 && (
+                  <div className="text-[11px] max-h-32 overflow-auto space-y-0.5">
+                    {backfillPreview.data.sample.map((u: any, i: number) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <span className="font-mono text-muted-foreground">{u.table.split("_")[0]}·#{u.id}</span>
+                        <span className="font-mono text-muted-foreground">{u.oldCode ?? "—"}</span>
+                        <span className="text-muted-foreground">→</span>
+                        <span className="font-mono">{u.newCode}</span>
+                      </div>
+                    ))}
+                    {backfillPreview.data.updates > backfillPreview.data.sample.length && (
+                      <p className="text-muted-foreground italic">… and {backfillPreview.data.updates - backfillPreview.data.sample.length} more.</p>
+                    )}
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-2">
+                  <Button size="sm" variant="outline" className="h-7 text-xs"
+                    onClick={() => backfillPreview.reset()}
+                    disabled={backfillApply.isPending}
+                  >
+                    Cancel
+                  </Button>
+                  <Button size="sm" className="h-7 text-xs"
+                    onClick={() => backfillApply.mutate()}
+                    disabled={backfillApply.isPending || backfillPreview.data.updates === 0}
+                  >
+                    {backfillApply.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+                    Apply
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </details>
