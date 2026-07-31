@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
-import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, ChevronDown, DollarSign, Clock, UserPlus, UsersRound, Wallet, BookOpen, Megaphone, Sheet, KeyRound } from "lucide-react";
+import { Camera, FileText, LogOut, Users, Download, CreditCard, Banknote, Building2, X, Trash2, Pencil, Loader2, ChevronLeft, ChevronRight, ChevronDown, DollarSign, Clock, UserPlus, UsersRound, Wallet, BookOpen, Megaphone, Sheet, KeyRound, Coins, Gauge } from "lucide-react";
 import { apiRequest, queryClient, getAuthToken } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
@@ -309,6 +309,164 @@ function MasterSheetButton({ role, homeProperty, compact }: { role: string | und
                 >
                   <span className="font-medium">{p.name}</span>
                   <span className="text-xs text-muted-foreground truncate max-w-[60%]">{p.masterSheetUrl}</span>
+                </a>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// Vending / Washer / Dryer button — same access model as MasterSheetButton.
+// Opens the property's vending / washer / dryer tracking sheet. Purple
+// palette so it's visually distinct from Marketing (orange) and Master Sheet
+// (blue) while staying in the same button family.
+function VendingButton({ role, homeProperty, compact }: { role: string | undefined; homeProperty?: string | null; compact?: boolean }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const eligible = role === "manager" || role === "admin" || role === "super_admin";
+  const isAdmin = role === "admin" || role === "super_admin";
+  const { data: properties } = useQuery<any[]>({
+    queryKey: ["/api/properties"],
+    enabled: eligible,
+  });
+  if (!eligible || !properties) return null;
+
+  const scoped = isAdmin
+    ? properties
+    : (homeProperty ? properties.filter(p => p.name === homeProperty) : []);
+  const withUrl = scoped.filter(p => !!p.vendingUrl);
+  if (withUrl.length === 0) return null;
+
+  const handleClick = () => {
+    if (withUrl.length === 1) {
+      window.open(withUrl[0].vendingUrl, "_blank", "noopener,noreferrer");
+    } else {
+      setPickerOpen(true);
+    }
+  };
+
+  return (
+    <>
+      <Button
+        className={compact
+          ? "w-full h-16 text-sm gap-1.5 bg-purple-600 hover:bg-purple-700 text-white flex-col leading-tight"
+          : "w-full h-12 text-sm gap-1.5 bg-purple-600 hover:bg-purple-700 text-white"}
+        onClick={handleClick}
+        data-testid="button-vending"
+      >
+        <Coins className={compact ? "w-5 h-5" : "w-4 h-4"} />
+        <span className="text-center">Vending / Washer / Dryer</span>
+      </Button>
+      {pickerOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+          onClick={() => setPickerOpen(false)}
+        >
+          <div className="bg-card rounded-lg max-w-md w-full p-5 space-y-3" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-lg bg-purple-100 dark:bg-purple-950/40 flex items-center justify-center">
+                  <Coins className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                </div>
+                <h3 className="font-semibold">Vending / Washer / Dryer</h3>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => setPickerOpen(false)}>
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">Choose a property:</p>
+            <div className="space-y-2">
+              {withUrl.map(p => (
+                <a
+                  key={p.id}
+                  href={p.vendingUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-md border hover:bg-accent text-sm"
+                  onClick={() => setPickerOpen(false)}
+                >
+                  <span className="font-medium">{p.name}</span>
+                  <span className="text-xs text-muted-foreground truncate max-w-[60%]">{p.vendingUrl}</span>
+                </a>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// Meter Reading button — opens a monthly utility-meter tracking sheet.
+// Teal palette (deeper than the app's primary teal to remain distinct).
+function MeterReadingButton({ role, homeProperty, compact }: { role: string | undefined; homeProperty?: string | null; compact?: boolean }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const eligible = role === "manager" || role === "admin" || role === "super_admin";
+  const isAdmin = role === "admin" || role === "super_admin";
+  const { data: properties } = useQuery<any[]>({
+    queryKey: ["/api/properties"],
+    enabled: eligible,
+  });
+  if (!eligible || !properties) return null;
+
+  const scoped = isAdmin
+    ? properties
+    : (homeProperty ? properties.filter(p => p.name === homeProperty) : []);
+  const withUrl = scoped.filter(p => !!p.meterReadingUrl);
+  if (withUrl.length === 0) return null;
+
+  const handleClick = () => {
+    if (withUrl.length === 1) {
+      window.open(withUrl[0].meterReadingUrl, "_blank", "noopener,noreferrer");
+    } else {
+      setPickerOpen(true);
+    }
+  };
+
+  return (
+    <>
+      <Button
+        className={compact
+          ? "w-full h-16 text-sm gap-1.5 bg-teal-700 hover:bg-teal-800 text-white flex-col leading-tight"
+          : "w-full h-12 text-sm gap-1.5 bg-teal-700 hover:bg-teal-800 text-white"}
+        onClick={handleClick}
+        data-testid="button-meter-reading"
+      >
+        <Gauge className={compact ? "w-5 h-5" : "w-4 h-4"} />
+        Meter Reading
+      </Button>
+      {pickerOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+          onClick={() => setPickerOpen(false)}
+        >
+          <div className="bg-card rounded-lg max-w-md w-full p-5 space-y-3" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-lg bg-teal-100 dark:bg-teal-950/40 flex items-center justify-center">
+                  <Gauge className="w-4 h-4 text-teal-700 dark:text-teal-400" />
+                </div>
+                <h3 className="font-semibold">Meter Reading</h3>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => setPickerOpen(false)}>
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">Choose a property:</p>
+            <div className="space-y-2">
+              {withUrl.map(p => (
+                <a
+                  key={p.id}
+                  href={p.meterReadingUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-md border hover:bg-accent text-sm"
+                  onClick={() => setPickerOpen(false)}
+                >
+                  <span className="font-medium">{p.name}</span>
+                  <span className="text-xs text-muted-foreground truncate max-w-[60%]">{p.meterReadingUrl}</span>
                 </a>
               ))}
             </div>
@@ -747,6 +905,17 @@ export default function HistoryPage() {
           <div className="grid grid-cols-2 gap-3">
             <MarketingButton role={user?.role} homeProperty={(user as any)?.homeProperty} compact />
             <MasterSheetButton role={user?.role} homeProperty={(user as any)?.homeProperty} compact />
+          </div>
+        )}
+
+        {/* Property-scoped operational sheets: vending / washer / dryer coin
+            collection tracking, and monthly utility meter readings. Rendered
+            in the same paired-row cluster so PMs see all quick links together.
+            Each button hides itself if the property has no matching URL. */}
+        {user?.role !== "contractor" && (
+          <div className="grid grid-cols-2 gap-3">
+            <VendingButton role={user?.role} homeProperty={(user as any)?.homeProperty} compact />
+            <MeterReadingButton role={user?.role} homeProperty={(user as any)?.homeProperty} compact />
           </div>
         )}
 

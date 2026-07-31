@@ -31,6 +31,13 @@ export const properties = sqliteTable("properties", {
   // Same access model as marketingUrl (PMs see their home-base link, admins
   // see all). Editable by admins in the Properties section. May be empty.
   masterSheetUrl: text("master_sheet_url"),
+  // Per-property URL the "Vending / Washer / Dryer" button opens (typically
+  // a Google Sheet tracking coin collections and machine maintenance).
+  // Same access model as marketingUrl / masterSheetUrl. Optional.
+  vendingUrl: text("vending_url"),
+  // Per-property URL the "Meter Reading" button opens (typically a Google
+  // Sheet where PMs log monthly utility meter readings). Optional.
+  meterReadingUrl: text("meter_reading_url"),
 });
 
 export const users = sqliteTable("users", {

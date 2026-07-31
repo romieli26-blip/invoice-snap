@@ -2662,10 +2662,11 @@ export async function registerRoutes(
     res.json(prop);
   });
 
-  // Admin: set or clear a property's short code (e.g. "TE"), marketing URL, and/or
-  // PM master-sheet URL.
-  // Body: { code?: string|null, marketingUrl?: string|null, masterSheetUrl?: string|null }.
-  // Any field may be omitted — only supplied fields are updated.
+  // Admin: set or clear a property's short code (e.g. "TE") and any of the
+  // per-property quick-link URLs. Body accepts:
+  //   { code?, marketingUrl?, masterSheetUrl?, vendingUrl?, meterReadingUrl? }
+  // Any field may be omitted — only supplied fields are updated. Every URL
+  // field validates that a non-empty value starts with http:// or https://.
   app.put("/api/properties/:id", async (req, res) => {
     const session = await requireAdmin(req, res);
     if (!session) return;
@@ -2704,6 +2705,22 @@ export async function registerRoutes(
         return res.status(400).json({ error: "PM Master Sheet URL must start with http:// or https://" });
       }
       await storage.updatePropertyMasterSheetUrl(id, url);
+    }
+    if ("vendingUrl" in req.body) {
+      const raw = req.body.vendingUrl;
+      const url = raw == null || raw === "" ? null : String(raw).trim();
+      if (url && !/^https?:\/\//i.test(url)) {
+        return res.status(400).json({ error: "Vending / Washer / Dryer URL must start with http:// or https://" });
+      }
+      await storage.updatePropertyVendingUrl(id, url);
+    }
+    if ("meterReadingUrl" in req.body) {
+      const raw = req.body.meterReadingUrl;
+      const url = raw == null || raw === "" ? null : String(raw).trim();
+      if (url && !/^https?:\/\//i.test(url)) {
+        return res.status(400).json({ error: "Meter Reading URL must start with http:// or https://" });
+      }
+      await storage.updatePropertyMeterReadingUrl(id, url);
     }
 
     const updated = (await storage.getAllProperties()).find(p => p.id === id);

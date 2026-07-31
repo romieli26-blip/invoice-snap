@@ -1500,12 +1500,16 @@ function PropertyAdminCard({
   const [code, setCode] = useState<string>(prop.code || "");
   const [marketingUrl, setMarketingUrl] = useState<string>(prop.marketingUrl || "");
   const [masterSheetUrl, setMasterSheetUrl] = useState<string>(prop.masterSheetUrl || "");
+  const [vendingUrl, setVendingUrl] = useState<string>(prop.vendingUrl || "");
+  const [meterReadingUrl, setMeterReadingUrl] = useState<string>(prop.meterReadingUrl || "");
 
   const saveMutation = useMutation({
     mutationFn: async (body: {
       code?: string | null;
       marketingUrl?: string | null;
       masterSheetUrl?: string | null;
+      vendingUrl?: string | null;
+      meterReadingUrl?: string | null;
     }) => {
       const res = await apiRequest("PUT", `/api/properties/${prop.id}`, body);
       return res.json();
@@ -1524,6 +1528,8 @@ function PropertyAdminCard({
       code: code.trim() === "" ? null : code.trim().toUpperCase(),
       marketingUrl: marketingUrl.trim() === "" ? null : marketingUrl.trim(),
       masterSheetUrl: masterSheetUrl.trim() === "" ? null : masterSheetUrl.trim(),
+      vendingUrl: vendingUrl.trim() === "" ? null : vendingUrl.trim(),
+      meterReadingUrl: meterReadingUrl.trim() === "" ? null : meterReadingUrl.trim(),
     });
   };
 
@@ -1555,6 +1561,16 @@ function PropertyAdminCard({
                 {prop.masterSheetUrl && (
                   <Badge variant="outline" className="text-[10px] py-0 h-4 border-blue-500/60 text-blue-700 dark:text-blue-400">
                     Master Sheet link set
+                  </Badge>
+                )}
+                {prop.vendingUrl && (
+                  <Badge variant="outline" className="text-[10px] py-0 h-4 border-purple-500/60 text-purple-700 dark:text-purple-400">
+                    Vending link set
+                  </Badge>
+                )}
+                {prop.meterReadingUrl && (
+                  <Badge variant="outline" className="text-[10px] py-0 h-4 border-teal-600/60 text-teal-700 dark:text-teal-400">
+                    Meter link set
                   </Badge>
                 )}
               </div>
@@ -1616,6 +1632,32 @@ function PropertyAdminCard({
               />
               <p className="text-[11px] text-muted-foreground">
                 Where the dashboard <strong>Master Sheet</strong> button takes property managers. Must start with <code>http://</code> or <code>https://</code>. Leave blank to hide.
+              </p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Vending / Washer / Dryer URL</Label>
+              <Input
+                value={vendingUrl}
+                onChange={e => setVendingUrl(e.target.value)}
+                placeholder="https://docs.google.com/spreadsheets/d/..."
+                className="h-8 text-sm"
+                type="url"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Where the dashboard <strong>Vending / Washer / Dryer</strong> button takes property managers. Must start with <code>http://</code> or <code>https://</code>. Leave blank to hide.
+              </p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Meter Reading URL</Label>
+              <Input
+                value={meterReadingUrl}
+                onChange={e => setMeterReadingUrl(e.target.value)}
+                placeholder="https://docs.google.com/spreadsheets/d/..."
+                className="h-8 text-sm"
+                type="url"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Where the dashboard <strong>Meter Reading</strong> button takes property managers. Must start with <code>http://</code> or <code>https://</code>. Leave blank to hide.
               </p>
             </div>
             <Button
