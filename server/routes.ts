@@ -8,7 +8,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
 import pdfParse from "pdf-parse";
-import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, driveFolderExists, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, getDriveFolderWebViewLink, hideSheetTab, unhideSheetTab, deleteSheetTab, listDriveFolderChildren, moveDriveFile, trashDriveFile, readSheetRange, listMyDriveRootChildren } from "./google-api";
+import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, driveFolderExists, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, getDriveFolderWebViewLink, hideSheetTab, unhideSheetTab, deleteSheetTab, listDriveFolderChildren, moveDriveFile, trashDriveFile, readSheetRange, readSheetRangeRaw, listMyDriveRootChildren } from "./google-api";
 // nodemailer removed — using Gmail API instead (SMTP blocked on Railway)
 
 // Ensure uploads directory exists
@@ -1010,6 +1010,66 @@ export async function registerRoutes(
         tabs: checkSheetsConfig ? Object.keys(checkSheetsConfig.tabs || {}) : [],
       },
     });
+  });
+
+  // Admin: diagnose Google API auth. Attempts a trivial read on the CC
+  // spreadsheet (no writes, no side effects) and returns the raw error
+  // message on failure so we can tell reauth issues (invalid_grant) from
+  // scope issues (insufficientScopes) from tab / range issues (unable to
+  // parse range). Use this whenever Fix All returns sheets-write-failed —
+  // it surfaces the underlying reason instead of swallowing it in the server
+  // console. Never rebuild anything; strictly diagnostic.
+  app.get("/api/admin/google-diagnose", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    const out: any = {
+      isGoogleEnabled: isGoogleEnabled(),
+      env: {
+        clientId: !!process.env.GOOGLE_CLIENT_ID,
+        clientSecret: !!process.env.GOOGLE_CLIENT_SECRET,
+        refreshToken: !!process.env.GOOGLE_REFRESH_TOKEN,
+      },
+      tests: [] as any[],
+    };
+
+    // Test 1 — tiny read on the CC spreadsheet, tab A1. Uses the raw variant
+    // so we can surface the actual OAuth / API error instead of silently null.
+    if (sheetsConfig?.spreadsheetId) {
+      try {
+        const rows = await readSheetRangeRaw(sheetsConfig.spreadsheetId, "A1:A1");
+        out.tests.push({ name: "cc-read-A1", ok: true, rows });
+      } catch (e: any) {
+        out.tests.push({
+          name: "cc-read-A1",
+          ok: false,
+          error: e?.message?.slice(0, 500) || String(e).slice(0, 500),
+          code: e?.code || null,
+          status: e?.status || null,
+          errors: e?.errors || null,
+          responseData: e?.response?.data || null,
+        });
+      }
+    }
+
+    // Test 2 — tiny read on the Cash spreadsheet, tab A1.
+    if (cashSheetsConfig?.spreadsheetId) {
+      try {
+        const rows = await readSheetRangeRaw(cashSheetsConfig.spreadsheetId, "A1:A1");
+        out.tests.push({ name: "cash-read-A1", ok: true, rows });
+      } catch (e: any) {
+        out.tests.push({
+          name: "cash-read-A1",
+          ok: false,
+          error: e?.message?.slice(0, 500) || String(e).slice(0, 500),
+          code: e?.code || null,
+          status: e?.status || null,
+          errors: e?.errors || null,
+          responseData: e?.response?.data || null,
+        });
+      }
+    }
+
+    res.json(out);
   });
 
   // Admin: sync-status endpoint. Two modes:

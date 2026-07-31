@@ -182,6 +182,16 @@ export async function readSheetRange(spreadsheetId: string, range: string): Prom
   }
 }
 
+// Diagnostic variant of readSheetRange — propagates the underlying Google
+// error (invalid_grant, insufficientScopes, PERMISSION_DENIED, etc.) instead
+// of swallowing it. Called by /api/admin/google-diagnose only, so admins can
+// see why sync started failing without needing Railway log access.
+export async function readSheetRangeRaw(spreadsheetId: string, range: string): Promise<string[][]> {
+  if (!sheetsApi) throw new Error("sheetsApi not initialised (isGoogleEnabled=false)");
+  const res = await sheetsApi.spreadsheets.values.get({ spreadsheetId, range });
+  return (res.data.values || []) as string[][];
+}
+
 export async function updateSheetRange(spreadsheetId: string, range: string, values: string[][]): Promise<boolean> {
   if (!sheetsApi) return false;
   try {
