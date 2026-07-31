@@ -1794,6 +1794,38 @@ function SyncStatusPanel() {
   const clean = !verifying && deepResult != null && !hasDeepDrift;
   const errorTabs = (lastFixSummary || []).filter((s: any) => s.error);
 
+  // Google auth health — polls /api/admin/google-diagnose so a broken refresh
+  // token surfaces in the Sheet Sync Status header as a red pill with a
+  // Reconnect button, instead of silently making every Fix All a no-op.
+  const googleHealth = useQuery<any>({
+    queryKey: ["/api/admin/google-diagnose"],
+    refetchInterval: 60_000, // once a minute is enough; cheap two-cell read
+  });
+  const googleTests = googleHealth.data?.tests || [];
+  const googleBroken = googleTests.length > 0 && googleTests.some((t: any) => !t.ok);
+  const googleReason: string = googleBroken
+    ? (googleTests.find((t: any) => !t.ok)?.error || "Google API unreachable")
+    : "";
+  const reconnectGoogle = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/google-oauth-start");
+      return res.json();
+    },
+    onSuccess: (r: any) => {
+      if (r.url) {
+        window.open(r.url, "_blank", "noopener,noreferrer");
+        toast({
+          title: "Opened Google consent screen",
+          description: "Sign in as jetsetterinvoices1@gmail.com and click Allow. This tab will pick up the new token automatically — you can close the consent tab when it says 'Google reconnected'.",
+        });
+      } else {
+        toast({ title: "Could not start reconnect", description: r.error || "Unknown error", variant: "destructive" });
+      }
+    },
+    onError: (e: any) =>
+      toast({ title: "Reconnect failed", description: e.message || "Error", variant: "destructive" }),
+  });
+
   return (
     <section className="space-y-3 border rounded-lg p-3">
       <div className="flex items-center justify-between gap-2">
@@ -1816,6 +1848,48 @@ function SyncStatusPanel() {
           <RefreshCw className={`w-3.5 h-3.5 ${verifying ? "animate-spin" : ""}`} />
         </Button>
       </div>
+
+      {/* Google auth health strip — tells the operator at a glance whether
+          the refresh token is alive. When broken, offers the one-click
+          Reconnect flow that replaces manual OAuth Playground work. */}
+      {googleHealth.data && (
+        <div
+          className={
+            "flex items-start gap-2 rounded border p-2 text-xs " +
+            (googleBroken
+              ? "border-red-500/60 bg-red-50 text-red-900 dark:bg-red-950/30 dark:text-red-200"
+              : "border-emerald-500/40 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/20 dark:text-emerald-300")
+          }
+        >
+          <span className={"mt-0.5 inline-block w-2 h-2 rounded-full " + (googleBroken ? "bg-red-500" : "bg-emerald-500")} />
+          <div className="flex-1 space-y-1">
+            {googleBroken ? (
+              <>
+                <p><strong>Google sync is broken.</strong> Sheets and Drive writes are failing — every new transaction is safe in the DB but not landing in the spreadsheet or Drive folders.</p>
+                <p className="font-mono text-[10px] opacity-80">{googleReason}</p>
+                <p>Click Reconnect, sign in as <b>jetsetterinvoices1@gmail.com</b>, and Allow. Then click Fix All above to backfill.</p>
+              </>
+            ) : (
+              <p>
+                Google sync is healthy.
+                {googleHealth.data.activeTokenSource && (
+                  <span className="opacity-70"> (token source: {googleHealth.data.activeTokenSource})</span>
+                )}
+              </p>
+            )}
+          </div>
+          <Button
+            size="sm"
+            variant={googleBroken ? "default" : "outline"}
+            className="h-7 text-xs"
+            onClick={() => reconnectGoogle.mutate()}
+            disabled={reconnectGoogle.isPending}
+          >
+            {reconnectGoogle.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+            Reconnect Google
+          </Button>
+        </div>
+      )}
 
       {verifying && !deepResult && (
         <p className="text-xs text-muted-foreground">Reading every property tab and comparing to the DB…</p>

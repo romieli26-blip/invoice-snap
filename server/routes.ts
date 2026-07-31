@@ -8,7 +8,9 @@ import fs from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
 import pdfParse from "pdf-parse";
-import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, driveFolderExists, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, getDriveFolderWebViewLink, hideSheetTab, unhideSheetTab, deleteSheetTab, listDriveFolderChildren, moveDriveFile, trashDriveFile, readSheetRange, readSheetRangeRaw, listMyDriveRootChildren } from "./google-api";
+import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, driveFolderExists, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, getDriveFolderWebViewLink, hideSheetTab, unhideSheetTab, deleteSheetTab, listDriveFolderChildren, moveDriveFile, trashDriveFile, readSheetRange, readSheetRangeRaw, listMyDriveRootChildren, reinitGoogleApis, getActiveTokenSource } from "./google-api";
+import { getAppSetting, setAppSetting } from "./storage";
+import { google as googleApis } from "googleapis";
 // nodemailer removed — using Gmail API instead (SMTP blocked on Railway)
 
 // Ensure uploads directory exists
@@ -80,7 +82,17 @@ async function sendTransactionNotificationEmails(subject: string, htmlBody: stri
 async function sendEmailToRecipients(recipients: { name: string; email: string }[], subject: string, htmlBody: string, attachments?: { filename: string; path: string }[]) {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+  // Prefer the DB-stored refresh token (set by the in-app Reconnect Google
+  // flow) over the env var. This mirrors google-api.ts's resolveRefreshToken
+  // so that after a one-time OAuth Playground bootstrap, every subsequent
+  // token refresh via the Reconnect button unblocks BOTH sheet sync AND
+  // outage-alert email delivery, even when the env-var token has died.
+  let refreshToken: string | null = null;
+  try {
+    const dbToken = getAppSetting("google_refresh_token");
+    if (dbToken && dbToken.trim().length > 0) refreshToken = dbToken.trim();
+  } catch {}
+  if (!refreshToken) refreshToken = process.env.GOOGLE_REFRESH_TOKEN || null;
   if (!clientId || !clientSecret || !refreshToken) {
     console.log("[email] No Google OAuth credentials, skipping email");
     return;
@@ -156,6 +168,29 @@ async function sendNotificationEmails(subject: string, htmlBody: string, attachm
 // Downloads the welcome-tutorial video from Google Drive once, caches it under /tmp,
 // and returns { path, sizeBytes } so the welcome email can attach it.
 // Returns null if download fails or the file is too large to attach (>20MB).
+// Minimal HTML page rendered at the end of the Google reconnect flow. Kept
+// inline so we don't have to serve a static asset just for the callback
+// success/failure screen. The operator only ever sees this once per reauth.
+function oauthResultHtml(ok: boolean, message: string): string {
+  const color = ok ? "#01696F" : "#B02A2A";
+  const title = ok ? "Google reconnected" : "Google reconnect failed";
+  const emoji = ok ? "✓" : "✕";
+  const safe = message.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>` +
+    `<meta name="viewport" content="width=device-width,initial-scale=1">` +
+    `<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;` +
+    `background:#F7F6F2;color:#28251D;display:flex;align-items:center;justify-content:center;` +
+    `min-height:100vh;margin:0;padding:24px}` +
+    `.card{background:white;border-radius:14px;padding:32px;max-width:480px;` +
+    `box-shadow:0 12px 30px rgba(0,0,0,.06);border-top:4px solid ${color}}` +
+    `.badge{width:52px;height:52px;border-radius:50%;background:${color};color:white;` +
+    `font-size:28px;line-height:52px;text-align:center;margin-bottom:12px}` +
+    `h1{margin:0 0 12px;font-size:20px;color:${color}}` +
+    `p{line-height:1.5;margin:0}</style></head><body>` +
+    `<div class="card"><div class="badge">${emoji}</div>` +
+    `<h1>${title}</h1><p>${safe}</p></div></body></html>`;
+}
+
 const TUTORIAL_VIDEO_DRIVE_ID = "1L2SFfyKK19vpJxuJs99VrIMtywF7ox76";
 const TUTORIAL_VIDEO_CACHE_PATH = "/tmp/jetsetter-tutorial.mp4";
 const MAX_EMAIL_ATTACHMENT_BYTES = 20 * 1024 * 1024; // 20 MB safe limit for Gmail (hard cap is 25 MB)
@@ -1029,6 +1064,10 @@ export async function registerRoutes(
         clientSecret: !!process.env.GOOGLE_CLIENT_SECRET,
         refreshToken: !!process.env.GOOGLE_REFRESH_TOKEN,
       },
+      dbTokenSet: !!getAppSetting("google_refresh_token"),
+      activeTokenSource: getActiveTokenSource(),
+      lastAlertAt: getAppSetting("google_last_alert_at"),
+      lastKnownStatus: getAppSetting("google_last_known_status"),
       tests: [] as any[],
     };
 
@@ -1070,6 +1109,189 @@ export async function registerRoutes(
     }
 
     res.json(out);
+  });
+
+  // ---------------------------------------------------------------------
+  // Reconnect Google flow — in-app replacement for the OAuth Playground.
+  //
+  // When the refresh token expires or gets revoked, /api/admin/google-diagnose
+  // starts returning invalid_grant. Instead of asking the operator to run
+  // OAuth Playground and paste a new token into a Railway env var, this pair
+  // of routes lets them click a button, sign in as the right Google account,
+  // and have the new token saved to the DB + hot-reloaded into the running
+  // sheets/drive clients — no redeploy needed.
+  //
+  // GET  /api/admin/google-oauth-start    → returns the consent URL
+  // GET  /api/admin/google-oauth-callback → called by Google after consent,
+  //   exchanges the code, saves the refresh token, reinits Google APIs,
+  //   renders a small success HTML page.
+  //
+  // The redirect_uri sent to Google MUST already be listed under the OAuth
+  // client's Authorized redirect URIs in Google Cloud Console. On production
+  // this is https://invoice-snap-production.up.railway.app/api/admin/google-oauth-callback.
+  // ---------------------------------------------------------------------
+
+  const OAUTH_SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/gmail.send",
+  ];
+
+  function buildOAuthRedirectUri(req: any): string {
+    // Prefer explicit env override so ops can point at whatever host is
+    // registered in Google Cloud Console; fall back to the incoming request's
+    // origin. Path stays constant so it can be added to Google's allow-list
+    // once and forgotten.
+    const override = process.env.GOOGLE_OAUTH_REDIRECT_URI;
+    if (override) return override;
+    const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "https";
+    const host = (req.headers["x-forwarded-host"] as string) || req.headers.host;
+    return `${proto}://${host}/api/admin/google-oauth-callback`;
+  }
+
+  function buildOAuthClient(req: any) {
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    if (!clientId || !clientSecret) return null;
+    return new googleApis.auth.OAuth2(clientId, clientSecret, buildOAuthRedirectUri(req));
+  }
+
+  // Admin: kick off the OAuth consent flow. Returns { url } which the admin
+  // UI opens in a new tab.
+  app.get("/api/admin/google-oauth-start", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    const oauth = buildOAuthClient(req);
+    if (!oauth) return res.status(503).json({ error: "GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not configured" });
+
+    const url = oauth.generateAuthUrl({
+      access_type: "offline",
+      prompt: "consent",         // force Google to return a refresh_token even on repeat consent
+      scope: OAUTH_SCOPES,
+      include_granted_scopes: true,
+    });
+    res.json({ url, redirectUri: buildOAuthRedirectUri(req) });
+  });
+
+  // Google redirects the operator's browser here with ?code=... after they
+  // click Allow. Exchange the code for a refresh token, persist it, and hot-
+  // reload the sheets/drive clients. Renders a minimal HTML confirmation so
+  // the operator sees an unambiguous "done" screen.
+  app.get("/api/admin/google-oauth-callback", async (req, res) => {
+    const code = String(req.query.code || "");
+    const errParam = String(req.query.error || "");
+    if (errParam) {
+      return res.status(400).send(oauthResultHtml(false, `Google returned error: ${errParam}`));
+    }
+    if (!code) {
+      return res.status(400).send(oauthResultHtml(false, "Missing authorization code."));
+    }
+    const oauth = buildOAuthClient(req);
+    if (!oauth) {
+      return res.status(503).send(oauthResultHtml(false, "OAuth client not configured on the server."));
+    }
+
+    try {
+      const { tokens } = await oauth.getToken(code);
+      const refreshToken = tokens.refresh_token;
+      if (!refreshToken) {
+        // If the user has previously granted consent and Google chose not to
+        // return a fresh refresh_token, guide them to the fix (revoke + retry).
+        return res.status(400).send(oauthResultHtml(false,
+          "Google did not return a refresh token. Revoke the app at " +
+          "https://myaccount.google.com/permissions and try again — that forces " +
+          "Google to issue a fresh refresh token on the next consent."));
+      }
+      setAppSetting("google_refresh_token", refreshToken);
+      setAppSetting("google_refresh_token_saved_at", new Date().toISOString());
+      // Clear the alert marker so the next diagnostic cycle re-arms cleanly.
+      setAppSetting("google_last_known_status", "ok");
+      const ok = reinitGoogleApis();
+      console.log(`[oauth] refresh token saved; reinit result=${ok}`);
+      res.send(oauthResultHtml(true, "Google is reconnected. You can close this tab and click Fix All in the Sheet Sync Status panel to push the pending rows."));
+    } catch (e: any) {
+      console.error("[oauth] token exchange failed:", e?.message);
+      res.status(500).send(oauthResultHtml(false, `Token exchange failed: ${e?.message?.slice(0, 200) || "unknown error"}`));
+    }
+  });
+
+  // Internal cron: monitor Google auth health. Called every 30 minutes by
+  // node-cron. Runs the same tiny read used by /api/admin/google-diagnose;
+  // if it now fails but the previous cycle succeeded (or vice versa), sends
+  // a one-shot alert email to Ben so ops finds out within the hour — not
+  // three weeks later when a PM complains that the sheet totals are off.
+  //
+  // De-dupes via app_settings.google_last_known_status so a persistently-
+  // broken token doesn't spam Ben every 30 minutes. Only a status TRANSITION
+  // fires an email; steady state stays quiet.
+  app.post("/api/admin/google-health-check", async (req, res) => {
+    // Accept the internal-cron bearer used by the other schedulers so we can
+    // call this from server/index.ts without needing an admin session.
+    const auth = req.headers.authorization || "";
+    const isInternalCron = auth === "Bearer internal-cron";
+    if (!isInternalCron) {
+      const session = await requireAdmin(req, res);
+      if (!session) return;
+    }
+
+    // Run the same trivial read used by google-diagnose against the CC
+    // spreadsheet. If it throws with invalid_grant / any auth error, we're
+    // broken. Anything else (including network blips) is treated as "ok for
+    // this cycle" so we don't alert on transient noise.
+    let currentStatus: "ok" | "broken" = "ok";
+    let errorSummary = "";
+    if (sheetsConfig?.spreadsheetId) {
+      try {
+        await readSheetRangeRaw(sheetsConfig.spreadsheetId, "A1:A1");
+      } catch (e: any) {
+        const msg = String(e?.response?.data?.error || e?.message || "").toLowerCase();
+        if (msg.includes("invalid_grant") || msg.includes("invalid_client") ||
+            msg.includes("insufficient") || msg.includes("unauthorized") ||
+            (e?.code === 401 || e?.code === 403)) {
+          currentStatus = "broken";
+          errorSummary = e?.response?.data?.error_description ||
+                         e?.response?.data?.error ||
+                         e?.message || "unknown auth error";
+        }
+      }
+    }
+
+    const prevStatus = (getAppSetting("google_last_known_status") as "ok" | "broken" | null) || "ok";
+    setAppSetting("google_last_known_status", currentStatus);
+    setAppSetting("google_last_health_check_at", new Date().toISOString());
+
+    // Fire an email only on a status transition. Ok→broken is the important
+    // one; broken→ok is a nice-to-have "we're recovered" confirmation.
+    let notified: string | null = null;
+    if (prevStatus !== currentStatus) {
+      const recipients = [{ name: "Ben", email: "Ben@Jetsettercapital.com" }];
+      try {
+        if (currentStatus === "broken") {
+          const reconnectUrl = `${process.env.APP_ORIGIN || "https://invoice-snap-production.up.railway.app"}/#/admin`;
+          const subject = "[Jetsetter Reporting] Google sync is broken — reconnect needed";
+          const html =
+            `<p>Google Sheets / Drive sync just started failing.</p>` +
+            `<p><b>Error:</b> ${(errorSummary || "invalid_grant").replace(/</g,"&lt;")}</p>` +
+            `<p>Every new transaction submitted from this moment on is being stored in the DB but NOT written to Google Sheets or Drive. ` +
+            `The app's Cash on Hand / Checks on Hand cards remain accurate; the spreadsheets do not.</p>` +
+            `<p><b>Fix:</b> open the admin panel and click <b>Reconnect Google</b> under Sheet Sync Status. ` +
+            `Sign in as jetsetterinvoices1@gmail.com when Google asks, click Allow, and the app picks up the new token automatically. ` +
+            `Then click <b>Fix All</b> to backfill everything that got queued up.</p>` +
+            `<p><a href="${reconnectUrl}">Open admin panel</a></p>`;
+          await sendEmailToRecipients(recipients, subject, html);
+        } else {
+          const subject = "[Jetsetter Reporting] Google sync recovered";
+          const html = `<p>Google Sheets / Drive sync is healthy again. If you had unsynced rows during the outage, click Fix All in the Sheet Sync Status panel to push them.</p>`;
+          await sendEmailToRecipients(recipients, subject, html);
+        }
+        setAppSetting("google_last_alert_at", new Date().toISOString());
+        notified = currentStatus;
+      } catch (e: any) {
+        console.error("[google-health-check] alert email failed:", e?.message);
+      }
+    }
+
+    res.json({ prevStatus, currentStatus, errorSummary, notified });
   });
 
   // Admin: sync-status endpoint. Two modes:
@@ -1760,7 +1982,14 @@ export async function registerRoutes(
     try {
       const clientId = process.env.GOOGLE_CLIENT_ID;
       const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-      const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+      // Same DB-first token resolution as sendEmailToRecipients so a
+      // Reconnect-Google run unblocks password-reset email delivery too.
+      let refreshToken: string | null = null;
+      try {
+        const dbToken = getAppSetting("google_refresh_token");
+        if (dbToken && dbToken.trim().length > 0) refreshToken = dbToken.trim();
+      } catch {}
+      if (!refreshToken) refreshToken = process.env.GOOGLE_REFRESH_TOKEN || null;
       if (clientId && clientSecret && refreshToken) {
         const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
         oauth2Client.setCredentials({ refresh_token: refreshToken });

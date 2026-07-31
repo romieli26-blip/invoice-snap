@@ -168,6 +168,30 @@ app.use((req, res, next) => {
 
       log("Document reminder scheduler active (9 AM ET)", "cron");
 
+      // Google auth health check — every 30 minutes. Hits the internal
+      // /api/admin/google-health-check endpoint which runs a trivial Sheets
+      // read; if the token has been revoked / expired, it emails Ben once.
+      // Alerts de-dupe on the app_settings.google_last_known_status marker
+      // so a persistent outage doesn't spam his inbox.
+      cron.schedule("*/30 * * * *", () => {
+        log("Google auth health check triggered", "cron");
+        const http = require("http");
+        const req = http.request({
+          hostname: "localhost", port, path: "/api/admin/google-health-check",
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": "Bearer internal-cron", "Content-Length": "2" },
+        }, (res: any) => {
+          let body = "";
+          res.on("data", (c: any) => body += c);
+          res.on("end", () => log(`Google health check result: ${body}`, "cron"));
+        });
+        req.on("error", (err: any) => log(`Google health check error: ${err.message}`, "cron"));
+        req.write("{}");
+        req.end();
+      }, { timezone: "UTC" });
+
+      log("Google auth health scheduler active (every 30 minutes)", "cron");
+
       // Daily 7pm Florida-time reminder (Mon–Sat). Uses America/New_York
       // tz so DST is auto-handled. Sundays excluded.
       function fireDailyReminders(source: string) {

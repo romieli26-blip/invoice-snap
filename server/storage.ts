@@ -239,6 +239,34 @@ try { sqlite.exec("ALTER TABLE properties ADD COLUMN marketing_url TEXT"); } cat
 try { sqlite.exec("ALTER TABLE properties ADD COLUMN master_sheet_url TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE properties ADD COLUMN vending_url TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE properties ADD COLUMN meter_reading_url TEXT"); } catch {}
+
+// Lightweight key/value store for runtime-mutable settings (OAuth refresh
+// token overrides, feature flags, etc). Kept as a plain sqlite table rather
+// than a Drizzle-managed one because the values are opaque and only touched
+// through the getAppSetting / setAppSetting helpers below.
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )
+`);
+
+export function getAppSetting(key: string): string | null {
+  const row = sqlite.prepare("SELECT value FROM app_settings WHERE key = ?").get(key) as { value: string } | undefined;
+  return row ? row.value : null;
+}
+
+export function setAppSetting(key: string, value: string): void {
+  sqlite.prepare(
+    "INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, datetime('now')) " +
+    "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+  ).run(key, value);
+}
+
+export function deleteAppSetting(key: string): void {
+  sqlite.prepare("DELETE FROM app_settings WHERE key = ?").run(key);
+}
 try { sqlite.exec("ALTER TABLE cash_transactions ADD COLUMN edit_history TEXT"); } catch {}
 
 // Cash transactions table

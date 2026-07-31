@@ -10,20 +10,45 @@
  */
 import { google } from "googleapis";
 import fs from "fs";
+import { getAppSetting } from "./storage";
 
 let sheetsApi: ReturnType<typeof google.sheets> | null = null;
 let driveApi: ReturnType<typeof google.drive> | null = null;
 
+// Track the current refresh-token source so the admin diagnose endpoint can
+// report whether we're on the env-var token or the DB-stored one saved via
+// the in-app Reconnect Google flow. Values: 'env' | 'db' | null.
+let activeTokenSource: "env" | "db" | null = null;
+export function getActiveTokenSource(): "env" | "db" | null { return activeTokenSource; }
+
+// Resolve the refresh token by preferring the DB-stored value (set by the
+// admin "Reconnect Google" button) so operators can recover from an expired
+// or revoked env-var token without a Railway redeploy. Falls back to the env
+// var, then null.
+function resolveRefreshToken(): { token: string | null; source: "env" | "db" | null } {
+  try {
+    const dbToken = getAppSetting("google_refresh_token");
+    if (dbToken && dbToken.trim().length > 0) return { token: dbToken.trim(), source: "db" };
+  } catch {
+    // getAppSetting can throw during very early boot before the sqlite table
+    // exists; treat as "no override" and continue to env fallback.
+  }
+  const envToken = process.env.GOOGLE_REFRESH_TOKEN;
+  if (envToken && envToken.trim().length > 0) return { token: envToken.trim(), source: "env" };
+  return { token: null, source: null };
+}
+
 function getAuth() {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+  const { token: refreshToken, source } = resolveRefreshToken();
 
   if (!clientId || !clientSecret || !refreshToken) return null;
 
   try {
     const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
     oauth2Client.setCredentials({ refresh_token: refreshToken });
+    activeTokenSource = source;
     return oauth2Client;
   } catch (err: any) {
     console.error("[google-api] Failed to create OAuth2 client:", err.message);
@@ -38,13 +63,22 @@ export function initGoogleApis(): boolean {
     console.log("[google-api] GOOGLE_CLIENT_ID:", process.env.GOOGLE_CLIENT_ID ? "SET" : "MISSING");
     console.log("[google-api] GOOGLE_CLIENT_SECRET:", process.env.GOOGLE_CLIENT_SECRET ? "SET" : "MISSING");
     console.log("[google-api] GOOGLE_REFRESH_TOKEN:", process.env.GOOGLE_REFRESH_TOKEN ? "SET" : "MISSING");
+    activeTokenSource = null;
+    sheetsApi = null;
+    driveApi = null;
     return false;
   }
 
   sheetsApi = google.sheets({ version: "v4", auth });
   driveApi = google.drive({ version: "v3", auth });
-  console.log("[google-api] OAuth2 initialized — Sheets & Drive enabled");
+  console.log(`[google-api] OAuth2 initialized — Sheets & Drive enabled (token source: ${activeTokenSource})`);
   return true;
+}
+
+// Called by the admin OAuth-complete route so a freshly-persisted refresh
+// token takes effect immediately without a server restart.
+export function reinitGoogleApis(): boolean {
+  return initGoogleApis();
 }
 
 export function isGoogleEnabled(): boolean {
