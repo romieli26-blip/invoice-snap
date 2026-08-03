@@ -37,14 +37,36 @@ try {
 
 // Check transactions sheets config (separate spreadsheet from cash). Same
 // schema — one tab per property.
-const CHECK_SHEETS_CONFIG_PATH = path.resolve(process.cwd(), "check-sheets-config.json");
+// Check-sheets config lives on the persistent Railway volume so it survives
+// redeploys. Previously it was in process.cwd(), which meant every deploy
+// (including the OAuth-recovery deploys we ran this week) wiped it — the app
+// would silently forget which spreadsheet held the checks, and every check
+// submitted after that landed in the DB but was never appended to the sheet
+// because the config resolved to null. Also migrate any stale legacy config
+// from the old ephemeral cwd path on first read so no manual re-init is
+// needed after this change deploys.
+const CHECK_SHEETS_CONFIG_PATH = path.resolve(dataDir, "check-sheets-config.json");
+const CHECK_SHEETS_CONFIG_LEGACY_PATH = path.resolve(process.cwd(), "check-sheets-config.json");
 let checkSheetsConfig: { spreadsheetId: string; tabs: Record<string, number> } | null = null;
 try {
+  // Prefer the persistent-volume path; fall back to the legacy cwd path and
+  // migrate it forward so the next redeploy doesn't lose it.
   if (fs.existsSync(CHECK_SHEETS_CONFIG_PATH)) {
     checkSheetsConfig = JSON.parse(fs.readFileSync(CHECK_SHEETS_CONFIG_PATH, "utf-8"));
     console.log(`[check-sheets] Config loaded: spreadsheet ${checkSheetsConfig!.spreadsheetId}`);
+  } else if (fs.existsSync(CHECK_SHEETS_CONFIG_LEGACY_PATH)) {
+    checkSheetsConfig = JSON.parse(fs.readFileSync(CHECK_SHEETS_CONFIG_LEGACY_PATH, "utf-8"));
+    try {
+      fs.writeFileSync(CHECK_SHEETS_CONFIG_PATH, JSON.stringify(checkSheetsConfig, null, 2));
+      console.log(`[check-sheets] migrated legacy config → ${CHECK_SHEETS_CONFIG_PATH}`);
+    } catch (e: any) {
+      console.error(`[check-sheets] legacy migration failed: ${e.message}`);
+    }
+    console.log(`[check-sheets] Config loaded: spreadsheet ${checkSheetsConfig!.spreadsheetId}`);
   }
-} catch {}
+} catch (e: any) {
+  console.error("[check-sheets] Failed to load config:", e?.message);
+}
 try {
   if (fs.existsSync(SHEETS_CONFIG_PATH)) {
     sheetsConfig = JSON.parse(fs.readFileSync(SHEETS_CONFIG_PATH, "utf-8"));
@@ -4863,6 +4885,58 @@ export async function registerRoutes(
     } catch (e: any) {
       console.error("[drive-cleanup] execute failed:", e);
       res.status(500).json({ error: e.message?.slice(0, 200) || "execute failed" });
+    }
+  });
+
+  // Admin: point the app at an already-existing Check Transactions
+  // spreadsheet. Use when the app booted with checkSheetsConfig=null (e.g.
+  // the config file got wiped on redeploy before the persistent-path fix
+  // landed) but the sheet itself is still valid in Drive. Verifies the app
+  // can actually read from the spreadsheet, then persists the config and
+  // walks every property tab, rebuilding it from DB. Safe to run more than
+  // once — rebuildCheckSheetForProperty is idempotent.
+  //
+  // Body: { spreadsheetId: string }
+  app.post("/api/admin/set-check-sheet", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    if (!isGoogleEnabled()) return res.status(400).json({ error: "Google API not configured" });
+    const spreadsheetId = String(req.body?.spreadsheetId || "").trim();
+    if (!spreadsheetId) return res.status(400).json({ error: "spreadsheetId is required" });
+
+    try {
+      // Sanity-check that the sheet exists and we can read from it. Avoids
+      // silently persisting a garbage ID that would then fail on every write.
+      await readSheetRangeRaw(spreadsheetId, "A1:A1");
+
+      // Preserve existing tab IDs if this endpoint is being re-run for the
+      // same sheet — rebuildCheckSheetForProperty needs the tab gid to clear
+      // rows in place.
+      const existingTabs = (checkSheetsConfig?.spreadsheetId === spreadsheetId)
+        ? checkSheetsConfig.tabs
+        : {};
+      checkSheetsConfig = { spreadsheetId, tabs: existingTabs };
+      fs.writeFileSync(CHECK_SHEETS_CONFIG_PATH, JSON.stringify(checkSheetsConfig, null, 2));
+      console.log(`[check-sheets] set-check-sheet → ${spreadsheetId} (persisted)`);
+
+      // Rebuild every property tab from DB. Missing tabs are created inside
+      // rebuildCheckSheetForProperty.
+      const props = await storage.getAllProperties();
+      const summary: any[] = [];
+      let totalRows = 0;
+      for (const p of props) {
+        try {
+          const result = await rebuildCheckSheetForProperty(p.name);
+          if (result.ok) totalRows += (result.rows || 0);
+          summary.push({ property: p.name, ...result });
+        } catch (e: any) {
+          summary.push({ property: p.name, ok: false, error: e.message?.slice(0, 200) });
+        }
+      }
+      res.json({ ok: true, spreadsheetId, totalRows, summary });
+    } catch (e: any) {
+      console.error("[set-check-sheet] failed:", e);
+      res.status(500).json({ error: e.message?.slice(0, 200) || "set-check-sheet failed" });
     }
   });
 
