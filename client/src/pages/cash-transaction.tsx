@@ -136,7 +136,15 @@ export default function CashTransactionPage() {
     }
     if (txType === "income" && category === "check") {
       if (!payerName.trim()) return "Please enter who the check is from.";
-      if (!photoPath) return "Please take or upload a photo of the check.";
+    }
+    // CC Tips: require the server / staff name so payroll can reconcile
+    // exactly who received the tips cash. Uses the existing payerName field
+    // for storage (no schema change) but renders as "Server Name" in the UI
+    // to match the restaurant workflow. Photo remains optional — tip payouts
+    // usually don't have a slip. The no-receipt confirm dialog still
+    // handles the "you sure no photo?" second-guess earlier in submit().
+    if (txType === "spent" && category === "cc_tips") {
+      if (!payerName.trim()) return "Please enter the server name for the CC tips payout.";
     }
     if (txType === "spent" && category === "bank_deposit") {
       if (!bankName.trim()) return "Please enter the bank name for deposits.";
@@ -510,6 +518,28 @@ export default function CashTransactionPage() {
                   </div>
                 )}
 
+                {/* CC Tips: server / staff who received the cash tips payout.
+                    Reuses payerName so it flows into the existing sheet
+                    "From" column and Cash detail modal with no schema
+                    change — restaurant reconciliation looks at that column. */}
+                {txType === "spent" && category === "cc_tips" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="cash-server-name">
+                      Server Name <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      id="cash-server-name"
+                      value={payerName}
+                      onChange={e => setPayerName(e.target.value)}
+                      placeholder="e.g. Megan S."
+                      data-testid="input-server-name"
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Who received the CC tips cash. One transaction per server.
+                    </p>
+                  </div>
+                )}
+
                 {/* Description for bank_deposit and contractor_pay */}
                 {txType === "spent" && (category === "bank_deposit" || category === "contractor_pay") && (
                   <div className="space-y-2">
@@ -576,6 +606,9 @@ export default function CashTransactionPage() {
             {tenantName && <div><span className="text-muted-foreground text-xs">Tenant</span><p className="font-medium">{tenantName}</p></div>}
             {bankName && <div><span className="text-muted-foreground text-xs">Bank</span><p className="font-medium">{bankName}</p></div>}
             {description && <div><span className="text-muted-foreground text-xs">Description</span><p className="font-medium break-words">{description}</p></div>}
+            {category === "cc_tips" && payerName && (
+              <div><span className="text-muted-foreground text-xs">Server</span><p className="font-medium">{payerName}</p></div>
+            )}
           </div>
           <div className="flex gap-2 mt-4">
             <Button variant="outline" className="flex-1" onClick={() => setShowConfirm(false)}>Edit</Button>

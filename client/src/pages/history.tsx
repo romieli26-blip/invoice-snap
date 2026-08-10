@@ -747,6 +747,9 @@ export default function HistoryPage() {
   const [editCashUnitLot, setEditCashUnitLot] = useState("");
   const [editCashTenantName, setEditCashTenantName] = useState("");
   const [editCashBankName, setEditCashBankName] = useState("");
+  // Server / staff who received the CC tips cash. Reuses payerName on the
+  // wire; only shown in the UI when category === "cc_tips".
+  const [editCashPayerName, setEditCashPayerName] = useState("");
   const [editCashSaving, setEditCashSaving] = useState(false);
 
   async function handleCashDelete(id: number) {
@@ -1357,7 +1360,12 @@ export default function HistoryPage() {
                     { label: "Property", value: tx.property || "" },
                     { label: "Date", value: tx.date || "" },
                     { label: "Unit / Lot", value: tx.unitLotNumber || "" },
-                    { label: "Tenant / From", value: tx.tenantName || tx.payerName || "" },
+                    // CC Tips rows show the server name in a dedicated line;
+                    // everything else keeps the legacy "Tenant / From"
+                    // fallback for rental_income / check rows.
+                    ...(tx.category === "cc_tips"
+                      ? [{ label: "Server", value: tx.payerName || "" }]
+                      : [{ label: "Tenant / From", value: tx.tenantName || tx.payerName || "" }]),
                     { label: "Bank", value: tx.bankName || "" },
                     { label: "Notes", value: tx.notes || "" },
                     { label: "Record ID", value: tx.propertyCode || (tx.recordNumber != null ? `#${tx.recordNumber}` : "") },
@@ -1428,6 +1436,7 @@ export default function HistoryPage() {
                             setEditCashUnitLot(tx.unitLotNumber || "");
                             setEditCashTenantName(tx.tenantName || "");
                             setEditCashBankName(tx.bankName || "");
+                            setEditCashPayerName(tx.payerName || "");
                           }
                         }}>
                           <Pencil className="w-3.5 h-3.5" />
@@ -2035,6 +2044,20 @@ export default function HistoryPage() {
                 </div>
               </>
             )}
+            {/* CC Tips: server / staff name. Uses payerName on the wire so
+                the same field is reused across create + edit + detail modal
+                + sheet "From" column. */}
+            {editCashCategory === "cc_tips" && (
+              <div className="space-y-1">
+                <Label className="text-xs">Server Name</Label>
+                <Input
+                  value={editCashPayerName}
+                  onChange={e => setEditCashPayerName(e.target.value)}
+                  placeholder="e.g. Megan S."
+                  data-testid="input-edit-server-name"
+                />
+              </div>
+            )}
           </div>
           <div className="flex gap-2 mt-4">
             <Button variant="outline" className="flex-1" onClick={() => setEditingCashTx(null)}>Cancel</Button>
@@ -2048,6 +2071,7 @@ export default function HistoryPage() {
                   bankName: editCashBankName || undefined,
                   unitLotNumber: editCashUnitLot || undefined,
                   tenantName: editCashTenantName || undefined,
+                  payerName: editCashPayerName || undefined,
                 });
                 queryClient.invalidateQueries({ queryKey: ["/api/cash-transactions"] });
                 queryClient.invalidateQueries({ queryKey: ["/api/cash-balances"] });

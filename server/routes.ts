@@ -949,15 +949,27 @@ export async function registerRoutes(
             const receiptId = (tx as any).propertyCode || String(tx.recordNumber || "");
             const amt = parseFloat(tx.amount || "0");
             runningBalance += tx.type === "income" ? amt : -amt;
+            // CC Tips rows: fold the server name into the Description column
+            // ("Tips - Megan S.") and keep the Tenant column clean, matching
+            // the create + edit paths. Non-tips rows keep the legacy tenant-
+            // or-payer fallback so historic rental_income rows still show
+            // the tenant name in column F.
+            const isTipsRow = tx.type === "spent" && tx.category === "cc_tips";
+            const payer = (tx as any).payerName || "";
+            const descRaw = tx.description || (tx as any).notes || "";
+            const desc = isTipsRow && payer
+              ? (descRaw ? `Tips - ${payer}: ${descRaw}` : `Tips - ${payer}`)
+              : descRaw;
+            const tenantCell = isTipsRow ? "" : (tx.tenantName || payer || "");
             rows.push([
               tx.date,
               tx.type,
               tx.category,
               tx.amount,
               tx.unitLotNumber || "",
-              tx.tenantName || (tx as any).payerName || "",
+              tenantCell,
               tx.bankName || "",
-              tx.description || (tx as any).notes || "",
+              desc,
               submittedBy,
               tx.createdAt,
               receiptId,
@@ -4002,7 +4014,17 @@ export async function registerRoutes(
           // receipt identifier (e.g. "TE-7"). Keep the column index the same so
           // existing column letters in the spreadsheet keep their meaning.
           const receiptId = propertyCode || String(recordNumber);
-          const row = [date, type, category, amount, unitLotNumber || "", tenantName || payerName || "", bankName || "", description || notes || "", submittedByName, new Date().toISOString(), receiptId, String(balance.toFixed(2))];
+          // For CC Tips, prepend the server name into the Description column
+          // so the sheet is self-documenting ("Tips - Megan S." + optional
+          // note) without needing a new header column. The Tenant column
+          // stays clean; payerName is a server identity for tips, not a
+          // tenant identity, and mixing them was confusing operators.
+          const isTipsRow = type === "spent" && category === "cc_tips";
+          const desc = isTipsRow && payerName
+            ? (description || notes ? `Tips - ${payerName}: ${description || notes}` : `Tips - ${payerName}`)
+            : (description || notes || "");
+          const tenantCell = isTipsRow ? "" : (tenantName || payerName || "");
+          const row = [date, type, category, amount, unitLotNumber || "", tenantCell, bankName || "", desc, submittedByName, new Date().toISOString(), receiptId, String(balance.toFixed(2))];
           const ok = await appendSheetRow(cashSheetsConfig.spreadsheetId, property, row);
           if (ok) await storage.updateCashTransactionSyncStatus(tx.id, "sheets", true);
         } catch (e) { console.error("[cash-sheets] Sync error:", e); }
@@ -4143,7 +4165,7 @@ export async function registerRoutes(
       return res.status(403).json({ error: "Not authorized" });
     }
 
-    const { category, amount, date, unitLotNumber, tenantName, bankName, description } = req.body;
+    const { category, amount, date, unitLotNumber, tenantName, bankName, description, payerName } = req.body;
 
     // Track changes
     const changes: string[] = [];
@@ -4154,6 +4176,7 @@ export async function registerRoutes(
     if (unitLotNumber !== undefined && unitLotNumber !== (existing.unitLotNumber || "")) changes.push(`Unit/Lot: "${existing.unitLotNumber || ""}" → "${unitLotNumber}"`);
     if (tenantName !== undefined && tenantName !== (existing.tenantName || "")) changes.push(`Tenant: "${existing.tenantName || ""}" → "${tenantName}"`);
     if (bankName !== undefined && bankName !== (existing.bankName || "")) changes.push(`Bank: "${existing.bankName || ""}" → "${bankName}"`);
+    if (payerName !== undefined && payerName !== (existing.payerName || "")) changes.push(`Server / Payer: "${existing.payerName || ""}" → "${payerName}"`);
 
     const editUser = await storage.getUser(session.userId);
     const editEntry = { by: editUser?.displayName || "Unknown", at: new Date().toISOString(), changes };
@@ -4168,6 +4191,7 @@ export async function registerRoutes(
       tenantName: tenantName ?? existing.tenantName,
       bankName: bankName ?? existing.bankName,
       description: description ?? existing.description,
+      payerName: payerName ?? existing.payerName,
       editHistory: JSON.stringify(existingHistory),
     });
 
@@ -4181,10 +4205,17 @@ export async function registerRoutes(
           // Delete old row and add updated one
           await deleteSheetRow(cashSheetsConfig!.spreadsheetId, existing.property, existing.date, existing.type, existing.amount);
           const balance = await storage.getCashBalanceByProperty(existing.property);
+          // Mirror the create-path CC Tips convention so an edited tips row
+          // still shows "Tips - Megan S." in the sheet Description column.
+          const isTipsRow = updated.type === "spent" && updated.category === "cc_tips";
+          const editedDesc = isTipsRow && updated.payerName
+            ? (updated.description ? `Tips - ${updated.payerName}: ${updated.description}` : `Tips - ${updated.payerName}`)
+            : (updated.description || "");
+          const tenantCell = isTipsRow ? "" : (updated.tenantName || "");
           await appendSheetRow(cashSheetsConfig!.spreadsheetId, existing.property, [
             updated.date, updated.type, updated.category, updated.amount,
-            updated.unitLotNumber || "", updated.tenantName || "", updated.bankName || "",
-            updated.description || "", submittedByName, updated.createdAt,
+            updated.unitLotNumber || "", tenantCell, updated.bankName || "",
+            editedDesc, submittedByName, updated.createdAt,
             String(updated.recordNumber || ""), String(balance.toFixed(2)),
             `EDITED by ${editEntry.by} at ${editEntry.at}: ${editEntry.changes.join("; ")}`,
           ]);
