@@ -163,11 +163,13 @@ function MarketingButton({ role, homeProperty, compact }: { role: string | undef
   });
   if (!eligible || !properties) return null;
 
-  // Property managers see the marketing link only for THEIR home base property.
-  // Admins/super_admins still see every property that has a marketing URL set.
-  const scoped = isAdmin
-    ? properties
-    : (homeProperty ? properties.filter(p => p.name === homeProperty) : []);
+  // Managers see the marketing link for EVERY property they're assigned to
+  // — not only their home base. /api/properties already returns the full
+  // assigned-property list for a manager (via storage.getPropertiesForUser),
+  // so no extra fetch is needed. Admins/super_admins still see every
+  // property. Home-base is no longer used as a filter; kept in the prop
+  // list for call-site compatibility.
+  const scoped = properties;
   const withUrl = scoped.filter(p => !!p.marketingUrl);
   if (withUrl.length === 0) return null;
 
@@ -250,9 +252,8 @@ function MasterSheetButton({ role, homeProperty, compact }: { role: string | und
   });
   if (!eligible || !properties) return null;
 
-  const scoped = isAdmin
-    ? properties
-    : (homeProperty ? properties.filter(p => p.name === homeProperty) : []);
+  // Same access model as MarketingButton — see comment there.
+  const scoped = properties;
   const withUrl = scoped.filter(p => !!p.masterSheetUrl);
   if (withUrl.length === 0) return null;
 
@@ -333,9 +334,8 @@ function VendingButton({ role, homeProperty, compact }: { role: string | undefin
   });
   if (!eligible || !properties) return null;
 
-  const scoped = isAdmin
-    ? properties
-    : (homeProperty ? properties.filter(p => p.name === homeProperty) : []);
+  // Same access model as MarketingButton — see comment there.
+  const scoped = properties;
   const withUrl = scoped.filter(p => !!p.vendingUrl);
   if (withUrl.length === 0) return null;
 
@@ -411,9 +411,8 @@ function MeterReadingButton({ role, homeProperty, compact }: { role: string | un
   });
   if (!eligible || !properties) return null;
 
-  const scoped = isAdmin
-    ? properties
-    : (homeProperty ? properties.filter(p => p.name === homeProperty) : []);
+  // Same access model as MarketingButton — see comment there.
+  const scoped = properties;
   const withUrl = scoped.filter(p => !!p.meterReadingUrl);
   if (withUrl.length === 0) return null;
 
