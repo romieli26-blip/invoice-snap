@@ -5506,6 +5506,29 @@ export async function registerRoutes(
       }
     } catch (e) { console.error("[time-reports] future-time check failed:", e); }
 
+    // Same-day rule: users without the allowPastDates override can only
+    // submit reports for today in Central Time. This is the hard enforcement
+    // — the client also blocks earlier dates via the input's min attribute
+    // and a preflight check, but this is the authoritative gate.
+    try {
+      const user = await storage.getUser(session.userId);
+      const allowPastDates = (user as any)?.allowPastDates === 1;
+      if (!allowPastDates) {
+        const todayInFoley = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+        if (date !== todayInFoley) {
+          const humanDate = new Date().toLocaleDateString("en-US", {
+            timeZone: "America/Chicago",
+            weekday: "long",
+            month: "long",
+            day: "numeric",
+          });
+          return res.status(400).json({
+            error: `Work reports must be submitted the same day the work was done (Central Time). Today is ${humanDate}.`,
+          });
+        }
+      }
+    } catch (e) { console.error("[time-reports] same-day check failed:", e); }
+
     // Check for overlapping time blocks with existing reports by same user on same day
     const existingReports = await storage.getTimeReportsByUserAndDate(session.userId, date);
     if (existingReports.length > 0 && timeBlocks && Array.isArray(timeBlocks)) {

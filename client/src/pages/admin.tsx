@@ -1167,7 +1167,7 @@ export default function AdminPage() {
                   </div>
                   <div className="flex items-center space-x-2">
                     <Checkbox id="edit-past-dates" checked={editUserAllowPastDates} onCheckedChange={c => setEditUserAllowPastDates(c === true)} />
-                    <Label htmlFor="edit-past-dates" className="text-sm font-normal cursor-pointer">Allow past date reporting (beyond 1 day)</Label>
+                    <Label htmlFor="edit-past-dates" className="text-sm font-normal cursor-pointer">Allow past date reporting (beyond current date)</Label>
                   </div>
                   <div className="flex items-center space-x-2">
                     <Checkbox id="edit-work-credits" checked={editUserAllowWorkCredits} onCheckedChange={c => setEditUserAllowWorkCredits(c === true)} />

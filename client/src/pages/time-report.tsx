@@ -37,13 +37,36 @@ function formatTime12(t: string): string {
   return `${h12}:${m.toString().padStart(2, "0")} ${ampm}`;
 }
 
+// Return today's date as YYYY-MM-DD in America/Chicago (Central Time),
+// which is Jetsetter's operational anchor timezone (Foley, AL). Every user's
+// "today" is normalised through this so a PM in a different zone can't file
+// a report for a day the company clock already rolled past.
+// en-CA locale gives ISO order (YYYY-MM-DD) without hand-parsing.
+function centralTodayISO(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+}
+
+// Human-readable Central Time date for error messages. Recomputed on each
+// call so "Today is Sunday, August 17." updates as the clock rolls over.
+function centralTodayHuman(): string {
+  return new Date().toLocaleDateString("en-US", {
+    timeZone: "America/Chicago",
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
+}
+
 export default function TimeReportPage() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
   const [property, setProperty] = useState(user?.homeProperty || "");
-  const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
+  // Work reports are anchored to Central Time (America/Chicago) — the Foley
+  // headquarters timezone — so PMs in other zones don't get a different
+  // "today" than the company clock. Default to today in that zone.
+  const [date, setDate] = useState(centralTodayISO());
   const [timeBlocks, setTimeBlocks] = useState<{ start: string; end: string }[]>([{ start: "", end: "" }]);
   const [accomplishments, setAccomplishments] = useState<string[]>([""]);
   const [miles, setMiles] = useState("");
@@ -136,9 +159,11 @@ export default function TimeReportPage() {
   const requireFinancialConfirm = (user as any)?.requireFinancialConfirm === 1 || (user as any)?.requireFinancialConfirm === true;
   const allowPastDates = (user as any)?.allowPastDates === 1 || (user as any)?.allowPastDates === true;
 
-  // Date limits: today is max, min is yesterday unless allowPastDates
-  const today = new Date().toISOString().split("T")[0];
-  const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
+  // Same-day rule: users can only file for today in Central Time. Admins
+  // with allowPastDates ticked keep the escape hatch (rare corrections).
+  // Computing today from a fixed timezone ensures every PM sees the same
+  // "today" regardless of where their phone thinks they are.
+  const today = centralTodayISO();
 
   // Check if all time blocks are filled
   const allBlocksFilled = timeBlocks.every(b => b.start && b.end);
@@ -222,6 +247,19 @@ export default function TimeReportPage() {
     const filtered = accomplishments.filter(a => a.trim());
     const startTime = timeBlocks[0].start;
     const endTime = timeBlocks[timeBlocks.length - 1].end;
+
+    // Same-day guard — mirror the server check so users get instant feedback
+    // instead of waiting for a round-trip. Runs even if the browser's date
+    // input was tampered with. Skipped for admins with allowPastDates on.
+    if (!allowPastDates && date !== centralTodayISO()) {
+      toast({
+        title: "Wrong date",
+        description: `Work reports must be submitted the same day the work was done (Central Time). Today is ${centralTodayHuman()}.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
     setSubmitting(true);
     try {
       // Capture the chosen position name+rate on the submission so the sheet,
@@ -509,7 +547,7 @@ export default function TimeReportPage() {
                 value={date}
                 onChange={e => setDate(e.target.value)}
                 max={today}
-                min={allowPastDates ? undefined : yesterday}
+                min={allowPastDates ? undefined : today}
                 required
               />
             </div>
