@@ -5463,20 +5463,21 @@ export async function registerRoutes(
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    // Block reporting in the future — based on Foley, AL time (Central Time).
-    // If a user tries to submit a same-day report whose end time (or any block's
-    // end time) is later than the current wall-clock in America/Chicago, reject.
-    // Future dates are also blocked outright. Past dates are always fine.
+    // Block reporting in the future — based on Central Time (every Jetsetter
+    // property is in the America/Chicago zone). Messages say "Central Time"
+    // rather than naming Foley since properties span AL/GA/FL/MS. If a user
+    // tries to submit a same-day report whose end time (or any block's end
+    // time) is later than the current wall-clock in America/Chicago, reject.
     try {
-      const nowInFoley = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
-      const todayInFoley = nowInFoley.toISOString().split("T")[0];
-      if (date > todayInFoley) {
+      const nowCentral = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
+      const todayCentral = nowCentral.toISOString().split("T")[0];
+      if (date > todayCentral) {
         return res.status(400).json({
-          error: `Cannot report for a future date. Today in Foley (Central Time) is ${todayInFoley}.`,
+          error: `Cannot report for a future date. Central Time is currently ${todayCentral}.`,
         });
       }
-      if (date === todayInFoley) {
-        const nowMinutes = nowInFoley.getHours() * 60 + nowInFoley.getMinutes();
+      if (date === todayCentral) {
+        const nowMinutes = nowCentral.getHours() * 60 + nowCentral.getMinutes();
         // Collect every block end (and start) for a same-day report; use the
         // largest end. Old-style single startTime/endTime rows fall back to those.
         let latestEndMinutes = 0;
@@ -5500,7 +5501,7 @@ export async function registerRoutes(
           const hh = String(Math.floor(nowMinutes / 60)).padStart(2, "0");
           const mm = String(nowMinutes % 60).padStart(2, "0");
           return res.status(400).json({
-            error: `Reported end time (${latestEndLabel}) is later than the current time in Foley (Central Time). It's ${hh}:${mm} there right now — you can't report hours that haven't happened yet.`,
+            error: `Reported end time (${latestEndLabel}) is later than the current time (Central Time). It's ${hh}:${mm} right now — you can't report hours that haven't happened yet.`,
           });
         }
       }
@@ -5514,8 +5515,8 @@ export async function registerRoutes(
       const user = await storage.getUser(session.userId);
       const allowPastDates = (user as any)?.allowPastDates === 1;
       if (!allowPastDates) {
-        const todayInFoley = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
-        if (date !== todayInFoley) {
+        const todayCentral = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+        if (date !== todayCentral) {
           const humanDate = new Date().toLocaleDateString("en-US", {
             timeZone: "America/Chicago",
             weekday: "long",

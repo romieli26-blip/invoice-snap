@@ -1187,7 +1187,7 @@ export default function AdminPage() {
                   </div>
                   <div className="flex items-center space-x-2">
                     <Checkbox id="edit-daily-reminder" checked={editUserDailyReminderEnabled} onCheckedChange={c => setEditUserDailyReminderEnabled(c === true)} />
-                    <Label htmlFor="edit-daily-reminder" className="text-sm font-normal cursor-pointer">Daily 7pm reminder (Mon–Sat, Florida time)</Label>
+                    <Label htmlFor="edit-daily-reminder" className="text-sm font-normal cursor-pointer">Daily 7pm reminder (Mon–Sat, Central Time)</Label>
                   </div>
                   <div className="flex items-center space-x-2">
                     <Checkbox id="edit-allow-flat-rate" checked={editUserAllowFlatRate} onCheckedChange={c => setEditUserAllowFlatRate(c === true)} />

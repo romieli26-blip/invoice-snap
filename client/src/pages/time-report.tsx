@@ -165,6 +165,25 @@ export default function TimeReportPage() {
   // "today" regardless of where their phone thinks they are.
   const today = centralTodayISO();
 
+  // Current Central Time as minutes past midnight, used to cap the End
+  // Time picker when the user is filing for today. A user in a different
+  // timezone whose phone says 3:41 PM would otherwise see 15:40 as a
+  // pickable option even when it's still only 14:40 Central at the
+  // property. Filtering the dropdown itself is friendlier than a red
+  // error after the fact. Recomputes on each render so it stays live if
+  // the form stays open for a while.
+  const nowCentralMinutes = (() => {
+    const nowStr = new Date().toLocaleString("en-US", {
+      timeZone: "America/Chicago",
+      hour12: false,
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const [h, m] = nowStr.split(":").map(Number);
+    return h * 60 + m;
+  })();
+  const isToday = date === today;
+
   // Check if all time blocks are filled
   const allBlocksFilled = timeBlocks.every(b => b.start && b.end);
 
@@ -208,17 +227,20 @@ export default function TimeReportPage() {
       }
     }
 
-    // Block reporting hours that haven't happened yet. Uses Foley, AL time
-    // (America/Chicago) so it doesn't matter what timezone the phone/browser is on.
+    // Block reporting hours that haven't happened yet, anchored to Central
+    // Time (every Jetsetter property is in America/Chicago). We compute
+    // wall-clock time in that zone regardless of what the user's phone
+    // reports — a phone on Eastern would otherwise let someone pick a time
+    // that hasn't happened yet at the actual property.
     try {
-      const nowInFoley = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
-      const todayInFoley = nowInFoley.toISOString().split("T")[0];
-      if (date > todayInFoley) {
-        toast({ title: `Cannot report a future date. It's ${todayInFoley} in Foley (Central).`, variant: "destructive" });
+      const nowCentral = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
+      const todayCentral = nowCentral.toISOString().split("T")[0];
+      if (date > todayCentral) {
+        toast({ title: `Cannot report a future date. Central Time is currently ${todayCentral}.`, variant: "destructive" });
         return;
       }
-      if (date === todayInFoley) {
-        const nowMinutes = nowInFoley.getHours() * 60 + nowInFoley.getMinutes();
+      if (date === todayCentral) {
+        const nowMinutes = nowCentral.getHours() * 60 + nowCentral.getMinutes();
         for (let i = 0; i < timeBlocks.length; i++) {
           const b = timeBlocks[i];
           const [eh, em] = b.end.split(":").map(Number);
@@ -227,7 +249,7 @@ export default function TimeReportPage() {
             const mm = String(nowMinutes % 60).padStart(2, "0");
             toast({
               title: `Block ${i + 1}: end time ${b.end} is in the future`,
-              description: `Right now in Foley (Central) it's ${hh}:${mm}. You can only report hours that have already happened.`,
+              description: `Right now (Central Time) it's ${hh}:${mm}. You can only report hours that have already happened.`,
               variant: "destructive",
             });
             return;
@@ -569,7 +591,14 @@ export default function TimeReportPage() {
                           <SelectValue placeholder="Start" />
                         </SelectTrigger>
                         <SelectContent className="max-h-[200px]">
-                          {TIME_OPTIONS.map(t => (
+                          {TIME_OPTIONS.filter(t => {
+                            // For today, hide start times later than "now Central"
+                            // so a phone in a different zone can't select a slot
+                            // that hasn't happened yet at the property.
+                            if (!isToday) return true;
+                            const [h, m] = t.split(":").map(Number);
+                            return h * 60 + m <= nowCentralMinutes;
+                          }).map(t => (
                             <SelectItem key={`s-${idx}-${t}`} value={t}>{formatTime12(t)}</SelectItem>
                           ))}
                         </SelectContent>
@@ -580,7 +609,12 @@ export default function TimeReportPage() {
                           <SelectValue placeholder="End" />
                         </SelectTrigger>
                         <SelectContent className="max-h-[200px]">
-                          {TIME_OPTIONS.map(t => (
+                          {TIME_OPTIONS.filter(t => {
+                            // Same cap for end time — no future minutes offered.
+                            if (!isToday) return true;
+                            const [h, m] = t.split(":").map(Number);
+                            return h * 60 + m <= nowCentralMinutes;
+                          }).map(t => (
                             <SelectItem key={`e-${idx}-${t}`} value={t}>{formatTime12(t)}</SelectItem>
                           ))}
                         </SelectContent>
