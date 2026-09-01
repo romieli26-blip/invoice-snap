@@ -26,6 +26,8 @@
 | Set a property's URL              | Admin Panel → Properties → expand   | 60 s |
 | Publish a new PM Manual PDF       | Admin Panel → Manuals → upload      | 30 s |
 | Deploy a code change              | `git push origin main`              | 2 m  |
+| **Restore from backup** (rare)    | See section 8 - read WHOLE section  | 10 m |
+| **Manual DB backup** (before risky ops) | Railway → service → Console  | 60 s |
 
 ---
 
@@ -246,26 +248,248 @@ capture-dashboard automation. Full instructions in that skill.
 
 ## 8. Restore from backup
 
-### From Railway automatic snapshots
-1. Railway dashboard → your service → Volumes → invoice-snap-volume.
-2. Click the **Backups** tab.
-3. Pick a snapshot (up to 7 days old).
-4. Click **Restore**. Railway spins the service down, restores the
-   volume, and starts it back up.
-5. Log in and verify - Cash on Hand cards, latest transactions, etc.
-6. Run Fix All to reconcile the Sheets against the restored DB.
+> **Read the whole section before starting.** A restore is a destructive
+> operation - the current state of the database gets replaced. Once done
+> it cannot be undone without ANOTHER restore. Ten minutes of reading now
+> is cheaper than an hour of panic in the middle.
 
-**Expect data loss** from any transactions submitted after the snapshot
-was taken. Users will need to re-submit those.
+### 8.1 When to restore (and when NOT to)
 
-### Manual backup you can run any time
-```bash
-# On the Railway VM (via Railway shell):
-sqlite3 /data/data.db ".backup /data/backups/backup-$(date +%F-%H%M).db"
-```
+**Restore is the right answer when:**
+- A property manager reports that data they can see clearly submitted
+  yesterday is missing from the app today.
+- The Cash on Hand card shows a wildly wrong number that Fix All cannot
+  reconcile.
+- The admin panel shows zero users or zero properties (catastrophic
+  data loss).
+- The database file is corrupted and the server won't boot (you'd see
+  Railway showing the service as "crashed" repeatedly).
 
-Not currently automated. Building a nightly encrypted-to-Drive backup
-is on the roadmap.
+**Restore is NOT the right answer when:**
+- Sheets or Drive are out of sync with the app - that's a **Reconnect
+  Google + Fix All** problem (section 1 and 2), not a restore.
+- A single user complains they can't see a specific receipt - that's
+  either a permissions issue (section 4) or the user is looking at the
+  wrong property filter.
+- The app is slow or unreachable but data appears intact - that's a
+  Railway problem, try section 9's restart lever first.
+- Someone accidentally deleted one transaction - a full restore would
+  wipe out every OTHER transaction submitted since the snapshot. Have
+  the user or admin re-enter the deleted one instead.
+
+**Rule of thumb:** if you're not sure, DON'T restore yet. Take a manual
+backup (section 8.5) first, so if you make things worse you can get
+back to the current state.
+
+### 8.2 Before you start - do these three things
+
+1. **Screenshot everything you can see right now.**
+   - Admin Panel main page.
+   - Sheet Sync Status pill (green / red / rows unsynced count).
+   - Users list.
+   - Properties list.
+   - Cash on Hand + Checks on Hand values.
+   - The specific evidence of data loss (the missing receipt, the wrong
+     total, whatever prompted this).
+
+   You will need these to know when the restore worked and what still
+   needs manual fixing.
+
+2. **Take a fresh manual backup of the CURRENT (broken) state.**
+   See section 8.5. This lets you roll BACK if the restore makes things
+   worse or you accidentally restore the wrong snapshot.
+
+3. **Announce a brief maintenance window.**
+   Send a WhatsApp or SMS to Kay, Annette, Megan, and every active PM:
+   > "Reporting app is going into maintenance for 10 minutes. Don't
+   > submit any new receipts or transactions until I message back."
+
+   This prevents users from submitting between the snapshot restore
+   (which happens instantly) and the accountant-visible sheets being
+   reconciled (which takes another minute). Those submissions would be
+   confusing to reconcile after the fact.
+
+### 8.3 The actual restore (Railway automatic snapshots)
+
+Railway takes an automatic snapshot of the `invoice-snap-volume` every
+24 hours and retains **7 days** of history. Snapshots include
+everything on the volume: `data.db`, `uploads/`, config files - the
+lot.
+
+**Steps:**
+
+1. Sign in to Railway: https://railway.app.
+2. Open the **truthful-enchantment** workspace (or whatever your
+   workspace is called - only one is used for Jetsetter).
+3. Click the **invoice-snap** project.
+4. In the canvas that appears, click the **invoice-snap-volume** node.
+   (Node, not the Deployments tab. The volume node is the one with a
+   little disk icon; the service node is the one with a GitHub icon.)
+5. Click the **Backups** tab.
+6. You'll see a list of snapshots, each with:
+   - A date and time in your local timezone.
+   - The total size on disk at that moment.
+7. Pick the most recent snapshot from BEFORE the problem started. If
+   you're not sure, pick yesterday's - one lost day is better than
+   restoring a broken state. Do NOT pick anything older than 3 days
+   ago unless you're sure - you'll lose too much intermediate data.
+8. Click the three-dot menu next to the snapshot -> **Restore**.
+9. A confirmation dialog appears. **Read the warning text carefully**
+   - it will explicitly tell you that the current volume contents will
+   be replaced. Type the confirmation word / click Confirm.
+10. Railway now:
+    - Spins the invoice-snap service DOWN (~30 s).
+    - Replaces the volume contents with the snapshot (~30-60 s
+      depending on volume size).
+    - Spins the service back UP (~60 s).
+    - Total: ~2-3 minutes of downtime.
+11. Watch the **Deployments** tab of the invoice-snap service. You'll
+    see the deployment briefly go into a "Deploying" state. When it
+    returns to green **Active**, the restore is done.
+
+### 8.4 After the restore - verification and reconciliation
+
+DO NOT skip these steps. A restore that isn't verified is a restore
+that isn't complete.
+
+**Step 1 - Confirm the app is up.**
+1. Open https://invoice-snap-production.up.railway.app in a browser.
+2. Log in as `ben`.
+3. If the login page appears and you can sign in, the app is up.
+4. If the login page throws an error, wait 60 more seconds and try
+   again. If it still fails, see section 9 (Emergency levers).
+
+**Step 2 - Compare what you see now to your pre-restore screenshots.**
+- Users list: same people? Same number?
+- Properties: all present?
+- Cash on Hand: does it match what it was BEFORE the incident? (Not
+  "before the restore" - "before whatever broke it in the first place.")
+- Recent Receipts: earliest visible receipt is now dated the snapshot
+  time, roughly. Anything submitted after that timestamp is gone.
+
+**Step 3 - Reconcile with Google Sheets.**
+1. In the admin panel, open the **Sheet Sync Status** section.
+2. Click the refresh icon top-right to run **Deep verify**.
+3. This compares the (restored) database against what's actually in
+   the Google Sheets. Expect **big** drift - transactions that were in
+   Sheets but not the snapshot will show as "more in sheet than in DB."
+   The reverse is also possible.
+4. **Do NOT click Fix All yet.** Fix All rewrites Sheets from the DB.
+   If the DB is missing rows that Sheets still has, Fix All would
+   DELETE those rows from Sheets. That's usually the wrong outcome.
+5. Instead, decide with your accountant which of the two is the
+   source of truth for the drift period:
+   - **DB is right (Sheets was corrupted or edited manually)** ->
+     click Fix All.
+   - **Sheets is right (DB was corrupted, Sheets was healthy)** ->
+     DO NOT click Fix All. Instead, use Sheets as the source and
+     ask a developer to re-import the missing transactions from
+     Sheets back into the DB. This is a manual scripting job.
+
+**Step 4 - Announce the outage is over.**
+Message the same PMs you announced to in section 8.2:
+> "Reporting app is back online. If you submitted anything between
+> [start-of-outage-time] and now, please re-submit it. Everything
+> after that is fine."
+
+Give them a specific cutoff time. Vague messages produce duplicates.
+
+**Step 5 - Document what happened.**
+Write a one-page note (or add to this Perplexity thread) covering:
+- What broke (data loss, corruption, wrong entry, etc.).
+- What snapshot you restored to (date + time).
+- What was lost (roughly how many transactions, from what time range).
+- Whether Fix All was run or not.
+- Which users had to re-submit.
+
+This becomes the audit record if anyone asks later.
+
+### 8.5 Manual backup (do this BEFORE any risky action)
+
+Railway takes automatic snapshots, but they're on a 24-hour schedule.
+Before any restore, schema change, or migration, take a fresh manual
+backup so you have a rollback point closer than yesterday.
+
+**Via Railway shell (built into the dashboard):**
+
+1. Railway dashboard -> invoice-snap service -> **Console** tab.
+2. In the terminal that opens, run:
+   ```bash
+   mkdir -p /data/backups
+   sqlite3 /data/data.db ".backup /data/backups/pre-restore-$(date +%Y%m%d-%H%M).db"
+   ls -lh /data/backups/
+   ```
+3. You should see a `.db` file with the current timestamp and roughly
+   the same size as `/data/data.db`. If the size is 0 bytes or hugely
+   different, the backup failed - try again.
+
+That file lives on the same volume, so it survives redeploys but NOT
+a volume wipe. If you're doing something that might affect the volume
+itself, also do a **download**:
+
+1. In the same Console, run:
+   ```bash
+   base64 /data/backups/pre-restore-*.db | head -c 100
+   ```
+   (just to prove the file exists and is readable.)
+2. Then use `railway volume download` from your local machine, OR ask
+   the developer to `scp` the file off. There's no built-in "download"
+   button in the Railway UI as of writing.
+
+### 8.6 Manual restore from a `.db` file you have on disk
+
+If someone hands you a `data.db` file (from an old backup, a developer's
+local copy, etc.) and you need to make the production app use it:
+
+1. In the Railway service Console:
+   ```bash
+   # 1. Snapshot the current DB as a safety net.
+   cp /data/data.db /data/data.db.replaced-$(date +%Y%m%d-%H%M)
+
+   # 2. Copy the new file into place.
+   #    (upload the file to /data/ first via Railway file transfer or
+   #     `railway run` from your local machine.)
+   cp /data/incoming.db /data/data.db
+
+   # 3. Restart the service so it opens the new DB.
+   ```
+2. Restart via the Railway dashboard: three-dot menu on the active
+   deployment -> Restart.
+3. Verify (section 8.4).
+
+### 8.7 What CAN'T be restored
+
+Some things live outside the Railway volume and are NOT part of any
+snapshot:
+
+- **Google Sheets rows.** These live in Google's cloud, not on your
+  volume. If someone accidentally deletes a sheet tab, use Google
+  Sheets' own version history (File -> Version History -> See version
+  history) to restore. Google keeps unlimited edit history.
+- **Google Drive photos.** Same as above. Use Drive's file-level
+  version history or the Trash (which retains files for 30 days).
+- **Environment variables on Railway.** Anything under Variables tab
+  is not part of the volume. If someone accidentally deletes
+  `GOOGLE_CLIENT_ID`, look at 1Password / Bitwarden or re-derive it
+  from Google Cloud Console.
+- **The GitHub code repo.** If someone force-pushes over the repo,
+  every developer's local machine still has a full copy. `git reflog`
+  can also recover.
+
+### 8.8 Nightly off-Railway backup (roadmap item)
+
+Railway's 7-day snapshot retention lives on the same infrastructure as
+the running app. If Railway itself has a catastrophic multi-day outage
+or the account is compromised, snapshots go with it.
+
+On the roadmap: a nightly cron that dumps `data.db` as an encrypted file
+to a dedicated backup folder on Google Drive owned by
+`jetsetterinvoices1@gmail.com`. Estimated 3 hours of build work. Ask the
+developer to prioritise this if the manager audit ever flags it.
+
+Until that ships, the practical mitigation is to run section 8.5's
+manual backup command WEEKLY and download the resulting file to a
+laptop or personal Drive. That gives you a copy outside Railway.
 
 ---
 
