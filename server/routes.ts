@@ -4821,6 +4821,71 @@ export async function registerRoutes(
     return { protectedIds, archiveFolderId, actions, keeps, warnings, root };
   }
 
+  // Inspect the current shape of the receipts folder tree in Drive. Given
+  // the pinned server root (driveFolderConfig.receiptsRootId), walk its
+  // immediate children and, for any child whose name matches a receipts
+  // subfolder (Cash / Check / Credit Card Receipts), count files inside
+  // AND flag duplicate names. Answers the question "where did the app put
+  // SU-13's photo?" and "which of the two Credit Card Receipts folders is
+  // the real one?".
+  app.get("/api/admin/drive-inspect-receipts", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    if (!isGoogleEnabled()) return res.status(400).json({ error: "Google Drive not configured" });
+    try {
+      const rootId = driveFolderConfig.receiptsRootId;
+      const rootChildren = await listDriveFolderChildren(rootId);
+      // Group by lowercased name.
+      const byName = new Map<string, any[]>();
+      for (const c of rootChildren) {
+        if (c.mimeType !== "application/vnd.google-apps.folder") continue;
+        const key = c.name.trim().toLowerCase();
+        const list = byName.get(key) || [];
+        list.push(c);
+        byName.set(key, list);
+      }
+      // For each subfolder, walk its children (property folders), and for
+      // each property folder, count files.
+      const subfolders: any[] = [];
+      for (const [key, folders] of byName) {
+        for (const folder of folders) {
+          const propFolders = await listDriveFolderChildren(folder.id);
+          const props: any[] = [];
+          for (const pf of propFolders) {
+            if (pf.mimeType !== "application/vnd.google-apps.folder") continue;
+            const files = await listDriveFolderChildren(pf.id);
+            const fileFiles = files.filter((f: any) => f.mimeType !== "application/vnd.google-apps.folder");
+            props.push({
+              id: pf.id,
+              name: pf.name,
+              modifiedTime: pf.modifiedTime,
+              fileCount: fileFiles.length,
+              sampleFiles: fileFiles.slice(0, 100).map((f: any) => ({ id: f.id, name: f.name })),
+            });
+          }
+          subfolders.push({
+            groupKey: key,
+            id: folder.id,
+            name: folder.name,
+            modifiedTime: folder.modifiedTime,
+            isDuplicate: folders.length > 1,
+            properties: props,
+          });
+        }
+      }
+      res.json({
+        ok: true,
+        rootId,
+        rootChildrenCount: rootChildren.length,
+        subfolders,
+        duplicateGroups: [...byName.entries()].filter(([, v]) => v.length > 1).map(([k, v]) => ({ name: k, count: v.length, ids: v.map(f => f.id) })),
+      });
+    } catch (e: any) {
+      console.error("[drive-inspect] failed:", e);
+      res.status(500).json({ error: e.message?.slice(0, 200) || "inspect failed" });
+    }
+  });
+
   app.get("/api/admin/drive-cleanup/preview", async (req, res) => {
     const session = await requireAdmin(req, res);
     if (!session) return;
