@@ -662,6 +662,25 @@ export async function listMyDriveRootChildren(): Promise<Array<{
 }
 
 /**
+ * Rename a Drive file or folder by ID. Returns true on success.
+ * Used by the consolidation migration to disambiguate colliding filenames
+ * before merging two folders.
+ */
+export async function renameDriveFileById(fileId: string, newName: string): Promise<boolean> {
+  if (!driveApi) return false;
+  try {
+    await driveApi.files.update({
+      fileId,
+      requestBody: { name: newName },
+    });
+    return true;
+  } catch (err: any) {
+    console.error(`[google-api] renameDriveFileById failed for ${fileId}:`, err.message?.slice(0, 200));
+    return false;
+  }
+}
+
+/**
  * Send a Drive file or folder to the Trash. Idempotent.
  */
 export async function trashDriveFile(fileId: string): Promise<boolean> {

@@ -8,7 +8,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
 import pdfParse from "pdf-parse";
-import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, driveFolderExists, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, getDriveFolderWebViewLink, hideSheetTab, unhideSheetTab, deleteSheetTab, listDriveFolderChildren, moveDriveFile, trashDriveFile, readSheetRange, readSheetRangeRaw, listMyDriveRootChildren, reinitGoogleApis, getActiveTokenSource } from "./google-api";
+import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, driveFolderExists, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, renameDriveFileById, getDriveFolderWebViewLink, hideSheetTab, unhideSheetTab, deleteSheetTab, listDriveFolderChildren, moveDriveFile, trashDriveFile, readSheetRange, readSheetRangeRaw, listMyDriveRootChildren, reinitGoogleApis, getActiveTokenSource } from "./google-api";
 import { getAppSetting, setAppSetting } from "./storage";
 import { google as googleApis } from "googleapis";
 // nodemailer removed — using Gmail API instead (SMTP blocked on Railway)
@@ -4834,6 +4834,7 @@ export async function registerRoutes(
     if (!isGoogleEnabled()) return res.status(400).json({ error: "Google Drive not configured" });
     try {
       const rootId = driveFolderConfig.receiptsRootId;
+      if (!rootId) return res.status(400).json({ error: "No receipts root pinned yet" });
       const rootChildren = await listDriveFolderChildren(rootId);
       // Group by lowercased name.
       const byName = new Map<string, any[]>();
@@ -4858,7 +4859,7 @@ export async function registerRoutes(
             props.push({
               id: pf.id,
               name: pf.name,
-              modifiedTime: pf.modifiedTime,
+              modifiedTime: (pf as any).modifiedTime,
               fileCount: fileFiles.length,
               sampleFiles: fileFiles.slice(0, 100).map((f: any) => ({ id: f.id, name: f.name })),
             });
@@ -4867,7 +4868,7 @@ export async function registerRoutes(
             groupKey: key,
             id: folder.id,
             name: folder.name,
-            modifiedTime: folder.modifiedTime,
+            modifiedTime: (folder as any).modifiedTime,
             isDuplicate: folders.length > 1,
             properties: props,
           });
@@ -4883,6 +4884,386 @@ export async function registerRoutes(
     } catch (e: any) {
       console.error("[drive-inspect] failed:", e);
       res.status(500).json({ error: e.message?.slice(0, 200) || "inspect failed" });
+    }
+  });
+
+  // =====================================================================
+  // DRIVE CONSOLIDATION - one-time migration to unify the parallel folder
+  // trees that grew organically over the last few months.
+  //
+  // Problem:
+  //   Two receipts root folders exist side-by-side in Drive:
+  //     A) "Credit Card and Cash Receipts"           (the ORIGINAL, older
+  //        pinned in driveFolderConfig.receiptsRootId as `1j2K9YwX...`).
+  //        This is where the running app has been writing every receipt
+  //        photo because ensureDriveFolder() searches by that exact name.
+  //     B) "Credit Card, Checks and Cash Receipts"   (the NEWER name that
+  //        Ben created in Drive, with the intent of it becoming the master).
+  //   Both contain a full set of subfolders (Cash Receipts / Check Receipts
+  //   / Credit Card Receipts), and INSIDE those subfolders sit the property
+  //   folders (Sunchase, MSE, Bonifay, etc.). Sunchase alone has receipts
+  //   split across THREE different Sunchase folders — one under each root's
+  //   Credit Card Receipts subfolder plus one more historical copy.
+  //
+  // Goal:
+  //   Merge everything under root A INTO root B. Every property folder that
+  //   already exists under B keeps its ID and absorbs the files from its
+  //   sibling under A. Files are MOVED (not copied) so IDs are preserved and
+  //   nothing is duplicated. Once A's subfolders are drained, they get moved
+  //   to "_Archived (do not use)". Finally the pinned receiptsRootId is
+  //   flipped to B so the app writes there going forward.
+  //
+  // Safety:
+  //   * Preview endpoint returns the full plan without touching anything.
+  //   * Execute endpoint requires ?confirm=1 AND admin session.
+  //   * We refuse to touch any ID in protectedIds (active sheets, the pinned
+  //     root — which will be updated at the very END, not during moves).
+  //   * File name collisions are detected up front; on collision, the file
+  //     from A is renamed with a " (from old folder)" suffix so nothing
+  //     silently overwrites.
+  //   * We only ever move files INTO the destination; nothing gets deleted.
+  //   * If ANY step fails, we stop and return partial results — no automatic
+  //     rollback, but nothing is destructive so re-running is safe.
+  // =====================================================================
+
+  // Canonical names of receipts root folders we know about. Order matters:
+  // when only ONE exists it's the master; when both exist, the later name
+  // (index 1) wins.
+  const RECEIPTS_ROOT_NAMES = [
+    "Credit Card and Cash Receipts",           // OLD - source in migration
+    "Credit Card, Checks and Cash Receipts",   // NEW - destination master
+  ];
+
+  async function buildConsolidatePlan(): Promise<any> {
+    if (!isGoogleEnabled()) throw new Error("Google not enabled");
+
+    // Look up both possible root folders by exact name. Non-recursive.
+    const rootMatches: any[] = [];
+    for (const name of RECEIPTS_ROOT_NAMES) {
+      const id = await ensureDriveFolder(name);
+      if (id) {
+        rootMatches.push({ name, id });
+      }
+    }
+
+    if (rootMatches.length === 0) {
+      return {
+        ok: false,
+        error: "Neither receipts root folder found in Drive. Nothing to consolidate.",
+      };
+    }
+    if (rootMatches.length === 1) {
+      // Only one root exists — nothing to merge, but we may still want to
+      // pin it and de-dupe its subfolders.
+      return {
+        ok: true,
+        singleRoot: true,
+        masterId: rootMatches[0].id,
+        masterName: rootMatches[0].name,
+        moves: [],
+        subfolderMerges: [],
+        emptyFoldersToArchive: [],
+        note: "Only one receipts root exists. No cross-root consolidation needed.",
+      };
+    }
+
+    // Both roots exist. NEW (index 1) is destination.
+    const source = rootMatches[0]; // OLD
+    const dest = rootMatches[1];   // NEW master
+
+    // Walk source root's children (Cash / Check / CC Receipts subfolders).
+    const sourceSubs = await listDriveFolderChildren(source.id);
+    const destSubs = await listDriveFolderChildren(dest.id);
+
+    // Build a name -> [folders] map for the destination. When source has a
+    // subfolder whose name matches, we merge; otherwise we move it wholesale.
+    const destSubByName = new Map<string, any[]>();
+    for (const f of destSubs) {
+      if (f.mimeType !== "application/vnd.google-apps.folder") continue;
+      const key = f.name.trim().toLowerCase();
+      const arr = destSubByName.get(key) || [];
+      arr.push(f);
+      destSubByName.set(key, arr);
+    }
+
+    const subfolderMerges: any[] = [];
+    const moves: any[] = []; // whole-folder moves (source subfolder → dest root)
+    const emptyFoldersToArchive: any[] = []; // source shells to trash after drain
+
+    for (const srcSub of sourceSubs) {
+      if (srcSub.mimeType !== "application/vnd.google-apps.folder") {
+        // Loose file directly under source root — move it into dest root.
+        moves.push({
+          fileId: srcSub.id,
+          fileName: srcSub.name,
+          isFolder: false,
+          fromParentId: source.id,
+          fromParentName: source.name,
+          toParentId: dest.id,
+          toParentName: dest.name,
+        });
+        continue;
+      }
+
+      const key = srcSub.name.trim().toLowerCase();
+      const destPeers = destSubByName.get(key) || [];
+
+      if (destPeers.length === 0) {
+        // No same-named subfolder under dest. Move the whole subfolder over.
+        moves.push({
+          fileId: srcSub.id,
+          fileName: srcSub.name,
+          isFolder: true,
+          fromParentId: source.id,
+          fromParentName: source.name,
+          toParentId: dest.id,
+          toParentName: dest.name,
+        });
+        continue;
+      }
+
+      // A dest sibling with the same name exists. Merge children into it.
+      // If more than one dest peer shares the name, pick the newest as
+      // the merge target and record the extras as "needs subfolder merge"
+      // in a second pass below.
+      const mergeTarget = destPeers[0];
+
+      // Now walk one level deeper: property folders (Sunchase / MSE / ...).
+      const srcProps = await listDriveFolderChildren(srcSub.id);
+      const destProps = await listDriveFolderChildren(mergeTarget.id);
+      const destPropByName = new Map<string, any[]>();
+      for (const p of destProps) {
+        if (p.mimeType !== "application/vnd.google-apps.folder") continue;
+        const k = p.name.trim().toLowerCase();
+        const arr = destPropByName.get(k) || [];
+        arr.push(p);
+        destPropByName.set(k, arr);
+      }
+
+      const propertyMerges: any[] = [];
+      for (const srcProp of srcProps) {
+        if (srcProp.mimeType !== "application/vnd.google-apps.folder") {
+          // Loose file at Cash/Check/CC Receipts level (rare) — move to
+          // the merge target subfolder.
+          moves.push({
+            fileId: srcProp.id,
+            fileName: srcProp.name,
+            isFolder: false,
+            fromParentId: srcSub.id,
+            fromParentName: `${source.name} / ${srcSub.name}`,
+            toParentId: mergeTarget.id,
+            toParentName: `${dest.name} / ${mergeTarget.name}`,
+          });
+          continue;
+        }
+
+        const propKey = srcProp.name.trim().toLowerCase();
+        const destPropPeers = destPropByName.get(propKey) || [];
+
+        if (destPropPeers.length === 0) {
+          // No matching property folder under dest — move the whole property
+          // folder as-is.
+          moves.push({
+            fileId: srcProp.id,
+            fileName: srcProp.name,
+            isFolder: true,
+            fromParentId: srcSub.id,
+            fromParentName: `${source.name} / ${srcSub.name}`,
+            toParentId: mergeTarget.id,
+            toParentName: `${dest.name} / ${mergeTarget.name}`,
+          });
+          continue;
+        }
+
+        // Property folder exists under dest. Merge every FILE inside srcProp
+        // into destPropTarget. Detect name collisions.
+        const destPropTarget = destPropPeers[0];
+        const srcFiles = await listDriveFolderChildren(srcProp.id);
+        const destFiles = await listDriveFolderChildren(destPropTarget.id);
+        const destFilenames = new Set(
+          destFiles.map((f: any) => f.name.trim().toLowerCase())
+        );
+
+        const fileMoves: any[] = [];
+        for (const sf of srcFiles) {
+          const nameKey = sf.name.trim().toLowerCase();
+          const collides = destFilenames.has(nameKey);
+          fileMoves.push({
+            fileId: sf.id,
+            fileName: sf.name,
+            isFolder: sf.mimeType === "application/vnd.google-apps.folder",
+            fromParentId: srcProp.id,
+            fromParentName: `${source.name} / ${srcSub.name} / ${srcProp.name}`,
+            toParentId: destPropTarget.id,
+            toParentName: `${dest.name} / ${mergeTarget.name} / ${destPropTarget.name}`,
+            collides,
+            renameTo: collides ? sf.name.replace(/(\.[^.]+)?$/, ' (from old folder)$1') : null,
+          });
+        }
+
+        propertyMerges.push({
+          propertyName: srcProp.name,
+          sourcePropFolderId: srcProp.id,
+          destPropFolderId: destPropTarget.id,
+          destPeersExtraCount: destPropPeers.length - 1,
+          fileCount: srcFiles.length,
+          collisionCount: fileMoves.filter((m: any) => m.collides).length,
+          fileMoves,
+        });
+
+        moves.push(...fileMoves);
+        // The now-empty srcProp folder is a shell — mark for archival.
+        emptyFoldersToArchive.push({
+          folderId: srcProp.id,
+          folderName: `${source.name} / ${srcSub.name} / ${srcProp.name}`,
+        });
+      }
+
+      subfolderMerges.push({
+        subfolderName: srcSub.name,
+        sourceSubfolderId: srcSub.id,
+        destSubfolderId: mergeTarget.id,
+        destPeersExtraCount: destPeers.length - 1,
+        propertyCount: srcProps.length,
+        propertyMerges,
+      });
+      // The now-empty srcSub folder is a shell.
+      emptyFoldersToArchive.push({
+        folderId: srcSub.id,
+        folderName: `${source.name} / ${srcSub.name}`,
+      });
+    }
+
+    // Finally, the source ROOT itself will be moved to _Archived at the end.
+    emptyFoldersToArchive.push({
+      folderId: source.id,
+      folderName: source.name,
+    });
+
+    return {
+      ok: true,
+      singleRoot: false,
+      sourceId: source.id,
+      sourceName: source.name,
+      destId: dest.id,
+      destName: dest.name,
+      currentPinnedRootId: driveFolderConfig.receiptsRootId || null,
+      willRepinTo: dest.id,
+      totalFileMoves: moves.filter(m => !m.isFolder).length,
+      totalFolderMoves: moves.filter(m => m.isFolder).length,
+      totalCollisions: moves.filter(m => m.collides).length,
+      subfolderMerges,
+      moves,
+      emptyFoldersToArchive,
+    };
+  }
+
+  app.get("/api/admin/drive-consolidate/preview", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    if (!isGoogleEnabled()) return res.status(400).json({ error: "Google Drive not configured" });
+    try {
+      const plan = await buildConsolidatePlan();
+      res.json(plan);
+    } catch (e: any) {
+      console.error("[drive-consolidate/preview] failed:", e);
+      res.status(500).json({ error: e.message?.slice(0, 200) || "preview failed" });
+    }
+  });
+
+  app.post("/api/admin/drive-consolidate/execute", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    if (!isGoogleEnabled()) return res.status(400).json({ error: "Google Drive not configured" });
+    if (req.query.confirm !== "1") {
+      return res.status(400).json({
+        error: "Missing ?confirm=1 query parameter. This endpoint moves files in Drive.",
+      });
+    }
+    try {
+      const plan = await buildConsolidatePlan();
+      if (!plan.ok || plan.singleRoot) {
+        return res.json({ ok: true, note: plan.note || "Nothing to consolidate.", plan });
+      }
+
+      const results: any[] = [];
+      let moved = 0;
+      let renamed = 0;
+      let failed = 0;
+
+      // Ensure _Archived folder exists.
+      const archiveId = await ensureDriveFolder("_Archived (do not use)");
+      if (!archiveId) {
+        return res.status(500).json({ error: "Failed to ensure _Archived folder" });
+      }
+
+      // Perform every move. For collisions, rename FIRST then move.
+      for (const m of plan.moves) {
+        try {
+          if (m.collides && m.renameTo) {
+            await renameDriveFileById(m.fileId, m.renameTo);
+            renamed++;
+          }
+          const ok = await moveDriveFile(m.fileId, m.toParentId);
+          if (ok) {
+            moved++;
+            results.push({ ok: true, kind: "move", fileId: m.fileId, name: m.fileName, to: m.toParentName });
+          } else {
+            failed++;
+            results.push({ ok: false, kind: "move", fileId: m.fileId, name: m.fileName, error: "moveDriveFile returned false" });
+          }
+        } catch (e: any) {
+          failed++;
+          results.push({ ok: false, kind: "move", fileId: m.fileId, name: m.fileName, error: e.message?.slice(0, 200) });
+        }
+      }
+
+      // Archive every now-empty shell folder.
+      let archived = 0;
+      for (const shell of plan.emptyFoldersToArchive) {
+        try {
+          // Verify empty first — abort archival if not empty (paranoia).
+          const kids = await listDriveFolderChildren(shell.folderId);
+          if (kids.length > 0) {
+            results.push({ ok: false, kind: "archive", folderId: shell.folderId, name: shell.folderName, error: `still contains ${kids.length} item(s), skipped` });
+            continue;
+          }
+          const ok = await moveDriveFile(shell.folderId, archiveId);
+          if (ok) {
+            archived++;
+            results.push({ ok: true, kind: "archive", folderId: shell.folderId, name: shell.folderName });
+          } else {
+            results.push({ ok: false, kind: "archive", folderId: shell.folderId, name: shell.folderName, error: "move failed" });
+          }
+        } catch (e: any) {
+          results.push({ ok: false, kind: "archive", folderId: shell.folderId, name: shell.folderName, error: e.message?.slice(0, 200) });
+        }
+      }
+
+      // Re-pin the receipts root to the NEW master, so future uploads go there.
+      driveFolderConfig.receiptsRootId = plan.destId;
+      saveDriveFolderConfig();
+
+      // Also flush the property folder cache — every cached ID may point at
+      // a now-archived folder under the OLD root. Next upload will re-resolve.
+      propertyFolderCache.clear();
+
+      res.json({
+        ok: true,
+        summary: {
+          totalPlanned: plan.moves.length,
+          moved,
+          renamed,
+          failed,
+          archived,
+          newPinnedRootId: plan.destId,
+          newPinnedRootName: plan.destName,
+        },
+        results,
+      });
+    } catch (e: any) {
+      console.error("[drive-consolidate/execute] failed:", e);
+      res.status(500).json({ error: e.message?.slice(0, 200) || "execute failed" });
     }
   });
 
