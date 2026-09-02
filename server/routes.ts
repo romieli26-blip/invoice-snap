@@ -22,18 +22,34 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 // ---- Google Sheets config ----
-const SHEETS_CONFIG_PATH = path.resolve(process.cwd(), "sheets-config.json");
+// Sheets configs live on the persistent Railway volume (DATA_DIR) so they
+// survive redeploys. Previously in process.cwd() — every deploy silently
+// wiped them, and any submission afterwards landed in the DB but never made
+// it to the sheet. Legacy cwd files are migrated forward on first read.
+const SHEETS_CONFIG_PATH = path.resolve(dataDir, "sheets-config.json");
+const SHEETS_CONFIG_LEGACY_PATH = path.resolve(process.cwd(), "sheets-config.json");
 let sheetsConfig: { spreadsheetId: string; spreadsheetUrl?: string; tabs: Record<string, number> } | null = null;
 
-// Cash transactions sheets config
-const CASH_SHEETS_CONFIG_PATH = path.resolve(process.cwd(), "cash-sheets-config.json");
+const CASH_SHEETS_CONFIG_PATH = path.resolve(dataDir, "cash-sheets-config.json");
+const CASH_SHEETS_CONFIG_LEGACY_PATH = path.resolve(process.cwd(), "cash-sheets-config.json");
 let cashSheetsConfig: { spreadsheetId: string; tabs: Record<string, number> } | null = null;
 try {
   if (fs.existsSync(CASH_SHEETS_CONFIG_PATH)) {
     cashSheetsConfig = JSON.parse(fs.readFileSync(CASH_SHEETS_CONFIG_PATH, "utf-8"));
-    console.log(`[cash-sheets] Config loaded: spreadsheet ${cashSheetsConfig!.spreadsheetId}`);
+    console.log(`[cash-sheets] Config loaded (persistent): spreadsheet ${cashSheetsConfig!.spreadsheetId}`);
+  } else if (fs.existsSync(CASH_SHEETS_CONFIG_LEGACY_PATH)) {
+    cashSheetsConfig = JSON.parse(fs.readFileSync(CASH_SHEETS_CONFIG_LEGACY_PATH, "utf-8"));
+    try {
+      fs.writeFileSync(CASH_SHEETS_CONFIG_PATH, JSON.stringify(cashSheetsConfig, null, 2));
+      console.log(`[cash-sheets] migrated legacy config → ${CASH_SHEETS_CONFIG_PATH}`);
+    } catch (e: any) {
+      console.error(`[cash-sheets] legacy migration failed: ${e.message}`);
+    }
+    console.log(`[cash-sheets] Config loaded (legacy cwd): spreadsheet ${cashSheetsConfig!.spreadsheetId}`);
   }
-} catch {}
+} catch (e: any) {
+  console.error("[cash-sheets] Failed to load config:", e?.message);
+}
 
 // Check transactions sheets config (separate spreadsheet from cash). Same
 // schema — one tab per property.
@@ -70,10 +86,19 @@ try {
 try {
   if (fs.existsSync(SHEETS_CONFIG_PATH)) {
     sheetsConfig = JSON.parse(fs.readFileSync(SHEETS_CONFIG_PATH, "utf-8"));
-    console.log(`[sheets] Config loaded: spreadsheet ${sheetsConfig!.spreadsheetId}`);
+    console.log(`[sheets] Config loaded (persistent): spreadsheet ${sheetsConfig!.spreadsheetId}`);
+  } else if (fs.existsSync(SHEETS_CONFIG_LEGACY_PATH)) {
+    sheetsConfig = JSON.parse(fs.readFileSync(SHEETS_CONFIG_LEGACY_PATH, "utf-8"));
+    try {
+      fs.writeFileSync(SHEETS_CONFIG_PATH, JSON.stringify(sheetsConfig, null, 2));
+      console.log(`[sheets] migrated legacy config → ${SHEETS_CONFIG_PATH}`);
+    } catch (e: any) {
+      console.error(`[sheets] legacy migration failed: ${e.message}`);
+    }
+    console.log(`[sheets] Config loaded (legacy cwd): spreadsheet ${sheetsConfig!.spreadsheetId}`);
   }
-} catch (e) {
-  console.error("[sheets] Failed to load config:", e);
+} catch (e: any) {
+  console.error("[sheets] Failed to load config:", e?.message);
 }
 
 function saveSheetsConfig() {
@@ -641,21 +666,48 @@ const propertyFolderCache = new Map<string, string>();
 
 // Persistent Drive folder map. Stored on disk so the receipt root folder is
 // remembered across restarts — prevents the app from creating a duplicate
-// "Credit Card and Cash Receipts" folder when the user renames the original
-// one in Drive. Schema: { receiptsRootId: "<drive folder id>" }
-const DRIVE_FOLDER_CONFIG_PATH = path.resolve(process.cwd(), "drive-folder-config.json");
+// receipts root when the pin is lost.
+//
+// This file lives on the persistent Railway volume (DATA_DIR) so it survives
+// redeploys. Previously it lived in process.cwd() and every deploy silently
+// wiped it — after which the fallback name-search would resurface the OLD
+// (now-archived) root and the app would start uploading receipts there,
+// re-creating the ghost tree we just spent an evening consolidating. Legacy
+// cwd config is migrated forward on first read.
+//
+// Schema: { receiptsRootId: "<drive folder id>" }
+const DRIVE_FOLDER_CONFIG_PATH = path.resolve(dataDir, "drive-folder-config.json");
+const DRIVE_FOLDER_CONFIG_LEGACY_PATH = path.resolve(process.cwd(), "drive-folder-config.json");
 let driveFolderConfig: { receiptsRootId?: string } = {};
 try {
   if (fs.existsSync(DRIVE_FOLDER_CONFIG_PATH)) {
     driveFolderConfig = JSON.parse(fs.readFileSync(DRIVE_FOLDER_CONFIG_PATH, "utf-8"));
-    console.log(`[drive-folders] Config loaded: receiptsRootId=${driveFolderConfig.receiptsRootId}`);
+    console.log(`[drive-folders] Config loaded (persistent): receiptsRootId=${driveFolderConfig.receiptsRootId}`);
+  } else if (fs.existsSync(DRIVE_FOLDER_CONFIG_LEGACY_PATH)) {
+    driveFolderConfig = JSON.parse(fs.readFileSync(DRIVE_FOLDER_CONFIG_LEGACY_PATH, "utf-8"));
+    try {
+      fs.writeFileSync(DRIVE_FOLDER_CONFIG_PATH, JSON.stringify(driveFolderConfig, null, 2));
+      console.log(`[drive-folders] migrated legacy config → ${DRIVE_FOLDER_CONFIG_PATH}`);
+    } catch (e: any) {
+      console.error(`[drive-folders] legacy migration failed: ${e.message}`);
+    }
+    console.log(`[drive-folders] Config loaded (legacy cwd): receiptsRootId=${driveFolderConfig.receiptsRootId}`);
   }
-} catch {}
+} catch (e: any) {
+  console.error("[drive-folders] Failed to load config:", e?.message);
+}
 function saveDriveFolderConfig() {
   try {
     fs.writeFileSync(DRIVE_FOLDER_CONFIG_PATH, JSON.stringify(driveFolderConfig, null, 2));
   } catch (e) { console.error("[drive-folders] Save failed:", e); }
 }
+
+// Canonical receipts root name. This is the CURRENT master folder in Drive.
+// The older name "Credit Card and Cash Receipts" was archived on 2026-09-02
+// as part of the two-root consolidation; do NOT re-add it here as a fallback,
+// because ensureDriveFolder() searches all non-trashed folders and will
+// resurface the archived copy, re-creating the ghost tree we just cleaned up.
+const RECEIPTS_ROOT_CANONICAL_NAME = "Credit Card, Checks and Cash Receipts";
 
 // Resolve the single shared receipts root folder. If we already have its ID,
 // verify it still exists in Drive (not trashed, not renamed elsewhere); if so
@@ -672,8 +724,8 @@ async function getReceiptsRootFolderId(): Promise<string | null> {
     // ID stale (folder deleted/trashed) — fall through to discovery.
     driveFolderConfig.receiptsRootId = undefined;
   }
-  // 2) Search by canonical name.
-  let id = await ensureDriveFolder("Credit Card and Cash Receipts");
+  // 2) Search by canonical name (the current master, NOT the archived old name).
+  let id = await ensureDriveFolder(RECEIPTS_ROOT_CANONICAL_NAME);
   if (id) {
     driveFolderConfig.receiptsRootId = id;
     saveDriveFolderConfig();
@@ -758,6 +810,22 @@ export async function registerRoutes(
 
   // Initialize Google APIs (service account for Railway, or fallback to external-tool)
   initGoogleApis();
+
+  // Bootstrap the receipts root pin. If the persistent config file doesn't yet
+  // hold receiptsRootId (fresh deploy, or first boot after the DATA_DIR
+  // migration), resolve it once and write it. Idempotent: no-op if already set.
+  (async () => {
+    if (!isGoogleEnabled()) return;
+    if (driveFolderConfig.receiptsRootId) return;
+    try {
+      const id = await getReceiptsRootFolderId();
+      if (id) {
+        console.log(`[drive-folders] Bootstrapped receiptsRootId = ${id}`);
+      }
+    } catch (e: any) {
+      console.error("[drive-folders] Bootstrap failed:", e?.message);
+    }
+  })();
 
   // ---- One-time Drive folder migration ----
   // Renames the four legacy daily-report folders to make it clear they are
