@@ -5267,6 +5267,221 @@ export async function registerRoutes(
     }
   });
 
+  // ===================================================================
+  // Second-pass consolidation: merge duplicate subfolders WITHIN one
+  // root. After /drive-consolidate/execute unifies the two ROOTS, the
+  // resulting master can STILL contain duplicate subfolders (two
+  // "Cash Receipts", two "Check Receipts", two "Credit Card Receipts").
+  // This endpoint walks the pinned root and, for each set of same-named
+  // child folders, picks the NEWEST as keeper and merges the older
+  // sibling's contents INTO the keeper, recursively at the property
+  // level. Empty shells then go to _Archived.
+  // ===================================================================
+  async function buildIntraMergePlan(): Promise<any> {
+    if (!isGoogleEnabled()) throw new Error("Google not enabled");
+    const rootId = driveFolderConfig.receiptsRootId;
+    if (!rootId) return { ok: false, error: "No receipts root pinned. Run /drive-consolidate/preview first." };
+
+    const rootChildren = await listDriveFolderChildren(rootId);
+    const byName = new Map<string, any[]>();
+    for (const f of rootChildren) {
+      if (f.mimeType !== "application/vnd.google-apps.folder") continue;
+      const key = f.name.trim().toLowerCase();
+      const arr = byName.get(key) || [];
+      arr.push(f);
+      byName.set(key, arr);
+    }
+
+    const moves: any[] = [];
+    const emptyShells: any[] = [];
+    const pairs: any[] = [];
+
+    for (const [key, folders] of byName) {
+      if (folders.length < 2) continue;
+      // Fetch modifiedTime for each - listDriveFolderChildren doesn't return it,
+      // so use ensureDriveFolder is wrong; use driveApi via a get. But we already
+      // have IDs. Sort deterministically by ID for now; the actual keeper is
+      // decided by scanning file counts (heavier folder wins) for safety.
+      const withCounts = await Promise.all(folders.map(async (f: any) => {
+        const kids = await listDriveFolderChildren(f.id);
+        return { ...f, kidCount: kids.length };
+      }));
+      // Keeper = folder with more content. Ties -> first by ID.
+      withCounts.sort((a: any, b: any) => b.kidCount - a.kidCount || a.id.localeCompare(b.id));
+      const keeper = withCounts[0];
+      const drainers = withCounts.slice(1);
+
+      for (const drainer of drainers) {
+        const drainerKids = await listDriveFolderChildren(drainer.id);
+        const keeperKids = await listDriveFolderChildren(keeper.id);
+        const keeperKidsByName = new Map<string, any>();
+        for (const kk of keeperKids) {
+          keeperKidsByName.set(kk.name.trim().toLowerCase(), kk);
+        }
+
+        for (const dk of drainerKids) {
+          const nameKey = dk.name.trim().toLowerCase();
+          const match = keeperKidsByName.get(nameKey);
+
+          if (dk.mimeType !== "application/vnd.google-apps.folder") {
+            // A loose file at this level. Move into keeper root; rename on collision.
+            const collides = !!match;
+            moves.push({
+              fileId: dk.id,
+              fileName: dk.name,
+              isFolder: false,
+              fromParentId: drainer.id,
+              fromParentName: drainer.name,
+              toParentId: keeper.id,
+              toParentName: keeper.name,
+              collides,
+              renameTo: collides ? dk.name.replace(/(\.[^.]+)?$/, ' (from old folder)$1') : null,
+            });
+            continue;
+          }
+
+          if (!match || match.mimeType !== "application/vnd.google-apps.folder") {
+            // Property folder doesn't exist in keeper — move whole folder.
+            moves.push({
+              fileId: dk.id,
+              fileName: dk.name,
+              isFolder: true,
+              fromParentId: drainer.id,
+              fromParentName: drainer.name,
+              toParentId: keeper.id,
+              toParentName: keeper.name,
+              collides: false,
+              renameTo: null,
+            });
+            continue;
+          }
+
+          // Property folder exists on both sides — merge FILES from drainer's
+          // property folder into keeper's property folder.
+          const drainerFiles = await listDriveFolderChildren(dk.id);
+          const keeperFilesInProp = await listDriveFolderChildren(match.id);
+          const keeperPropFileNames = new Set(
+            keeperFilesInProp.map((f: any) => f.name.trim().toLowerCase())
+          );
+          for (const df of drainerFiles) {
+            const dfKey = df.name.trim().toLowerCase();
+            const dfCollides = keeperPropFileNames.has(dfKey);
+            moves.push({
+              fileId: df.id,
+              fileName: df.name,
+              isFolder: df.mimeType === "application/vnd.google-apps.folder",
+              fromParentId: dk.id,
+              fromParentName: `${drainer.name} / ${dk.name}`,
+              toParentId: match.id,
+              toParentName: `${keeper.name} / ${match.name}`,
+              collides: dfCollides,
+              renameTo: dfCollides ? df.name.replace(/(\.[^.]+)?$/, ' (from old folder)$1') : null,
+            });
+          }
+          // Drainer's now-empty property folder becomes a shell.
+          emptyShells.push({ folderId: dk.id, folderName: `${drainer.name} / ${dk.name}` });
+        }
+        // Drainer subfolder root itself becomes a shell.
+        emptyShells.push({ folderId: drainer.id, folderName: drainer.name });
+
+        pairs.push({
+          groupName: key,
+          keeperId: keeper.id,
+          keeperKidCount: keeper.kidCount,
+          drainerId: drainer.id,
+          drainerKidCount: drainer.kidCount,
+        });
+      }
+    }
+
+    return {
+      ok: true,
+      rootId,
+      pairs,
+      totalFileMoves: moves.filter((m: any) => !m.isFolder).length,
+      totalFolderMoves: moves.filter((m: any) => m.isFolder).length,
+      totalCollisions: moves.filter((m: any) => m.collides).length,
+      emptyShells,
+      moves,
+    };
+  }
+
+  app.get("/api/admin/drive-merge-duplicates/preview", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    if (!isGoogleEnabled()) return res.status(400).json({ error: "Google Drive not configured" });
+    try {
+      const plan = await buildIntraMergePlan();
+      res.json(plan);
+    } catch (e: any) {
+      console.error("[drive-merge-duplicates/preview] failed:", e);
+      res.status(500).json({ error: e.message?.slice(0, 200) || "preview failed" });
+    }
+  });
+
+  app.post("/api/admin/drive-merge-duplicates/execute", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    if (!isGoogleEnabled()) return res.status(400).json({ error: "Google Drive not configured" });
+    if (req.query.confirm !== "1") {
+      return res.status(400).json({ error: "Missing ?confirm=1 query parameter." });
+    }
+    try {
+      const plan = await buildIntraMergePlan();
+      if (!plan.ok) return res.json({ ok: true, note: "Nothing to merge.", plan });
+
+      const archiveId = await ensureDriveFolder("_Archived (do not use)");
+      if (!archiveId) return res.status(500).json({ error: "Failed to ensure _Archived folder" });
+
+      const results: any[] = [];
+      let moved = 0, renamed = 0, failed = 0, archived = 0;
+
+      for (const m of plan.moves) {
+        try {
+          if (m.collides && m.renameTo) {
+            await renameDriveFileById(m.fileId, m.renameTo);
+            renamed++;
+          }
+          const ok = await moveDriveFile(m.fileId, m.toParentId);
+          if (ok) { moved++; results.push({ ok: true, kind: "move", name: m.fileName }); }
+          else { failed++; results.push({ ok: false, kind: "move", name: m.fileName, error: "move failed" }); }
+        } catch (e: any) {
+          failed++;
+          results.push({ ok: false, kind: "move", name: m.fileName, error: e.message?.slice(0, 200) });
+        }
+      }
+
+      for (const shell of plan.emptyShells) {
+        try {
+          const kids = await listDriveFolderChildren(shell.folderId);
+          if (kids.length > 0) {
+            results.push({ ok: false, kind: "archive", name: shell.folderName, error: `still has ${kids.length} kids` });
+            continue;
+          }
+          const ok = await moveDriveFile(shell.folderId, archiveId);
+          if (ok) { archived++; results.push({ ok: true, kind: "archive", name: shell.folderName }); }
+          else results.push({ ok: false, kind: "archive", name: shell.folderName, error: "move failed" });
+        } catch (e: any) {
+          results.push({ ok: false, kind: "archive", name: shell.folderName, error: e.message?.slice(0, 200) });
+        }
+      }
+
+      propertyFolderCache.clear();
+
+      res.json({
+        ok: true,
+        summary: {
+          totalPlanned: plan.moves.length,
+          moved, renamed, failed, archived,
+        },
+        results,
+      });
+    } catch (e: any) {
+      console.error("[drive-merge-duplicates/execute] failed:", e);
+      res.status(500).json({ error: e.message?.slice(0, 200) || "execute failed" });
+    }
+  });
+
   app.get("/api/admin/drive-cleanup/preview", async (req, res) => {
     const session = await requireAdmin(req, res);
     if (!session) return;
