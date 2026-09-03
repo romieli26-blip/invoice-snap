@@ -43,6 +43,7 @@ const CASH_CATEGORY_LABELS: Record<string, string> = {
   dryer: "Dryer",
   vending: "Vending",
   store_items: "Store Items",
+  fuel_sale: "Fuel Sale",
   eod_cash_on_hand: "End of Day - Cash on Hand",
   other: "Other",
   bank_deposit: "Bank Deposit",
@@ -2006,6 +2007,7 @@ export default function HistoryPage() {
                       <SelectItem value="dryer">Dryer</SelectItem>
                       <SelectItem value="vending">Vending</SelectItem>
                       <SelectItem value="store_items">Store Items</SelectItem>
+                      <SelectItem value="fuel_sale">Fuel Sale</SelectItem>
                       <SelectItem value="eod_cash_on_hand">End of Day - Cash on Hand</SelectItem>
                       <SelectItem value="other">Other</SelectItem>
                     </>

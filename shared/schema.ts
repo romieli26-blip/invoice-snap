@@ -196,7 +196,7 @@ export const cashTransactions = sqliteTable("cash_transactions", {
   userId: integer("user_id").notNull(),
   property: text("property").notNull(),
   type: text("type").notNull(), // "income" or "spent"
-  category: text("category").notNull(), // income: rental_income, washer, dryer, vending, store_items, other. spent: bank_deposit, item_purchased, contractor_pay, other
+  category: text("category").notNull(), // income: rental_income, washer, dryer, vending, store_items, fuel_sale, eod_cash_on_hand, other. spent: bank_deposit, item_purchased, contractor_pay, cc_tips, other
   amount: text("amount").notNull(),
   date: text("date").notNull(),
   // Income-specific fields
