@@ -13,6 +13,18 @@ import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, Plus, Trash2, Loader2, Clock, AlertTriangle, Pencil, Check, Briefcase } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { LogoBackground } from "@/components/LogoBackground";
+import {
+  centralTodayISO,
+  centralTodayHuman,
+  centralNow,
+  centralNowMinutes,
+  deviceMinutesAheadOfCentral,
+  deviceTimeZoneName,
+  describeOffset,
+  formatMinutes12,
+  formatHHMM12,
+  TIME_REPORT_CAP_GRACE_MINUTES,
+} from "@shared/tz";
 
 interface Property {
   id: number;
@@ -29,33 +41,19 @@ for (let h = 0; h < 24; h++) {
   }
 }
 
-function formatTime12(t: string): string {
-  if (!t) return "";
-  const [h, m] = t.split(":").map(Number);
-  const ampm = h >= 12 ? "PM" : "AM";
-  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-  return `${h12}:${m.toString().padStart(2, "0")} ${ampm}`;
-}
+// 12-hour label for an "HH:MM" option value. Delegates to the shared helper
+// so the picker, the toasts and the server all phrase times identically.
+const formatTime12 = formatHHMM12;
 
-// Return today's date as YYYY-MM-DD in America/Chicago (Central Time),
-// which is Jetsetter's operational anchor timezone (Foley, AL). Every user's
-// "today" is normalised through this so a PM in a different zone can't file
-// a report for a day the company clock already rolled past.
-// en-CA locale gives ISO order (YYYY-MM-DD) without hand-parsing.
-function centralTodayISO(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
-}
-
-// Human-readable Central Time date for error messages. Recomputed on each
-// call so "Today is Sunday, August 17." updates as the clock rolls over.
-function centralTodayHuman(): string {
-  return new Date().toLocaleDateString("en-US", {
-    timeZone: "America/Chicago",
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-  });
-}
+// Grace window for the pickers. Imported from shared/tz so the browser and the
+// server can never drift apart on this number.
+//
+// Without any grace the cap is hostile: a PM who finishes at 6:00 PM and opens
+// the form at 5:58 PM finds 6:00 PM does not exist yet and has to sit and wait
+// for the clock. People round a shift to the nearest five minutes, so the
+// honest value they want to file is routinely a couple of minutes ahead of the
+// wall clock.
+const CAP_GRACE_MINUTES = TIME_REPORT_CAP_GRACE_MINUTES;
 
 export default function TimeReportPage() {
   const { user } = useAuth();
@@ -165,24 +163,39 @@ export default function TimeReportPage() {
   // "today" regardless of where their phone thinks they are.
   const today = centralTodayISO();
 
-  // Current Central Time as minutes past midnight, used to cap the End
-  // Time picker when the user is filing for today. A user in a different
-  // timezone whose phone says 3:41 PM would otherwise see 15:40 as a
-  // pickable option even when it's still only 14:40 Central at the
-  // property. Filtering the dropdown itself is friendlier than a red
-  // error after the fact. Recomputes on each render so it stays live if
-  // the form stays open for a while.
-  const nowCentralMinutes = (() => {
-    const nowStr = new Date().toLocaleString("en-US", {
-      timeZone: "America/Chicago",
-      hour12: false,
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-    const [h, m] = nowStr.split(":").map(Number);
-    return h * 60 + m;
-  })();
+  // Current Central Time as minutes past midnight, used to cap the Start and
+  // End pickers when the user is filing for today. A user in a different
+  // timezone whose phone says 3:41 PM would otherwise see 15:40 as a pickable
+  // option even when it's still only 14:40 Central at the property.
+  // Recomputed on each render so it stays live if the form is left open.
+  const nowCentralMinutes = centralNowMinutes();
+  const capMinutes = nowCentralMinutes + CAP_GRACE_MINUTES;
   const isToday = date === today;
+
+  // How far the user's own device clock is from Central. This is the whole
+  // reason the picker looks broken to some PMs: the dropdown lists CENTRAL
+  // times, so a manager on Eastern who finished at 7:30 PM by her own phone
+  // has to pick 6:30 PM here. Nothing on screen used to say that, so the time
+  // she was looking for just appeared to be missing from the list and she
+  // concluded the app was refusing to let her clock out.
+  const deviceOffsetMinutes = deviceMinutesAheadOfCentral();
+  const deviceDiffers = deviceOffsetMinutes !== 0;
+  const deviceZoneLabel = deviceTimeZoneName().split("/").pop()?.replace(/_/g, " ") || "your device";
+  const centralNowLabel = formatMinutes12(nowCentralMinutes);
+  const deviceNowLabel = formatMinutes12(nowCentralMinutes + deviceOffsetMinutes);
+
+  // Does the cap actually hide anything right now? Only true for today's
+  // report late enough in the day that some options are filtered out.
+  const capIsHidingOptions = isToday && capMinutes < 23 * 60 + 55;
+
+  // Show a Central time as "6:30 PM (7:30 PM your time)" when the device is
+  // in a different zone, so the PM can find the row matching their own clock.
+  function optionLabel(t: string): string {
+    const base = formatTime12(t);
+    if (!deviceDiffers) return base;
+    const [h, m] = t.split(":").map(Number);
+    return `${base}  (${formatMinutes12(h * 60 + m + deviceOffsetMinutes)} your time)`;
+  }
 
   // Check if all time blocks are filled
   const allBlocksFilled = timeBlocks.every(b => b.start && b.end);
@@ -233,23 +246,25 @@ export default function TimeReportPage() {
     // reports — a phone on Eastern would otherwise let someone pick a time
     // that hasn't happened yet at the actual property.
     try {
-      const nowCentral = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
-      const todayCentral = nowCentral.toISOString().split("T")[0];
+      const nowCt = centralNow();
+      const todayCentral = nowCt.isoDate;
       if (date > todayCentral) {
         toast({ title: `Cannot report a future date. Central Time is currently ${todayCentral}.`, variant: "destructive" });
         return;
       }
       if (date === todayCentral) {
-        const nowMinutes = nowCentral.getHours() * 60 + nowCentral.getMinutes();
+        // Same grace window the pickers use, so the dropdown never offers an
+        // option that this check then rejects.
+        const limit = nowCt.minutes + CAP_GRACE_MINUTES;
         for (let i = 0; i < timeBlocks.length; i++) {
           const b = timeBlocks[i];
           const [eh, em] = b.end.split(":").map(Number);
-          if (eh * 60 + em > nowMinutes) {
-            const hh = String(Math.floor(nowMinutes / 60)).padStart(2, "0");
-            const mm = String(nowMinutes % 60).padStart(2, "0");
+          if (eh * 60 + em > limit) {
             toast({
-              title: `Block ${i + 1}: end time ${b.end} is in the future`,
-              description: `Right now (Central Time) it's ${hh}:${mm}. You can only report hours that have already happened.`,
+              title: `Block ${i + 1}: end time ${formatTime12(b.end)} is in the future`,
+              description: deviceDiffers
+                ? `It is ${formatMinutes12(nowCt.minutes)} Central Time right now (${formatMinutes12(nowCt.minutes + deviceOffsetMinutes)} on your device). Times here are Central, so enter the Central time you finished.`
+                : `It is ${formatMinutes12(nowCt.minutes)} Central Time right now. You can only report hours that have already happened.`,
               variant: "destructive",
             });
             return;
@@ -576,7 +591,41 @@ export default function TimeReportPage() {
 
             {/* Time blocks */}
             <div className="space-y-2">
-              <Label>Time Worked</Label>
+              <Label>Time Worked (Central Time)</Label>
+
+              {/* Timezone orientation. Two separate things trip PMs up here and
+                  both used to be invisible on screen:
+
+                  1. The list is in CENTRAL time, because that is where the
+                     properties are. A PM on Eastern hunting for the 7:30 PM she
+                     actually finished at needs to choose the 6:30 PM row.
+                  2. Today's list stops at the current Central time, so later
+                     evening slots genuinely are not there yet.
+
+                  Stating both turns a dead end into something a PM can reason
+                  about instead of assuming the app is broken. */}
+              <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs space-y-1">
+                <div className="flex items-center gap-1.5 font-medium">
+                  <Clock className="w-3.5 h-3.5 shrink-0" />
+                  <span>It is {centralNowLabel} Central Time right now.</span>
+                </div>
+                {deviceDiffers && (
+                  <div className="text-muted-foreground">
+                    Your device ({deviceZoneLabel}) says {deviceNowLabel} &mdash;{" "}
+                    {describeOffset(deviceOffsetMinutes)} Central. Choose the{" "}
+                    <strong>Central</strong> time; every option also shows your own
+                    clock in brackets so you can match it.
+                  </div>
+                )}
+                {capIsHidingOptions && (
+                  <div className="text-muted-foreground">
+                    Because this report is for today, the list stops at{" "}
+                    {formatMinutes12(capMinutes)} Central. Later times appear as the
+                    Central clock moves forward.
+                  </div>
+                )}
+              </div>
+
               {timeBlocks.map((block, idx) => {
                 const blockInvalid = block.start && block.end && (() => {
                   const [sh, sm] = block.start.split(":").map(Number);
@@ -597,9 +646,9 @@ export default function TimeReportPage() {
                             // that hasn't happened yet at the property.
                             if (!isToday) return true;
                             const [h, m] = t.split(":").map(Number);
-                            return h * 60 + m <= nowCentralMinutes;
+                            return h * 60 + m <= capMinutes;
                           }).map(t => (
-                            <SelectItem key={`s-${idx}-${t}`} value={t}>{formatTime12(t)}</SelectItem>
+                            <SelectItem key={`s-${idx}-${t}`} value={t}>{optionLabel(t)}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -613,9 +662,9 @@ export default function TimeReportPage() {
                             // Same cap for end time — no future minutes offered.
                             if (!isToday) return true;
                             const [h, m] = t.split(":").map(Number);
-                            return h * 60 + m <= nowCentralMinutes;
+                            return h * 60 + m <= capMinutes;
                           }).map(t => (
-                            <SelectItem key={`e-${idx}-${t}`} value={t}>{formatTime12(t)}</SelectItem>
+                            <SelectItem key={`e-${idx}-${t}`} value={t}>{optionLabel(t)}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>

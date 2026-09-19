@@ -10,6 +10,7 @@ import { execSync } from "child_process";
 import pdfParse from "pdf-parse";
 import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, driveFolderExists, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, renameDriveFileById, getDriveFolderWebViewLink, hideSheetTab, unhideSheetTab, deleteSheetTab, listDriveFolderChildren, moveDriveFile, trashDriveFile, readSheetRange, readSheetRangeRaw, listMyDriveRootChildren, reinitGoogleApis, getActiveTokenSource } from "./google-api";
 import { getAppSetting, setAppSetting } from "./storage";
+import { centralNow, centralTodayISO, centralTodayHuman, formatMinutes12, formatHHMM12, TIME_REPORT_CAP_GRACE_MINUTES } from "@shared/tz";
 import { google as googleApis } from "googleapis";
 // nodemailer removed — using Gmail API instead (SMTP blocked on Railway)
 
@@ -6198,15 +6199,18 @@ export async function registerRoutes(
     // tries to submit a same-day report whose end time (or any block's end
     // time) is later than the current wall-clock in America/Chicago, reject.
     try {
-      const nowCentral = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
-      const todayCentral = nowCentral.toISOString().split("T")[0];
+      const nowCentral = centralNow();
+      const todayCentral = nowCentral.isoDate;
       if (date > todayCentral) {
         return res.status(400).json({
           error: `Cannot report for a future date. Central Time is currently ${todayCentral}.`,
         });
       }
       if (date === todayCentral) {
-        const nowMinutes = nowCentral.getHours() * 60 + nowCentral.getMinutes();
+        // Mirror the client's grace window exactly. If the server were
+        // stricter the picker would happily offer an option that this check
+        // then bounced, which reads to the PM as the app losing their hours.
+        const nowMinutes = nowCentral.minutes + TIME_REPORT_CAP_GRACE_MINUTES;
         // Collect every block end (and start) for a same-day report; use the
         // largest end. Old-style single startTime/endTime rows fall back to those.
         let latestEndMinutes = 0;
@@ -6227,10 +6231,8 @@ export async function registerRoutes(
           latestEndLabel = endTime;
         }
         if (latestEndMinutes > nowMinutes) {
-          const hh = String(Math.floor(nowMinutes / 60)).padStart(2, "0");
-          const mm = String(nowMinutes % 60).padStart(2, "0");
           return res.status(400).json({
-            error: `Reported end time (${latestEndLabel}) is later than the current time (Central Time). It's ${hh}:${mm} right now — you can't report hours that haven't happened yet.`,
+            error: `Reported end time (${formatHHMM12(latestEndLabel)}) is later than the current time in Central Time. It is ${formatMinutes12(nowCentral.minutes)} Central right now — times in this form are Central, not your device's local time.`,
           });
         }
       }
@@ -6244,14 +6246,9 @@ export async function registerRoutes(
       const user = await storage.getUser(session.userId);
       const allowPastDates = (user as any)?.allowPastDates === 1;
       if (!allowPastDates) {
-        const todayCentral = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+        const todayCentral = centralTodayISO();
         if (date !== todayCentral) {
-          const humanDate = new Date().toLocaleDateString("en-US", {
-            timeZone: "America/Chicago",
-            weekday: "long",
-            month: "long",
-            day: "numeric",
-          });
+          const humanDate = centralTodayHuman();
           return res.status(400).json({
             error: `Work reports must be submitted the same day the work was done (Central Time). Today is ${humanDate}.`,
           });

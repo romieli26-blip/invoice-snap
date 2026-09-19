@@ -3,6 +3,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import cron from "node-cron";
+import { zonedNow } from "@shared/tz";
 
 const app = express();
 const httpServer = createServer(app);
@@ -223,11 +224,18 @@ app.use((req, res, next) => {
         const path = require("path");
         const dataDir = process.env.DATA_DIR || ".";
         const heartbeatPath = path.resolve(dataDir, "reminder-heartbeat.json");
-        const nowET = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-        const todayET = nowET.toISOString().split("T")[0];
-        const dayET = nowET.getDay(); // 0=Sun ... 6=Sat
-        const hourET = nowET.getHours();
-        if (dayET !== 0 && hourET >= 19) {
+        // Was: new Date(new Date().toLocaleString(...)) then .toISOString().
+        // That double-converts and rolls todayET to tomorrow in the evening on
+        // any runtime whose own zone is behind UTC, which would let the
+        // heartbeat dedupe compare against the wrong day and re-fire. zonedNow
+        // reads the fields straight out of the zone instead.
+        const nowET = zonedNow("America/New_York");
+        const todayET = nowET.isoDate;
+        const isSundayET = new Date().toLocaleDateString("en-US", {
+          timeZone: "America/New_York", weekday: "short",
+        }) === "Sun";
+        const hourET = nowET.hour;
+        if (!isSundayET && hourET >= 19) {
           let last = "";
           if (fs.existsSync(heartbeatPath)) {
             try {
