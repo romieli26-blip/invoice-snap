@@ -10,7 +10,7 @@ import { execSync } from "child_process";
 import pdfParse from "pdf-parse";
 import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, driveFolderExists, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, renameDriveFileById, getDriveFolderWebViewLink, hideSheetTab, unhideSheetTab, deleteSheetTab, listDriveFolderChildren, moveDriveFile, trashDriveFile, readSheetRange, readSheetRangeRaw, listMyDriveRootChildren, reinitGoogleApis, getActiveTokenSource } from "./google-api";
 import { getAppSetting, setAppSetting } from "./storage";
-import { centralNow, centralTodayISO, centralTodayHuman, formatMinutes12, formatHHMM12, TIME_REPORT_CAP_GRACE_MINUTES } from "@shared/tz";
+import { PROPERTY_TIME_ZONES, propertyNow, propertyTodayISO, propertyTodayHuman, resolvePropertyTimeZone, timeZoneLabel, DEFAULT_PROPERTY_TIME_ZONE, formatMinutes12, formatHHMM12, TIME_REPORT_CAP_GRACE_MINUTES } from "@shared/tz";
 import { google as googleApis } from "googleapis";
 // nodemailer removed — using Gmail API instead (SMTP blocked on Railway)
 
@@ -3081,6 +3081,15 @@ export async function registerRoutes(
         if (conflict) return res.status(409).json({ error: `Code already used by '${conflict.name}'` });
       }
       await storage.updatePropertyCode(id, code);
+    }
+    if ("timeZone" in req.body) {
+      const tz = String(req.body.timeZone || "").trim();
+      // Whitelist rather than trusting the client: an unknown zone would make
+      // every work-report time check for this park silently wrong.
+      if (!PROPERTY_TIME_ZONES.some(z => z.value === tz)) {
+        return res.status(400).json({ error: `Unsupported time zone '${tz}'` });
+      }
+      await storage.updatePropertyTimeZone(id, tz);
     }
     if ("marketingUrl" in req.body) {
       const raw = req.body.marketingUrl;
@@ -6198,12 +6207,24 @@ export async function registerRoutes(
     // rather than naming Foley since properties span AL/GA/FL/MS. If a user
     // tries to submit a same-day report whose end time (or any block's end
     // time) is later than the current wall-clock in America/Chicago, reject.
+    // Resolve the park's own clock. Six properties are Central; Trails End and
+    // Pop's Grill in Donalsonville, Georgia are Eastern. Validating in the
+    // property's zone is what keeps the server from rejecting a time the
+    // browser's picker legitimately offered.
+    let propertyZone = DEFAULT_PROPERTY_TIME_ZONE;
     try {
-      const nowCentral = centralNow();
+      const propRow = await storage.getPropertyByName(property);
+      propertyZone = resolvePropertyTimeZone((propRow as any)?.timeZone);
+    } catch (e: any) {
+      console.error("[time-reports] could not resolve property timezone, defaulting to Central:", e?.message);
+    }
+
+    try {
+      const nowCentral = propertyNow(propertyZone);
       const todayCentral = nowCentral.isoDate;
       if (date > todayCentral) {
         return res.status(400).json({
-          error: `Cannot report for a future date. Central Time is currently ${todayCentral}.`,
+          error: `Cannot report for a future date. It is currently ${todayCentral} at ${property}.`,
         });
       }
       if (date === todayCentral) {
@@ -6232,7 +6253,7 @@ export async function registerRoutes(
         }
         if (latestEndMinutes > nowMinutes) {
           return res.status(400).json({
-            error: `Reported end time (${formatHHMM12(latestEndLabel)}) is later than the current time in Central Time. It is ${formatMinutes12(nowCentral.minutes)} Central right now — times in this form are Central, not your device's local time.`,
+            error: `Reported end time (${formatHHMM12(latestEndLabel)}) is later than the current time at ${property}. It is ${formatMinutes12(nowCentral.minutes)} there right now (${timeZoneLabel(propertyZone)} time).`,
           });
         }
       }
@@ -6246,11 +6267,11 @@ export async function registerRoutes(
       const user = await storage.getUser(session.userId);
       const allowPastDates = (user as any)?.allowPastDates === 1;
       if (!allowPastDates) {
-        const todayCentral = centralTodayISO();
+        const todayCentral = propertyTodayISO(propertyZone);
         if (date !== todayCentral) {
-          const humanDate = centralTodayHuman();
+          const humanDate = propertyTodayHuman(propertyZone);
           return res.status(400).json({
-            error: `Work reports must be submitted the same day the work was done (Central Time). Today is ${humanDate}.`,
+            error: `Work reports must be submitted the same day the work was done. At ${property} today is ${humanDate}.`,
           });
         }
       }

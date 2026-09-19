@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { PROPERTY_TIME_ZONES, resolvePropertyTimeZone } from "@shared/tz";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
@@ -1502,6 +1503,9 @@ function PropertyAdminCard({
   const [masterSheetUrl, setMasterSheetUrl] = useState<string>(prop.masterSheetUrl || "");
   const [vendingUrl, setVendingUrl] = useState<string>(prop.vendingUrl || "");
   const [meterReadingUrl, setMeterReadingUrl] = useState<string>(prop.meterReadingUrl || "");
+  const [timeZone, setTimeZone] = useState<string>(
+    resolvePropertyTimeZone((prop as any).timeZone)
+  );
 
   const saveMutation = useMutation({
     mutationFn: async (body: {
@@ -1510,6 +1514,7 @@ function PropertyAdminCard({
       masterSheetUrl?: string | null;
       vendingUrl?: string | null;
       meterReadingUrl?: string | null;
+      timeZone?: string;
     }) => {
       const res = await apiRequest("PUT", `/api/properties/${prop.id}`, body);
       return res.json();
@@ -1530,6 +1535,7 @@ function PropertyAdminCard({
       masterSheetUrl: masterSheetUrl.trim() === "" ? null : masterSheetUrl.trim(),
       vendingUrl: vendingUrl.trim() === "" ? null : vendingUrl.trim(),
       meterReadingUrl: meterReadingUrl.trim() === "" ? null : meterReadingUrl.trim(),
+      timeZone,
     });
   };
 
@@ -1606,6 +1612,25 @@ function PropertyAdminCard({
               />
               <p className="text-[11px] text-muted-foreground">
                 1–6 letters/digits. Used as the prefix on receipt identifiers (e.g. <code>TE-7</code>). Leave blank to use numeric IDs only.
+              </p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Time zone</Label>
+              <Select value={timeZone} onValueChange={setTimeZone}>
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PROPERTY_TIME_ZONES.map(z => (
+                    <SelectItem key={z.value} value={z.value}>{z.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                The clock this park actually runs on. Work-report times, the same-day
+                rule and the &ldquo;no future hours&rdquo; limit are all judged against it.
+                Most parks are Central; Trails End and Pop&rsquo;s Grill are in Georgia
+                and are Eastern.
               </p>
             </div>
             <div className="space-y-1">

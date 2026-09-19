@@ -38,6 +38,18 @@ export const properties = sqliteTable("properties", {
   // Per-property URL the "Meter Reading" button opens (typically a Google
   // Sheet where PMs log monthly utility meter readings). Optional.
   meterReadingUrl: text("meter_reading_url"),
+  // IANA timezone this property physically sits in. Work-report times, the
+  // same-day rule and the "no future hours" cap are all evaluated in THIS
+  // zone rather than one company-wide clock.
+  //
+  // Not every Jetsetter park is Central. Trails End and Pop's Grill share an
+  // address in Donalsonville, Georgia, and Georgia has no Central counties --
+  // they are Eastern, one hour ahead of everywhere else. Before this column
+  // existed the app forced Central on them, so a manager finishing at 7:30 PM
+  // found that the hour she needed simply was not in the dropdown.
+  //
+  // Defaults to Central because six of the eight properties are Central.
+  timeZone: text("time_zone").notNull().default("America/Chicago"),
 });
 
 export const users = sqliteTable("users", {

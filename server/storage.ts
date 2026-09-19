@@ -239,6 +239,21 @@ try { sqlite.exec("ALTER TABLE properties ADD COLUMN marketing_url TEXT"); } cat
 try { sqlite.exec("ALTER TABLE properties ADD COLUMN master_sheet_url TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE properties ADD COLUMN vending_url TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE properties ADD COLUMN meter_reading_url TEXT"); } catch {}
+// Per-property timezone. Defaults to Central because most parks are Central.
+try { sqlite.exec("ALTER TABLE properties ADD COLUMN time_zone TEXT NOT NULL DEFAULT 'America/Chicago'"); } catch {}
+// Backfill: Trails End and Pop's Grill share an address in Donalsonville,
+// Georgia, which is Eastern -- Georgia has no Central counties. Every other
+// park is Central and already correct via the column default. Runs on every
+// boot but is a no-op once the values are set, so it is safe to leave in.
+try {
+  // Bound parameters, not inline literals: SQLite treats a double-quoted
+  // string as an identifier first and only falls back to a string literal,
+  // which would silently match nothing for "Pop's Grill".
+  const r = sqlite.prepare(
+    "UPDATE properties SET time_zone = ? WHERE name IN (?, ?) AND time_zone <> ?"
+  ).run("America/New_York", "Trails End", "Pop's Grill", "America/New_York");
+  if (r.changes > 0) console.log(`[migration] Set ${r.changes} Donalsonville property(ies) to Eastern time`);
+} catch (e: any) { console.error("[migration] Eastern-time backfill failed:", e?.message); }
 
 // Lightweight key/value store for runtime-mutable settings (OAuth refresh
 // token overrides, feature flags, etc). Kept as a plain sqlite table rather
@@ -339,6 +354,7 @@ export interface IStorage {
   // Property methods
   getAllProperties(): Promise<Property[]>;
   getPropertyByName(name: string): Promise<Property | undefined>;
+  updatePropertyTimeZone(id: number, timeZone: string): Promise<void>;
   createProperty(property: InsertProperty): Promise<Property>;
   deleteProperty(id: number): Promise<void>;
   updatePropertySheetsTabId(id: number, tabId: number): Promise<void>;
@@ -503,6 +519,10 @@ export class DatabaseStorage implements IStorage {
 
   async updatePropertyMeterReadingUrl(id: number, meterReadingUrl: string | null): Promise<void> {
     db.update(properties).set({ meterReadingUrl } as any).where(eq(properties.id, id)).run();
+  }
+
+  async updatePropertyTimeZone(id: number, timeZone: string): Promise<void> {
+    db.update(properties).set({ timeZone } as any).where(eq(properties.id, id)).run();
   }
 
   /**

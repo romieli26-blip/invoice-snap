@@ -170,3 +170,79 @@ export function describeOffset(minutesAhead: number): string {
  * the PM looks like the app silently eating their hours.
  */
 export const TIME_REPORT_CAP_GRACE_MINUTES = 15;
+
+// ---------------------------------------------------------------------------
+// Per-property zones
+// ---------------------------------------------------------------------------
+// Properties are not all on one clock. Six Jetsetter parks are Central; Trails
+// End and Pop's Grill share an address in Donalsonville, Georgia and are
+// Eastern. Work-report validation runs in the SELECTED PROPERTY's zone so a
+// manager always sees and enters the time on the clock hanging in their office.
+
+/** Zones an admin can assign to a property. */
+export const PROPERTY_TIME_ZONES = [
+  { value: "America/Chicago", label: "Central" },
+  { value: "America/New_York", label: "Eastern" },
+  { value: "America/Denver", label: "Mountain" },
+  { value: "America/Phoenix", label: "Arizona (no DST)" },
+  { value: "America/Los_Angeles", label: "Pacific" },
+] as const;
+
+export const DEFAULT_PROPERTY_TIME_ZONE = "America/Chicago";
+
+/** Normalise a possibly-missing stored zone to something usable. */
+export function resolvePropertyTimeZone(tz?: string | null): string {
+  return tz && tz.trim() ? tz.trim() : DEFAULT_PROPERTY_TIME_ZONE;
+}
+
+/**
+ * Short friendly name for a zone: "Central", "Eastern", ...
+ * Falls back to the live abbreviation (CDT/EST) for anything unlisted so the
+ * UI never shows a raw IANA identifier to a property manager.
+ */
+export function timeZoneLabel(tz?: string | null, at: Date = new Date()): string {
+  const zone = resolvePropertyTimeZone(tz);
+  const known = PROPERTY_TIME_ZONES.find(z => z.value === zone);
+  if (known) return known.label;
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone, timeZoneName: "short", hour: "numeric",
+    }).formatToParts(at);
+    return parts.find(p => p.type === "timeZoneName")?.value || zone;
+  } catch {
+    return zone;
+  }
+}
+
+/** Wall-clock fields right now in a property's zone. */
+export function propertyNow(tz?: string | null, at: Date = new Date()): ZonedNow {
+  return zonedNow(resolvePropertyTimeZone(tz), at);
+}
+
+/** Today's date (YYYY-MM-DD) in a property's zone. */
+export function propertyTodayISO(tz?: string | null, at: Date = new Date()): string {
+  return propertyNow(tz, at).isoDate;
+}
+
+/** "Saturday, September 19" in a property's zone. */
+export function propertyTodayHuman(tz?: string | null, at: Date = new Date()): string {
+  return at.toLocaleDateString("en-US", {
+    timeZone: resolvePropertyTimeZone(tz),
+    weekday: "long", month: "long", day: "numeric",
+  });
+}
+
+/**
+ * How far the user's device clock is ahead of a property's clock, in minutes.
+ * Zero in the normal case where the manager is standing at their own park --
+ * which is the whole point: when it is zero the UI shows no conversion help at
+ * all, because none is needed.
+ */
+export function deviceMinutesAheadOfProperty(tz?: string | null, at: Date = new Date()): number {
+  const prop = propertyNow(tz, at);
+  const deviceMinutes = at.getHours() * 60 + at.getMinutes();
+  let diff = deviceMinutes - prop.minutes;
+  if (diff > 720) diff -= 1440;
+  if (diff < -720) diff += 1440;
+  return diff;
+}

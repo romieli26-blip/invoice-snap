@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,12 +14,13 @@ import { ArrowLeft, Plus, Trash2, Loader2, Clock, AlertTriangle, Pencil, Check, 
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { LogoBackground } from "@/components/LogoBackground";
 import {
-  centralTodayISO,
-  centralTodayHuman,
-  centralNow,
-  centralNowMinutes,
-  deviceMinutesAheadOfCentral,
-  deviceTimeZoneName,
+  propertyNow,
+  propertyTodayISO,
+  propertyTodayHuman,
+  deviceMinutesAheadOfProperty,
+  resolvePropertyTimeZone,
+  timeZoneLabel,
+  DEFAULT_PROPERTY_TIME_ZONE,
   describeOffset,
   formatMinutes12,
   formatHHMM12,
@@ -29,6 +30,7 @@ import {
 interface Property {
   id: number;
   name: string;
+  timeZone?: string | null;
 }
 
 // Generate 5-minute interval time options (00:00 to 23:55)
@@ -64,7 +66,12 @@ export default function TimeReportPage() {
   // Work reports are anchored to Central Time (America/Chicago) — the Foley
   // headquarters timezone — so PMs in other zones don't get a different
   // "today" than the company clock. Default to today in that zone.
-  const [date, setDate] = useState(centralTodayISO());
+  // Seeded with Central because the property list has not loaded on first
+  // render. Corrected below once the selected park's zone is known -- the two
+  // only ever disagree in the hour around midnight, but a grill closing at
+  // 12:30 AM is exactly the case that matters.
+  const [date, setDate] = useState(propertyTodayISO(DEFAULT_PROPERTY_TIME_ZONE));
+  const [dateTouched, setDateTouched] = useState(false);
   const [timeBlocks, setTimeBlocks] = useState<{ start: string; end: string }[]>([{ start: "", end: "" }]);
   const [accomplishments, setAccomplishments] = useState<string[]>([""]);
   const [miles, setMiles] = useState("");
@@ -161,35 +168,44 @@ export default function TimeReportPage() {
   // with allowPastDates ticked keep the escape hatch (rare corrections).
   // Computing today from a fixed timezone ensures every PM sees the same
   // "today" regardless of where their phone thinks they are.
-  const today = centralTodayISO();
+  // ---- Everything below is evaluated in the SELECTED PROPERTY's timezone ----
+  //
+  // Six parks are Central; Trails End and Pop's Grill in Donalsonville, Georgia
+  // are Eastern. Previously the whole form was hardcoded to Central, so a
+  // Donalsonville manager who finished at 7:30 PM found the dropdown stopped an
+  // hour short and the time she needed did not exist. Now the clock follows the
+  // park she picked, which in the normal case is the clock on her own wall --
+  // and when that matches her device, the form says nothing about timezones at
+  // all. No conversion, no explanation, nothing to learn.
+  const selectedProperty = properties?.find(p => p.name === property);
+  const propertyZone = resolvePropertyTimeZone(selectedProperty?.timeZone);
+  const propertyZoneLabel = timeZoneLabel(propertyZone);
 
-  // Current Central Time as minutes past midnight, used to cap the Start and
-  // End pickers when the user is filing for today. A user in a different
-  // timezone whose phone says 3:41 PM would otherwise see 15:40 as a pickable
-  // option even when it's still only 14:40 Central at the property.
-  // Recomputed on each render so it stays live if the form is left open.
-  const nowCentralMinutes = centralNowMinutes();
-  const capMinutes = nowCentralMinutes + CAP_GRACE_MINUTES;
+  const today = propertyTodayISO(propertyZone);
+  const nowPropertyMinutes = propertyNow(propertyZone).minutes;
+  const capMinutes = nowPropertyMinutes + CAP_GRACE_MINUTES;
   const isToday = date === today;
 
-  // How far the user's own device clock is from Central. This is the whole
-  // reason the picker looks broken to some PMs: the dropdown lists CENTRAL
-  // times, so a manager on Eastern who finished at 7:30 PM by her own phone
-  // has to pick 6:30 PM here. Nothing on screen used to say that, so the time
-  // she was looking for just appeared to be missing from the list and she
-  // concluded the app was refusing to let her clock out.
-  const deviceOffsetMinutes = deviceMinutesAheadOfCentral();
+  // Gap between the manager's device and the park. Zero for anyone standing at
+  // their own property, which is the overwhelming majority of submissions.
+  const deviceOffsetMinutes = deviceMinutesAheadOfProperty(propertyZone);
   const deviceDiffers = deviceOffsetMinutes !== 0;
-  const deviceZoneLabel = deviceTimeZoneName().split("/").pop()?.replace(/_/g, " ") || "your device";
-  const centralNowLabel = formatMinutes12(nowCentralMinutes);
-  const deviceNowLabel = formatMinutes12(nowCentralMinutes + deviceOffsetMinutes);
+  const propertyNowLabel = formatMinutes12(nowPropertyMinutes);
+  const deviceNowLabel = formatMinutes12(nowPropertyMinutes + deviceOffsetMinutes);
 
-  // Does the cap actually hide anything right now? Only true for today's
-  // report late enough in the day that some options are filtered out.
+  // Re-seed "today" once we know which park (and therefore which clock) this
+  // report belongs to. Skipped after the user has touched the date themselves.
+  useEffect(() => {
+    if (dateTouched) return;
+    const parkToday = propertyTodayISO(propertyZone);
+    if (parkToday !== date) setDate(parkToday);
+  }, [propertyZone, dateTouched]);
+
+  // Only surface the cap note when it is actually withholding later options.
   const capIsHidingOptions = isToday && capMinutes < 23 * 60 + 55;
 
-  // Show a Central time as "6:30 PM (7:30 PM your time)" when the device is
-  // in a different zone, so the PM can find the row matching their own clock.
+  // Plain time label. The bracketed local equivalent only appears in the rare
+  // case that the device really is on another clock than the park.
   function optionLabel(t: string): string {
     const base = formatTime12(t);
     if (!deviceDiffers) return base;
@@ -246,10 +262,10 @@ export default function TimeReportPage() {
     // reports — a phone on Eastern would otherwise let someone pick a time
     // that hasn't happened yet at the actual property.
     try {
-      const nowCt = centralNow();
+      const nowCt = propertyNow(propertyZone);
       const todayCentral = nowCt.isoDate;
       if (date > todayCentral) {
-        toast({ title: `Cannot report a future date. Central Time is currently ${todayCentral}.`, variant: "destructive" });
+        toast({ title: `Cannot report a future date. It is currently ${todayCentral} at ${property || "this park"}.`, variant: "destructive" });
         return;
       }
       if (date === todayCentral) {
@@ -263,8 +279,8 @@ export default function TimeReportPage() {
             toast({
               title: `Block ${i + 1}: end time ${formatTime12(b.end)} is in the future`,
               description: deviceDiffers
-                ? `It is ${formatMinutes12(nowCt.minutes)} Central Time right now (${formatMinutes12(nowCt.minutes + deviceOffsetMinutes)} on your device). Times here are Central, so enter the Central time you finished.`
-                : `It is ${formatMinutes12(nowCt.minutes)} Central Time right now. You can only report hours that have already happened.`,
+                ? `It is ${formatMinutes12(nowCt.minutes)} at ${property || "the park"} right now (${formatMinutes12(nowCt.minutes + deviceOffsetMinutes)} on your device). Enter the time shown on the park's clock.`
+                : `It is ${formatMinutes12(nowCt.minutes)} right now. You can only report hours that have already happened.`,
               variant: "destructive",
             });
             return;
@@ -288,10 +304,10 @@ export default function TimeReportPage() {
     // Same-day guard — mirror the server check so users get instant feedback
     // instead of waiting for a round-trip. Runs even if the browser's date
     // input was tampered with. Skipped for admins with allowPastDates on.
-    if (!allowPastDates && date !== centralTodayISO()) {
+    if (!allowPastDates && date !== propertyTodayISO(propertyZone)) {
       toast({
         title: "Wrong date",
-        description: `Work reports must be submitted the same day the work was done (Central Time). Today is ${centralTodayHuman()}.`,
+        description: `Work reports must be submitted the same day the work was done. At ${property || "this park"} today is ${propertyTodayHuman(propertyZone)}.`,
         variant: "destructive",
       });
       return;
@@ -582,7 +598,7 @@ export default function TimeReportPage() {
               <Input
                 type="date"
                 value={date}
-                onChange={e => setDate(e.target.value)}
+                onChange={e => { setDateTouched(true); setDate(e.target.value); }}
                 max={today}
                 min={allowPastDates ? undefined : today}
                 required
@@ -591,40 +607,49 @@ export default function TimeReportPage() {
 
             {/* Time blocks */}
             <div className="space-y-2">
-              <Label>Time Worked (Central Time)</Label>
+              <Label>
+                Time Worked
+                {deviceDiffers && ` (${propertyZoneLabel} time)`}
+              </Label>
 
-              {/* Timezone orientation. Two separate things trip PMs up here and
-                  both used to be invisible on screen:
+              {/* Deliberately silent in the normal case.
 
-                  1. The list is in CENTRAL time, because that is where the
-                     properties are. A PM on Eastern hunting for the 7:30 PM she
-                     actually finished at needs to choose the 6:30 PM row.
-                  2. Today's list stops at the current Central time, so later
-                     evening slots genuinely are not there yet.
+                  Now that the picker runs on the selected park's own clock, a
+                  manager standing at her own property sees times that match her
+                  phone exactly -- so there is nothing to explain and we show no
+                  timezone chrome whatsoever.
 
-                  Stating both turns a dead end into something a PM can reason
-                  about instead of assuming the app is broken. */}
-              <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs space-y-1">
-                <div className="flex items-center gap-1.5 font-medium">
-                  <Clock className="w-3.5 h-3.5 shrink-0" />
-                  <span>It is {centralNowLabel} Central Time right now.</span>
+                  The note appears only in the two situations where the manager
+                  would otherwise be confused:
+                    - her device really is on a different clock than the park
+                      (covering for someone, travelling, laptop set wrong)
+                    - today's list is still filling up as the clock advances */}
+              {(deviceDiffers || capIsHidingOptions) && (
+                <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs space-y-1">
+                  {deviceDiffers && (
+                    <>
+                      <div className="flex items-center gap-1.5 font-medium">
+                        <Clock className="w-3.5 h-3.5 shrink-0" />
+                        <span>
+                          {property || "This park"} runs on {propertyZoneLabel} time &mdash;
+                          it is {propertyNowLabel} there now.
+                        </span>
+                      </div>
+                      <div className="text-muted-foreground">
+                        Your device says {deviceNowLabel}, {describeOffset(deviceOffsetMinutes)}{" "}
+                        the park. Each time below also shows your own clock in brackets,
+                        so just match the bracket.
+                      </div>
+                    </>
+                  )}
+                  {capIsHidingOptions && (
+                    <div className="text-muted-foreground">
+                      The list stops at {formatMinutes12(capMinutes)} because that is the
+                      time at the park right now. Later times appear as the day goes on.
+                    </div>
+                  )}
                 </div>
-                {deviceDiffers && (
-                  <div className="text-muted-foreground">
-                    Your device ({deviceZoneLabel}) says {deviceNowLabel} &mdash;{" "}
-                    {describeOffset(deviceOffsetMinutes)} Central. Choose the{" "}
-                    <strong>Central</strong> time; every option also shows your own
-                    clock in brackets so you can match it.
-                  </div>
-                )}
-                {capIsHidingOptions && (
-                  <div className="text-muted-foreground">
-                    Because this report is for today, the list stops at{" "}
-                    {formatMinutes12(capMinutes)} Central. Later times appear as the
-                    Central clock moves forward.
-                  </div>
-                )}
-              </div>
+              )}
 
               {timeBlocks.map((block, idx) => {
                 const blockInvalid = block.start && block.end && (() => {
