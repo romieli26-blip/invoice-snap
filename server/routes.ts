@@ -2045,17 +2045,6 @@ export async function registerRoutes(
     });
   }
 
-  // Seed romieli26 test user if none exists
-  const existingRomi = await storage.getUserByUsername("romi");
-  if (!existingRomi) {
-    await storage.createUser({
-      username: "romi",
-      password: "romi2026",
-      displayName: "Romi (Testing)",
-      role: "manager",
-    });
-  }
-
   // ---- FORGOT PASSWORD (public, no auth) ----
   // Shared helper: reset a user's password to a fresh random string and email
   // both the username and the temp password. Used by /api/forgot-password and
