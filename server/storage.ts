@@ -279,6 +279,14 @@ export function setAppSetting(key: string, value: string): void {
   ).run(key, value);
 }
 
+/**
+ * Write a consistent snapshot of the live database to destPath, safe to run
+ * while the app is serving requests (SQLite online backup API).
+ */
+export async function backupDatabaseTo(destPath: string): Promise<void> {
+  await sqlite.backup(destPath);
+}
+
 export function deleteAppSetting(key: string): void {
   sqlite.prepare("DELETE FROM app_settings WHERE key = ?").run(key);
 }

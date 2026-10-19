@@ -635,3 +635,16 @@ unreachable for 48+ hours):
 - Give them repo access on GitHub, Railway team access, Google Cloud
   Console project access.
 - Estimated onboarding: 4-8 hours before they can safely make changes.
+
+## Error alerts and nightly backups (added Oct 2026)
+
+- **Error alerts** (`server/alerts.ts`): any server error (HTTP 5xx) or
+  crash is emailed to Ben as `[Jetsetter Reporting] App error: ...`. Errors
+  are batched into one email per 10 minutes, and the same error is repeated
+  at most once every 6 hours. Request bodies are never included. Override
+  the recipient with the Railway variable `ALERT_EMAIL`.
+- **Nightly backups**: see DATABASE.md section 9. Requires the Railway
+  variable `BACKUP_ENCRYPTION_KEY` (16+ characters, stored in Bitwarden).
+- Both send through the app's Google connection, so they pause while Google
+  needs reconnecting (you will already have the "Google sync is broken" email).
+

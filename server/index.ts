@@ -4,6 +4,8 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import cron from "node-cron";
 import { zonedNow } from "@shared/tz";
+import { reportAppError, startAlerting } from "./alerts";
+import { runNightlyBackup } from "./backup";
 
 const app = express();
 const httpServer = createServer(app);
@@ -56,6 +58,15 @@ app.use((req, res, next) => {
       }
 
       log(logLine);
+
+      // Email Ben about server-side failures (5xx). 4xx = user mistakes
+      // (wrong password, bad input) and are not alerted. Numeric ids are
+      // collapsed so /api/users/12 and /api/users/13 count as one error.
+      if (res.statusCode >= 500) {
+        const where = `${req.method} ${path.replace(/\/\d+(?=\/|$)/g, "/:id")}`;
+        const body: any = capturedJsonResponse;
+        reportAppError(where, body?.error || body?.message || `HTTP ${res.statusCode}`);
+      }
     }
   });
 
@@ -63,6 +74,7 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  startAlerting();
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
@@ -256,6 +268,17 @@ app.use((req, res, next) => {
       }
 
       log("Daily 7pm reminder scheduler active (Mon–Sat ET) with boot catch-up", "cron");
+
+      // Nightly encrypted database backup to Google Drive — 3:30 AM ET, a
+      // quiet hour after the midnight report jobs. Emails Ben only on failure.
+      cron.schedule("30 3 * * *", () => {
+        log("Nightly backup triggered", "cron");
+        runNightlyBackup()
+          .then((r) => log(`Nightly backup result: ${JSON.stringify(r)}`, "cron"))
+          .catch((e: any) => log(`Nightly backup error: ${e?.message}`, "cron"));
+      }, { timezone: "America/New_York" });
+
+      log("Nightly backup scheduler active (3:30 AM ET)", "cron");
     },
   );
 })();

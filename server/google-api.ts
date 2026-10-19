@@ -455,6 +455,31 @@ export async function uploadToDrive(
 }
 
 /**
+ * Upload any file to Drive with an explicit MIME type. Returns the new file's
+ * ID, or null on failure. (uploadToDrive above is image-only.)
+ */
+export async function uploadFileToDrive(
+  filePath: string,
+  fileName: string,
+  folderId: string,
+  mimeType: string,
+): Promise<string | null> {
+  if (!driveApi) return null;
+  try {
+    const res = await driveApi.files.create({
+      requestBody: { name: fileName, parents: [folderId] },
+      media: { mimeType, body: fs.createReadStream(filePath) },
+      fields: "id, name",
+    });
+    console.log(`[google-api] Uploaded to Drive: ${res.data.name} (id: ${res.data.id})`);
+    return res.data.id || null;
+  } catch (err: any) {
+    console.error(`[google-api] Drive file upload failed:`, err.message?.slice(0, 200));
+    return null;
+  }
+}
+
+/**
  * Ensure a folder exists in Drive. Returns the folder ID.
  * If parentFolderId is provided, looks/creates inside that folder.
  */

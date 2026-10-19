@@ -12,6 +12,8 @@ import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, upload
 import { getAppSetting, setAppSetting } from "./storage";
 import { PROPERTY_TIME_ZONES, propertyNow, propertyTodayISO, propertyTodayHuman, resolvePropertyTimeZone, timeZoneLabel, DEFAULT_PROPERTY_TIME_ZONE, formatMinutes12, formatHHMM12, TIME_REPORT_CAP_GRACE_MINUTES } from "@shared/tz";
 import { google as googleApis } from "googleapis";
+import { setAlertSender } from "./alerts";
+import { runNightlyBackup } from "./backup";
 // nodemailer removed — using Gmail API instead (SMTP blocked on Railway)
 
 // Ensure uploads directory exists
@@ -206,6 +208,16 @@ async function sendEmailToRecipients(recipients: { name: string; email: string }
     console.error("[email] Gmail API error:", err.message?.slice(0, 200));
   }
 }
+
+// Operator alerts (server errors, backup failures) go to Ben, the same
+// address as the Google health-check alert. ALERT_EMAIL overrides it.
+setAlertSender((subject, html) =>
+  sendEmailToRecipients(
+    [{ name: "Ben", email: process.env.ALERT_EMAIL || "Ben@Jetsettercapital.com" }],
+    subject,
+    html,
+  ),
+);
 
 // Backward compat wrapper — old name still used by some callers
 async function sendNotificationEmails(subject: string, htmlBody: string, attachments?: { filename: string; path: string }[]) {
@@ -1327,6 +1339,15 @@ export async function registerRoutes(
   // De-dupes via app_settings.google_last_known_status so a persistently-
   // broken token doesn't spam Ben every 30 minutes. Only a status TRANSITION
   // fires an email; steady state stays quiet.
+  // Run the nightly Drive backup right now (admin only). Handy after a
+  // deploy, or before a risky change. Same code the 3:30 AM job runs.
+  app.post("/api/admin/backup-now", async (req, res) => {
+    const session = await requireAdmin(req, res);
+    if (!session) return;
+    const result = await runNightlyBackup();
+    res.status(result.ok ? 200 : 500).json(result);
+  });
+
   app.post("/api/admin/google-health-check", async (req, res) => {
     // Accept the internal-cron bearer used by the other schedulers so we can
     // call this from server/index.ts without needing an admin session.
