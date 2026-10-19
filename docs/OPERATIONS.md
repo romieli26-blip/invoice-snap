@@ -559,8 +559,8 @@ carefully with the developer.
 - Rotate the Railway account password.
 - Rotate the GitHub account password.
 - Rotate the `jetsetterinvoices1@gmail.com` password.
-- Rotate the in-app `admin` account password (currently `admin123` -
-  should be changed on first login).
+- Rotate the in-app `admin` account password (change it from the old default
+  to a unique password stored in Bitwarden).
 
 ### Every 12 months
 - Rotate the `GOOGLE_CLIENT_SECRET` in Cloud Console (regenerate,
