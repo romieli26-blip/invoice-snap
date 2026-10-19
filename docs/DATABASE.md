@@ -100,7 +100,8 @@ super-admins.
 
 Highlights:
 - `role` - one of `super_admin`, `admin`, `manager`, `contractor`.
-- `password` - `crypto.scrypt` hash, salt embedded.
+- `password` - stored as PLAIN TEXT today (compared directly at login).
+  Moving to a salted hash is an open security task; see CLAUDE.md.
 - `homeProperty` - the property this user is primarily assigned to
   (dropdown default on forms, some cron dispatches).
 - `positions` - JSON array of `{name, rate}` for users who work multiple
