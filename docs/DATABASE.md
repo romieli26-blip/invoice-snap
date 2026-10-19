@@ -307,8 +307,24 @@ sqlite3 /data/data.db ".backup /data/backups/$(date +%F).db"
 tar czf /data/backups/$(date +%F)-uploads.tgz /data/uploads
 ```
 
-Not currently automated. Adding a nightly backup-to-Drive job is on the
-roadmap (see OPERATIONS.md).
+**Nightly encrypted backup to Google Drive (automatic since Oct 2026):**
+`server/backup.ts` runs at 3:30 AM ET. It snapshots `data.db` with SQLite's
+online backup, gzips it, encrypts it (AES-256-GCM, key from the Railway
+variable `BACKUP_ENCRYPTION_KEY`), and uploads it to the Drive folder
+**Jetsetter Reporting Backups** (jetsetterinvoices1 account). The newest 30
+are kept; older ones go to Drive's trash. Receipt photos are not included.
+On failure Ben gets a `[Jetsetter Reporting] Nightly backup failed` email.
+Run one on demand: `POST /api/admin/backup-now` (admin login).
+
+Restore a Drive backup (on your own computer, in the repo, after `npm ci`):
+
+```bash
+BACKUP_ENCRYPTION_KEY='<from Bitwarden>' npx tsx script/decrypt-backup.ts \
+  jetsetter-db-2026-10-20T07-30Z.db.gz.enc restored.db
+```
+
+`restored.db` is a normal SQLite file. Without the key a backup cannot be
+opened, so keep `BACKUP_ENCRYPTION_KEY` in Bitwarden.
 
 ## 10. Query patterns you'll see in the code
 
