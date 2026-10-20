@@ -38,6 +38,13 @@ function resolveRefreshToken(): { token: string | null; source: "env" | "db" | n
   return { token: null, source: null };
 }
 
+// The refresh token every ad-hoc OAuth2 client should use: the in-app
+// Reconnect token if one is saved, else the env var. Never read
+// process.env.GOOGLE_REFRESH_TOKEN directly — after a Reconnect it is stale.
+export function getGoogleRefreshToken(): string | null {
+  return resolveRefreshToken().token;
+}
+
 function getAuth() {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;

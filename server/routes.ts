@@ -8,7 +8,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { execSync } from "child_process";
 import pdfParse from "pdf-parse";
-import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, driveFolderExists, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, renameDriveFileById, getDriveFolderWebViewLink, hideSheetTab, unhideSheetTab, deleteSheetTab, listDriveFolderChildren, moveDriveFile, trashDriveFile, readSheetRange, readSheetRangeRaw, listMyDriveRootChildren, reinitGoogleApis, getActiveTokenSource } from "./google-api";
+import { initGoogleApis, isGoogleEnabled, appendSheetRow, createSheetTab, uploadToDrive, ensureDriveFolder, driveFolderExists, deleteSheetRow, deleteFromDrive, highlightLastRow, renameSheetTab, prependNoteToTab, createSpreadsheetInFolder, updateSheetRange, clearSheet, shareFolderWithEmail, renameDriveFolder, renameDriveFileById, getDriveFolderWebViewLink, hideSheetTab, unhideSheetTab, deleteSheetTab, listDriveFolderChildren, moveDriveFile, trashDriveFile, readSheetRange, readSheetRangeRaw, listMyDriveRootChildren, reinitGoogleApis, getActiveTokenSource, getGoogleRefreshToken } from "./google-api";
 import { getAppSetting, setAppSetting } from "./storage";
 import { PROPERTY_TIME_ZONES, propertyNow, propertyTodayISO, propertyTodayHuman, resolvePropertyTimeZone, timeZoneLabel, DEFAULT_PROPERTY_TIME_ZONE, formatMinutes12, formatHHMM12, TIME_REPORT_CAP_GRACE_MINUTES } from "@shared/tz";
 import { google as googleApis } from "googleapis";
@@ -258,7 +258,7 @@ const MAX_EMAIL_ATTACHMENT_BYTES = 20 * 1024 * 1024; // 20 MB safe limit for Gma
 async function getTutorialVideoAttachment(): Promise<{ path: string; filename: string } | null> {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+  const refreshToken = getGoogleRefreshToken();
   if (!clientId || !clientSecret || !refreshToken) {
     console.log("[tutorial-video] No Google OAuth credentials");
     return null;
@@ -5732,7 +5732,7 @@ export async function registerRoutes(
         const oauth2Client = new google.auth.OAuth2(
           process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET
         );
-        oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
+        oauth2Client.setCredentials({ refresh_token: getGoogleRefreshToken() });
         const sheets = google.sheets({ version: "v4", auth: oauth2Client });
         const created = await sheets.spreadsheets.create({
           requestBody: { properties: { title: "Check Transactions" } },
@@ -6611,7 +6611,7 @@ export async function registerRoutes(
               try {
                 const { google: goog } = require("googleapis");
                 const oa = new goog.auth.OAuth2(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET);
-                oa.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
+                oa.setCredentials({ refresh_token: getGoogleRefreshToken() });
                 const sh = goog.sheets({ version: "v4", auth: oa });
                 const ssRes = await sh.spreadsheets.create({ requestBody: { properties: { title: "Work Credits - All Properties" } } });
                 if (ssRes.data.spreadsheetId) {
@@ -7641,7 +7641,7 @@ export async function registerRoutes(
           const oauth2Client = new google.auth.OAuth2(
             process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET
           );
-          oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
+          oauth2Client.setCredentials({ refresh_token: getGoogleRefreshToken() });
           const driveCheck = google.drive({ version: "v3", auth: oauth2Client });
           const file = await driveCheck.files.get({ fileId: trConfig.spreadsheetId, fields: "trashed" });
           if (file.data.trashed) {
@@ -7660,7 +7660,7 @@ export async function registerRoutes(
         const oauth2Client = new google.auth.OAuth2(
           process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET
         );
-        oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
+        oauth2Client.setCredentials({ refresh_token: getGoogleRefreshToken() });
         const sheets = google.sheets({ version: "v4", auth: oauth2Client });
         const ssRes = await sheets.spreadsheets.create({
           requestBody: { properties: { title: "Time Reports - All Users" } },
