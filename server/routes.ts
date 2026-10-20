@@ -7649,7 +7649,11 @@ export async function registerRoutes(
             trConfig = null;
           }
         } catch (e: any) {
-          console.log("[sync-time-sheet] Old spreadsheet not accessible, creating new one");
+          // Only a genuine 404 means the sheet is gone. Auth or network errors
+          // must fail the sync instead of creating a duplicate spreadsheet.
+          const status = e?.code ?? e?.response?.status;
+          if (Number(status) !== 404) throw e;
+          console.log("[sync-time-sheet] Old spreadsheet not found, creating new one");
           trConfig = null;
         }
       }
