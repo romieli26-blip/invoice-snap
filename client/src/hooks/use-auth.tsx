@@ -25,6 +25,8 @@ interface AuthContextType {
   loading: boolean;
   login: (username: string, password: string, rememberMe?: boolean) => Promise<void>;
   logout: () => void;
+  /** Re-fetch the signed-in user from /api/me (e.g. after a password change). */
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -93,8 +95,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     queryClient.clear();
   }, []);
 
+  const refreshUser = useCallback(async () => {
+    const token = getAuthToken();
+    if (!token) return;
+    const res = await fetch(`${API_BASE}/api/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return;
+    const data: AuthUser = await res.json();
+    setUser(data);
+    try {
+      if (localStorage.getItem(USER_KEY)) localStorage.setItem(USER_KEY, JSON.stringify(data));
+    } catch {}
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );
