@@ -26,7 +26,7 @@ import { ArrowLeft, KeyRound, Loader2, Eye, EyeOff } from "lucide-react";
  */
 export default function ChangePasswordPage() {
   const [, setLocation] = useLocation();
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const { toast } = useToast();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
@@ -57,6 +57,9 @@ export default function ChangePasswordPage() {
         currentPassword: current,
         newPassword: next,
       });
+      // Pull the updated user (mustChangePassword is now 0) so the app stops
+      // forcing this screen and lets the user through.
+      try { await refreshUser(); } catch {}
       toast({ title: "Password updated", description: "Your new password is now active." });
       setLocation("/");
     } catch (err: any) {

@@ -2192,7 +2192,9 @@ export async function registerRoutes(
     if (newPassword === currentPassword) {
       return res.status(400).json({ error: "New password must be different from your current password" });
     }
-    await storage.updateUser(session.userId, { password: newPassword });
+    // Clear mustChangePassword too — otherwise a user who signed in with a
+    // temporary password is sent back to this screen forever.
+    await storage.updateUser(session.userId, { password: newPassword, mustChangePassword: 0 } as any);
     // Kill every OTHER session belonging to this user (defensive — e.g. old
     // phone that still had a token). Current request's token stays valid.
     const currentToken = (req.headers.authorization || "").slice(7);
